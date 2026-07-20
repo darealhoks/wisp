@@ -256,14 +256,23 @@ void widget_rescale_output(Output *o) {
     if (compositor_ver < 3) return;
     for (int i = 0; i < MAX_WIDGETS; i++) {
         Widget *w = &widgets[i];
-        if (w->kind == W_NONE || w->output != o || w->scale == o->scale) continue;
-        w->scale = o->scale;
-        widget_free_pool(w);
-#ifdef WISP_HAS_WALL
-        if (w->kind == W_WALL) w->s.wall.painted_w = 0;   /* force re-decode */
-#endif
-        if (w->configured) widget_repaint(w, 0);
+        if (w->kind == W_NONE || w->output != o) continue;
+        widget_set_scale(w, o->scale120);
     }
+}
+
+/* One widget's scale changed (output scale, or a per-surface preferred_scale
+ * under WISP_FRACTIONAL). Drop pools sized for the old scale, repaint. */
+void widget_set_scale(Widget *w, int s120) {
+    if (s120 < 120) s120 = 120;
+    if (s120 > 480) s120 = 480;   /* same clamp as the integer path */
+    if (w->kind == W_NONE || w->scale120 == s120) return;
+    w->scale120 = s120;
+    widget_free_pool(w);
+#ifdef WISP_HAS_WALL
+    if (w->kind == W_WALL) w->s.wall.painted_w = 0;   /* force re-decode */
+#endif
+    if (w->configured) widget_repaint(w, 0);
 }
 
 void on_ls_event(Widget *w, uint16_t op, uint8_t *body, uint32_t bodylen) {
@@ -275,7 +284,7 @@ void on_ls_event(Widget *w, uint16_t op, uint8_t *body, uint32_t bodylen) {
         /* Clamp compositor-supplied dims: widget_ensure_pool sizes the memfd
          * with int math (w*h*4*slots); an absurd configure would overflow to a
          * tiny mapping that render then writes past. No real output exceeds 16k. */
-        uint32_t sc = (uint32_t)(w->scale > 0 ? w->scale : 1);
+        uint32_t sc = (uint32_t)(w->scale120 > 0 ? (w->scale120 + 119) / 120 : 1);
         if (nw * sc > 16384 || nh * sc > 16384)
             die("layer_surface configure %ux%u (scale %u) too large", nw, nh, sc);
         if (nw) w->w = nw;

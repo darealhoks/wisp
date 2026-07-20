@@ -123,9 +123,12 @@ static void lock_attach_surface(Output *o) {
     if (!w) { msg("lock: no widget slot for %u", o->wl_output); return; }
     o->lock = w;
     w->output = o;
-    w->scale = (compositor_ver >= 3 && o->scale > 0) ? o->scale : 1;
+    w->scale120 = (compositor_ver >= 3 && o->scale120 > 0) ? o->scale120 : 120;
     w->surface = wl_new_id();
     { uint32_t a = w->surface; wl_req(id_compositor, COMPOSITOR_REQ_CREATE_SURFACE, &a, 1, -1); }
+#ifdef WISP_FRACTIONAL
+    widget_frac_attach(w);
+#endif
     w->s.lock.slock_surf_id = wl_new_id();
     { uint32_t args[3] = { w->s.lock.slock_surf_id, w->surface, o->wl_output };
       wl_req(id_slock, SLOCK_REQ_GET_LOCK_SURFACE, args, 3, -1); }

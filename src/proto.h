@@ -155,3 +155,16 @@
 #define EXTWS_STATE_HIDDEN 4
 
 #endif
+
+#ifdef WISP_FRACTIONAL
+/* wp_viewporter / wp_viewport (v1) + wp_fractional_scale_manager_v1 (v1).
+ * Fractional scaling means: buffer_scale stays 1, the buffer is round(logical *
+ * scale/120) physical pixels, and the viewport maps it back onto the logical
+ * size. preferred_scale is the compositor's per-surface hint, in 120ths. */
+#define VIEWPORTER_REQ_GET_VIEWPORT   1
+#define VIEWPORT_REQ_DESTROY          0
+#define VIEWPORT_REQ_SET_DESTINATION  2
+#define FRAC_MGR_REQ_GET_FRACTIONAL_SCALE 1
+#define FRAC_REQ_DESTROY              0
+#define FRAC_EV_PREFERRED_SCALE       0
+#endif

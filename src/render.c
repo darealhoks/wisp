@@ -15,9 +15,13 @@
  * w->w/w->h) and multiplies it by the output scale on entry; the buffer itself
  * is physical. Single-threaded, so one file-static is enough. At scale 1 the
  * multiplies fold away to the previous behaviour. */
-static int cur_scale = 1;
+static int cur_s120 = 120;
 
-void render_set_scale(int s) { cur_scale = s < 1 ? 1 : s; }
+void render_set_scale(int s120) { cur_s120 = s120 < 120 ? 120 : s120; }
+
+/* Logical -> physical. Rounded so a 1.5x edge lands on the same pixel the
+ * neighbouring primitive computed for it. */
+#define SC(v) (((v) * cur_s120 + 60) / 120)
 
 /* floor(x/255) for x in [0, 0xffff]; exact, branchless. */
 #define DIV255(x) (((x) + 1 + ((x) >> 8)) >> 8)
@@ -34,7 +38,7 @@ static inline uint32_t premul(uint32_t c) {
 }
 
 void clear_buf(uint32_t *px, int w, int h, uint32_t c) {
-    w *= cur_scale; h *= cur_scale;
+    w = SC(w); h = SC(h);
     c = premul(c);
     int n = w * h, i = 0;
     /* 64-bit pair stores when aligned (shm pools are page-aligned, but a slot
@@ -98,8 +102,8 @@ static inline double sd_rbox(double px, double py, double cx, double cy,
  * Center may be fractional (knobs track sub-pixel positions). */
 void fill_circle(uint32_t *px, int sw, int sh, double cx, double cy, double r, uint32_t c) {
     if (r <= 0) return;
-    sw *= cur_scale; sh *= cur_scale;
-    cx *= cur_scale; cy *= cur_scale; r *= cur_scale;
+    sw = SC(sw); sh = SC(sh);
+    cx = SC(cx); cy = SC(cy); r = SC(r);
     uint8_t ca = (c >> 24) & 0xff;
     if (!ca) return;
     uint8_t cr = (c >> 16) & 0xff, cg = (c >> 8) & 0xff, cb = c & 0xff;
@@ -126,9 +130,9 @@ void fill_circle(uint32_t *px, int sw, int sh, double cx, double cy, double r, u
 void fill_rounded_shadow(uint32_t *px, int sw, int sh,
                          int x, int y, int w, int h, int r, double blur, uint32_t c) {
     if (w <= 0 || h <= 0) return;
-    sw *= cur_scale; sh *= cur_scale;
-    x *= cur_scale; y *= cur_scale; w *= cur_scale; h *= cur_scale;
-    r *= cur_scale; blur *= cur_scale;
+    sw = SC(sw); sh = SC(sh);
+    x = SC(x); y = SC(y); w = SC(w); h = SC(h);
+    r = SC(r); blur = SC(blur);
     uint8_t ca = (c >> 24) & 0xff;
     if (!ca) return;
     uint8_t cr = (c >> 16) & 0xff, cg = (c >> 8) & 0xff, cb = c & 0xff;
@@ -280,8 +284,7 @@ static void fill_rect_px(uint32_t *px, int sw, int sh, int x, int y, int w, int 
 }
 
 void fill_rect(uint32_t *px, int sw, int sh, int x, int y, int w, int h, uint32_t c) {
-    int s = cur_scale;
-    fill_rect_px(px, sw * s, sh * s, x * s, y * s, w * s, h * s, c);
+    fill_rect_px(px, SC(sw), SC(sh), SC(x), SC(y), SC(w), SC(h), c);
 }
 
 void fill_rect_rounded(uint32_t *px, int sw, int sh,
@@ -289,9 +292,9 @@ void fill_rect_rounded(uint32_t *px, int sw, int sh,
                        int r_tl, int r_tr, int r_br, int r_bl,
                        uint32_t c) {
     if (w <= 0 || h <= 0) return;
-    sw *= cur_scale; sh *= cur_scale;
-    x *= cur_scale; y *= cur_scale; w *= cur_scale; h *= cur_scale;
-    r_tl *= cur_scale; r_tr *= cur_scale; r_br *= cur_scale; r_bl *= cur_scale;
+    sw = SC(sw); sh = SC(sh);
+    x = SC(x); y = SC(y); w = SC(w); h = SC(h);
+    r_tl = SC(r_tl); r_tr = SC(r_tr); r_br = SC(r_br); r_bl = SC(r_bl);
     if (r_tl == 0 && r_tr == 0 && r_br == 0 && r_bl == 0) {
         fill_rect_px(px, sw, sh, x, y, w, h, c);
         return;
@@ -393,11 +396,11 @@ void fill_rounded_clipped(uint32_t *px, int sw, int sh,
                           int cx, int cy, int cw, int ch,
                           int cr_tl, int cr_tr, int cr_br, int cr_bl, uint32_t c) {
     if (w <= 0 || h <= 0) return;
-    sw *= cur_scale; sh *= cur_scale;
-    x *= cur_scale; y *= cur_scale; w *= cur_scale; h *= cur_scale;
-    r_tl *= cur_scale; r_tr *= cur_scale; r_br *= cur_scale; r_bl *= cur_scale;
-    cx *= cur_scale; cy *= cur_scale; cw *= cur_scale; ch *= cur_scale;
-    cr_tl *= cur_scale; cr_tr *= cur_scale; cr_br *= cur_scale; cr_bl *= cur_scale;
+    sw = SC(sw); sh = SC(sh);
+    x = SC(x); y = SC(y); w = SC(w); h = SC(h);
+    r_tl = SC(r_tl); r_tr = SC(r_tr); r_br = SC(r_br); r_bl = SC(r_bl);
+    cx = SC(cx); cy = SC(cy); cw = SC(cw); ch = SC(ch);
+    cr_tl = SC(cr_tl); cr_tr = SC(cr_tr); cr_br = SC(cr_br); cr_bl = SC(cr_bl);
     uint8_t ca = (c >> 24) & 0xff;
     if (!ca) return;
     uint8_t cr = (c >> 16) & 0xff, cg = (c >> 8) & 0xff, cb = c & 0xff;
@@ -434,10 +437,10 @@ void fill_rect_rounded_border(uint32_t *px, int sw, int sh,
                               int bw, int side_t, int side_r, int side_b, int side_l,
                               int clip_top, uint32_t c) {
     if (bw <= 0 || w <= 0 || h <= 0) return;
-    sw *= cur_scale; sh *= cur_scale;
-    x *= cur_scale; y *= cur_scale; w *= cur_scale; h *= cur_scale;
-    r_tl *= cur_scale; r_tr *= cur_scale; r_br *= cur_scale; r_bl *= cur_scale;
-    bw *= cur_scale; clip_top *= cur_scale;
+    sw = SC(sw); sh = SC(sh);
+    x = SC(x); y = SC(y); w = SC(w); h = SC(h);
+    r_tl = SC(r_tl); r_tr = SC(r_tr); r_br = SC(r_br); r_bl = SC(r_bl);
+    bw = SC(bw); clip_top = SC(clip_top);
     int rmax_w = w / 2, rmax_h = h / 2;
     int rm = rmax_w < rmax_h ? rmax_w : rmax_h;
     if (r_tl > rm) r_tl = rm;
@@ -516,8 +519,8 @@ void fill_corner_fillet(uint32_t *px, int sw, int sh,
                         int x_corner, int y_corner, int r, int corner_id,
                         uint32_t bg) {
     if (r <= 0) return;
-    sw *= cur_scale; sh *= cur_scale;
-    x_corner *= cur_scale; y_corner *= cur_scale; r *= cur_scale;
+    sw = SC(sw); sh = SC(sh);
+    x_corner = SC(x_corner); y_corner = SC(y_corner); r = SC(r);
     /* Armpit bound depends on which corner. Disc center sits at the outer
      * corner of the armpit (opposite the surface body). Pixels outside the
      * disc (d² ≥ r²) get bg → inner wedge filled, outer wedge transparent. */
@@ -599,8 +602,8 @@ void fill_corner_fillet_border(uint32_t *px, int sw, int sh,
                                int x_corner, int y_corner, int r, int corner_id,
                                int bw, uint32_t c) {
     if (r <= 0 || bw <= 0) return;
-    sw *= cur_scale; sh *= cur_scale;
-    x_corner *= cur_scale; y_corner *= cur_scale; r *= cur_scale; bw *= cur_scale;
+    sw = SC(sw); sh = SC(sh);
+    x_corner = SC(x_corner); y_corner = SC(y_corner); r = SC(r); bw = SC(bw);
     int xlo, xhi, ylo, yhi;
     double cx, cy;
     switch (corner_id) {
@@ -669,8 +672,8 @@ void fill_corner_fillet_border(uint32_t *px, int sw, int sh,
 void punch_inner_corner(uint32_t *px, int sw, int sh,
                         int cx, int cy, int r, int corner_id) {
     if (r <= 0) return;
-    sw *= cur_scale; sh *= cur_scale;
-    cx *= cur_scale; cy *= cur_scale; r *= cur_scale;
+    sw = SC(sw); sh = SC(sh);
+    cx = SC(cx); cy = SC(cy); r = SC(r);
     int bx0, by0, bx1, by1;
     switch (corner_id) {
     case 0: bx0 = cx;     by0 = cy;     bx1 = cx + r; by1 = cy + r; break;
@@ -712,8 +715,8 @@ void punch_inner_corner(uint32_t *px, int sw, int sh,
 void fill_inner_fillet(uint32_t *px, int sw, int sh,
                        int cx, int cy, int r, int corner_id, uint32_t color) {
     if (r <= 0) return;
-    sw *= cur_scale; sh *= cur_scale;
-    cx *= cur_scale; cy *= cur_scale; r *= cur_scale;
+    sw = SC(sw); sh = SC(sh);
+    cx = SC(cx); cy = SC(cy); r = SC(r);
     int bx0, by0, bx1, by1;
     switch (corner_id) {
     case 0: bx0 = cx;     by0 = cy;     bx1 = cx + r; by1 = cy + r; break;
@@ -877,22 +880,24 @@ static void draw_glyph_px(uint32_t *px, int sw, int sh, int x, int y,
 /* Pick the strike to blit and how much to replicate it: the freetype backend
  * can rasterize a real scale*px_size twin, the const-table backends can only
  * pixel-double. Returns the font to read glyphs from; *m is the replication. */
-static const Font *strike_for(const Font *f, int s, int *m) {
+/* Fallback replication for the const-table backends: nearest whole factor. */
+#define REPL(s120) ((s120) < 180 ? 1 : ((s120) + 60) / 120)
+static const Font *strike_for(const Font *f, int s120, int *m) {
 #ifdef WISP_FONT_FREETYPE
-    const Font *sf = font_ft_at_scale(f, s);
+    const Font *sf = font_ft_at_scale(f, s120);
     if (sf != f) { *m = 1; return sf; }
 #endif
-    *m = s;
+    *m = REPL(s120);
     return f;
 }
 
 void draw_glyph(uint32_t *px, int sw, int sh, int x, int y,
                 const Font *f, const Glyph *g, uint32_t fg) {
     if (!g) return;
-    int s = cur_scale, m;
+    int s = cur_s120, m;
     const Font *sf = strike_for(f, s, &m);
-    if (sf != f) { const Glyph *sg = font_find(sf, g->cp); if (sg) { f = sf; g = sg; } else m = s; }
-    draw_glyph_px(px, sw * s, sh * s, x * s, y * s, f, g, fg, m);
+    if (sf != f) { const Glyph *sg = font_find(sf, g->cp); if (sg) { f = sf; g = sg; } else m = REPL(s); }
+    draw_glyph_px(px, SC(sw), SC(sh), SC(x), SC(y), f, g, fg, m);
 }
 
 /* text_width() and the pen advances stay LOGICAL (advance * scale) so the
@@ -900,11 +905,11 @@ void draw_glyph(uint32_t *px, int sw, int sh, int x, int y,
  * glyph bitmap comes from the physical strike. */
 void draw_text(uint32_t *px, int sw, int sh, int x, int y,
                const Font *f, const char *s, uint32_t fg) {
-    int sc = cur_scale, m;
+    int sc = cur_s120, m;
     const Font *sf = strike_for(f, sc, &m);
-    sw *= sc; sh *= sc;
-    int pen_x = x * sc;
-    int baseline = y * sc + (sf == f ? f->baseline * sc : sf->baseline);
+    sw = SC(sw); sh = SC(sh);
+    int pen_x = SC(x);
+    int baseline = SC(y) + (sf == f ? SC(f->baseline) : sf->baseline);
     while (*s) {
         uint32_t cp;
         int n = utf8_decode(s, &cp);
@@ -916,10 +921,10 @@ void draw_text(uint32_t *px, int sw, int sh, int x, int y,
              * falls back to pixel-doubling the native one. */
             const Glyph *sg = sf == f ? NULL : font_find(sf, cp);
             draw_glyph_px(px, sw, sh, pen_x, baseline, sg ? sf : f,
-                          sg ? sg : g, fg, sg ? 1 : sc);
-            pen_x += g->adv * sc;
+                          sg ? sg : g, fg, sg ? 1 : m);
+            pen_x += SC(g->adv);
         } else {
-            pen_x += f->px_size / 2 * sc;
+            pen_x += SC(f->px_size / 2);
         }
     }
 }

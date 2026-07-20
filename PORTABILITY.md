@@ -31,17 +31,28 @@ Ranked easiest → hardest to fix. Verified against src/, not just the map.
   replication factor `m` and pixel-doubles. Pen advances stay logical
   (`adv * scale`) either way, so measured and drawn widths can't drift.
   **Dropped from the plan: the `hidpi=2` DSL attr and the extra baked strike.**
-  Sharp HiDPI text on baked is `./configure` → freetype, which already exists;
+  Sharp HiDPI text on baked is `//! font_backend = freetype`, which already exists;
   a second strike is DSL + wispc + bake.c + runtime work plus permanent .rodata
   for what a build flag already buys.
 
 - Phase E verified: `make check` clean, both font backends build under
   `-Werror`, live at `scale:2` and back to 1 at runtime.
 
-**Non-goal:** fractional scale (wp_fractional_scale_v1 + viewporter — a second
-protocol and a downscale blit; only worth it if a real 1.25/1.5 machine shows
-up). At integer-only a 1.5 output gets scale-2 buffers the compositor
-downsamples, still sharper than before.
+- Fractional scale landed behind `FRACTIONAL=1` (`//! fractional = 1`; it forces
+  `FONT_BACKEND=freetype`, since only freetype can rasterize a real strike at
+  an arbitrary ppem). Every scale is now carried in **120ths** (`scale120` on
+  Output/Widget, `render_set_scale()`, `font_ft_at_scale()`); the integer path
+  is the same code with a multiple of 120. With the flag on, wisp binds
+  `wp_viewporter` + `wp_fractional_scale_manager_v1`, takes a viewport +
+  fractional-scale object per surface, sizes buffers `round(logical * s/120)`,
+  leaves `buffer_scale` at 1 and sets the viewport destination to the logical
+  size. Missing globals → the integer `set_buffer_scale` path, unchanged.
+
+  **Not done:** untested on real fractional hardware — written against the
+  protocol, verified only by `make check` on an integer-scale compositor.
+  Wallpaper decode still cover-fits to the physical size (correct, but
+  re-decodes on every scale change), and `text_width()` stays logical, so at
+  1.5 a long run can drift up to a pixel from the drawn glyphs.
 
 ## Known, accepted (no action)
 

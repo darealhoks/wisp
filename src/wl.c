@@ -31,6 +31,9 @@ uint32_t id_pointer, id_keyboard;
 uint32_t id_gamma_mgr;
 uint32_t id_slock_mgr, id_slock;
 uint32_t id_extws_mgr;
+#ifdef WISP_FRACTIONAL
+uint32_t id_viewporter, id_frac_mgr;
+#endif
 
 Output  outputs[MAX_OUTPUTS];
 Output *focused_output;
@@ -61,7 +64,7 @@ Output *output_alloc(uint32_t registry_name) {
             outputs[i].active = 1;
             outputs[i].registry_name = registry_name;
             outputs[i].last_applied_k = 0;
-            outputs[i].scale = 1;
+            outputs[i].scale120 = 120;
             return &outputs[i];
         }
     }
@@ -420,6 +423,12 @@ static void handle_registry_global(uint32_t name, const char *iface, uint32_t ve
     } else if (!id_slock_mgr && !strcmp(iface, "ext_session_lock_manager_v1")) {
         id_slock_mgr = wl_new_id();
         wl_registry_bind(name, iface, 1, id_slock_mgr);
+#ifdef WISP_FRACTIONAL
+    } else if (!id_viewporter && !strcmp(iface, "wp_viewporter")) {
+        id_viewporter = wl_new_id(); wl_registry_bind(name, iface, 1, id_viewporter);
+    } else if (!id_frac_mgr && !strcmp(iface, "wp_fractional_scale_manager_v1")) {
+        id_frac_mgr = wl_new_id(); wl_registry_bind(name, iface, 1, id_frac_mgr);
+#endif
     } else if (!id_extws_mgr && !strcmp(iface, "ext_workspace_manager_v1")) {
         id_extws_mgr = wl_new_id();
         wl_registry_bind(name, iface, 1, id_extws_mgr);
@@ -518,8 +527,8 @@ static void handle(uint32_t obj, uint16_t op, uint8_t *body, uint32_t bodylen) {
                 /* Clamp: the pool sizing below multiplies by this, and a
                  * hostile/absurd factor must not overflow the int math. */
                 if (sc < 1) sc = 1; else if (sc > 4) sc = 4;
-                if (sc != mo->scale) {
-                    mo->scale = sc;
+                if (sc * 120 != mo->scale120) {
+                    mo->scale120 = sc * 120;
                     if (mo->widgets_created) widget_rescale_output(mo);
                 }
             } else if (op == OUTPUT_EV_NAME && bodylen >= 4) {
@@ -572,6 +581,14 @@ static void handle(uint32_t obj, uint16_t op, uint8_t *body, uint32_t bodylen) {
        buffer.release, callback.done, ...). Disambiguate by object id —
        layer-surface and frame-callback first, then buffer release as the
        remaining op==0 destination. */
+#ifdef WISP_FRACTIONAL
+    /* preferred_scale is also opcode 0 — route by object id first. */
+    {
+        Widget *fw = widget_by_frac(obj);
+        if (fw && op == FRAC_EV_PREFERRED_SCALE && bodylen >= 4)
+            { widget_set_scale(fw, (int)*(uint32_t *)body); return; }
+    }
+#endif
     Widget *w = widget_by_ls(obj);
     if (w) { on_ls_event(w, op, body, bodylen); return; }
     if (op == CALLBACK_EV_DONE) {

@@ -78,6 +78,11 @@ extern uint32_t id_pointer, id_keyboard;
 extern uint32_t id_gamma_mgr;
 extern uint32_t id_slock_mgr, id_slock;
 extern uint32_t id_extws_mgr;    /* ext_workspace_manager_v1; 0 = unsupported */
+#ifdef WISP_FRACTIONAL
+extern uint32_t id_viewporter, id_frac_mgr;   /* 0 = compositor lacks them */
+void     widget_frac_attach(Widget *w);       /* per-surface viewport + scale listener */
+Widget  *widget_by_frac(uint32_t obj);
+#endif
 
 /* Input routing state (set by pointer/keyboard events). */
 extern uint32_t ptr_focus, kbd_focus;
@@ -113,7 +118,7 @@ struct Output {
     int      last_applied_k;         /* last Kelvin written to this output */
     int      widgets_created;        /* bar/wall/hud spawned for this output */
     int      mode_w, mode_h;         /* current mode pixel size (wl_output.mode) */
-    int      scale;                  /* wl_output.scale (integer), always >= 1 */
+    int      scale120;               /* scale in 120ths (wl_output.scale * 120), >= 120 */
     struct Widget *bar, *wall, *hud, *lock;
 };
 
@@ -183,8 +188,13 @@ struct Widget {
      * coordinate outside the pixel layer (layout, input, cutouts) stays
      * logical, which is what keeps the scale==1 path byte-identical. */
     int        w, h;
-    int        scale;                /* copy of the output's, >= 1 */
-    int        sent_scale;           /* last set_buffer_scale sent; 0 = none */
+    int        scale120;             /* copy of the output's, in 120ths, >= 120 */
+    int        sent_scale120;        /* last set_buffer_scale sent (120ths); 0 = none */
+#ifdef WISP_FRACTIONAL
+    uint32_t   viewport;             /* wp_viewport; destination = logical size */
+    uint32_t   frac_scale;           /* wp_fractional_scale_v1 */
+    int        sent_dw, sent_dh;     /* last viewport destination sent */
+#endif
     int        client_fd;            /* deferred-reply fd, -1 if none */
 
     /* SHM pool: one pool, up to 2 slots ping-pong. */
@@ -297,11 +307,14 @@ void    widget_destroy(Widget *w);
  * shell v3 which requires a non-null output, so callers must supply one in
  * practice — but we still send the call to keep upstream-future-compat). */
 /* Physical (buffer) dimensions — only the pixel layer may use these. */
-static inline int widget_pw(const Widget *w) { return w->w * w->scale; }
-static inline int widget_ph(const Widget *w) { return w->h * w->scale; }
+/* Physical pixels. Rounded, not truncated: at a fractional scale a truncated
+ * buffer is a pixel short of what the compositor maps the surface onto. */
+static inline int widget_pw(const Widget *w) { return (w->w * w->scale120 + 60) / 120; }
+static inline int widget_ph(const Widget *w) { return (w->h * w->scale120 + 60) / 120; }
 void    widget_setup_surface(Widget *w, uint32_t layer, const char *ns, Output *o);
 void    widget_repaint(Widget *w, int first_configure);
 void    widget_rescale_output(Output *o);
+void    widget_set_scale(Widget *w, int s120);   /* restamp + repool + repaint */
 void    widget_ensure_pool(Widget *w, int n_slots);
 /* Release the SHM pool (destroys buffers, destroys pool, munmaps, closes fd).
  * Safe to call after a frame.done has confirmed the compositor consumed the
@@ -346,7 +359,7 @@ void    widget_set_input_region_multi(Widget *w, const Rect *rects, int n);
  * takes LOGICAL geometry (sw/sh included) and multiplies by the scale set
  * here; the buffer is widget_pw x widget_ph physical pixels. Call this once
  * per surface render, before the first primitive. */
-void render_set_scale(int scale);
+void render_set_scale(int scale120);   /* 120ths: 120 = 1x, 180 = 1.5x */
 
 void clear_buf(uint32_t *px, int w, int h, uint32_t c);
 void fill_rect(uint32_t *px, int sw, int sh, int x, int y, int w, int h, uint32_t c);

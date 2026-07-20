@@ -101,6 +101,11 @@ void widget_destroy(Widget *w) {
         wl_req(w->layer_surface, LS_REQ_DESTROY, NULL, 0, -1);
         w->layer_surface = 0;
     }
+#ifdef WISP_FRACTIONAL
+    if (w->frac_scale) { wl_req(w->frac_scale, FRAC_REQ_DESTROY, NULL, 0, -1); w->frac_scale = 0; }
+    if (w->viewport)   { wl_req(w->viewport, VIEWPORT_REQ_DESTROY, NULL, 0, -1); w->viewport = 0; }
+    w->sent_dw = w->sent_dh = 0;
+#endif
     if (w->surface) {
         wl_req(w->surface, SURFACE_REQ_DESTROY, NULL, 0, -1);
         w->surface = 0;
@@ -123,16 +128,40 @@ void widget_destroy(Widget *w) {
     w->kind = W_NONE;
 }
 
+#ifdef WISP_FRACTIONAL
+/* Both halves are required: without a viewport a non-integer buffer size has
+ * no legal logical size, so we take neither or both. */
+void widget_frac_attach(Widget *w) {
+    if (!id_viewporter || !id_frac_mgr || !w->surface || w->viewport) return;
+    w->viewport = wl_new_id();
+    { uint32_t a[2] = { w->viewport, w->surface };
+      wl_req(id_viewporter, VIEWPORTER_REQ_GET_VIEWPORT, a, 2, -1); }
+    w->frac_scale = wl_new_id();
+    { uint32_t a[2] = { w->frac_scale, w->surface };
+      wl_req(id_frac_mgr, FRAC_MGR_REQ_GET_FRACTIONAL_SCALE, a, 2, -1); }
+}
+
+Widget *widget_by_frac(uint32_t obj) {
+    if (!obj) return NULL;
+    for (int i = 0; i < MAX_WIDGETS; i++)
+        if (widgets[i].kind != W_NONE && widgets[i].frac_scale == obj) return &widgets[i];
+    return NULL;
+}
+#endif
+
 void widget_setup_surface(Widget *w, uint32_t layer, const char *ns, Output *o) {
     w->output        = o;
     /* Output-agnostic surfaces (menu/osd) follow the focused output. */
-    w->scale         = o ? o->scale : (focused_output ? focused_output->scale : 1);
-    if (w->scale < 1) w->scale = 1;
-    if (compositor_ver < 3) w->scale = 1;   /* set_buffer_scale is wl_surface v3 */
+    w->scale120      = o ? o->scale120 : (focused_output ? focused_output->scale120 : 120);
+    if (w->scale120 < 120) w->scale120 = 120;
+    if (compositor_ver < 3) w->scale120 = 120;   /* set_buffer_scale is wl_surface v3 */
     w->surface       = wl_new_id();
     w->layer_surface = wl_new_id();
     uint32_t sa = w->surface;
     wl_req(id_compositor, COMPOSITOR_REQ_CREATE_SURFACE, &sa, 1, -1);
+#ifdef WISP_FRACTIONAL
+    widget_frac_attach(w);
+#endif
     uint32_t b[64];
     /* layer-shell.get_layer_surface(new_id, surface, output, layer, ns) — wire
        order: id, surface, output, layer, ns. Manual build because mid-position
@@ -211,7 +240,7 @@ void widget_set_input_region_multi(Widget *w, const Rect *rects, int n) {
 
 void widget_ensure_pool(Widget *w, int n_slots) {
     if (w->w <= 0 || w->h <= 0 || n_slots <= 0) return;
-    if (w->scale < 1) w->scale = 1;
+    if (w->scale120 < 120) w->scale120 = 120;
     int pw = widget_pw(w), ph = widget_ph(w);
     int stride = pw * 4;
     int one = stride * ph;
@@ -246,19 +275,29 @@ BufSlot *widget_free_slot(Widget *w) {
     /* Every render path acquires its buffer here, so this is the one choke
      * point where the primitives' logical->physical scale can be armed
      * without touching each (partly generated) render entry point. */
-    render_set_scale(w->scale);
+    render_set_scale(w->scale120);
     for (int i = 0; i < w->n_slots; i++)
         if (!w->slots[i].busy) return &w->slots[i];
     return NULL;
 }
 
 void widget_attach(Widget *w, BufSlot *s, int request_frame) {
+#ifdef WISP_FRACTIONAL
+    /* buffer_scale stays 1 here; the viewport maps the physical buffer back
+     * onto the logical size, which is what makes a non-integer scale legal. */
+    if (w->viewport && (w->sent_dw != w->w || w->sent_dh != w->h)) {
+        uint32_t d[2] = { (uint32_t)w->w, (uint32_t)w->h };
+        wl_req(w->viewport, VIEWPORT_REQ_SET_DESTINATION, d, 2, -1);
+        w->sent_dw = w->w; w->sent_dh = w->h;
+    }
+    if (!w->viewport)
+#endif
     /* Must accompany the first buffer of a new scale, or the compositor reads
      * the physical buffer as logical and shows a surface scale× too big. */
-    if (w->sent_scale != w->scale && compositor_ver >= 3) {
-        uint32_t sc = (uint32_t)w->scale;
+    if (w->sent_scale120 != w->scale120 && compositor_ver >= 3) {
+        uint32_t sc = (uint32_t)(w->scale120 / 120);
         wl_req(w->surface, SURFACE_REQ_SET_BUFFER_SCALE, &sc, 1, -1);
-        w->sent_scale = w->scale;
+        w->sent_scale120 = w->scale120;
     }
     uint32_t at[3] = { s->id, 0, 0 };
     wl_req(w->surface, SURFACE_REQ_ATTACH, at, 3, -1);
