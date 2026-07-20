@@ -79,8 +79,11 @@ static const uint32_t ICONS[] = {
     0xf28d,   /* pause / hibernate */
     0xf08b,   /* sign-out / logout */
 };
-#define N_ICONS (int)(sizeof ICONS / sizeof *ICONS)
+#define N_BUILTIN_ICONS (int)(sizeof ICONS / sizeof *ICONS)
 
+/* Icons the .wisp declares (`icon = 0x...`) or spells out as literal UTF-8 are
+ * passed in as `+0xNNNN` args by wispc; the builtin list above only covers what
+ * the runtime itself draws. */
 /* Staging glyph (host-side). Field order matches the runtime Glyph emitted
  * into bake.h / declared in src/font.h. */
 typedef struct {
@@ -106,6 +109,21 @@ static void *xrealloc(void *p, size_t n) {
     void *q = realloc(p, n);
     if (!q) { fprintf(stderr, "oom\n"); exit(1); }
     return q;
+}
+
+static uint32_t *WANT;
+static int N_ICONS;
+
+static void want_add(uint32_t cp) {
+    for (int i = 0; i < N_ICONS; i++) if (WANT[i] == cp) return;
+    WANT = xrealloc(WANT, sizeof *WANT * (size_t)(N_ICONS + 1));
+    WANT[N_ICONS++] = cp;
+}
+
+static void want_init(int argc, char **argv) {
+    for (int i = 0; i < N_BUILTIN_ICONS; i++) want_add(ICONS[i]);
+    for (int i = 1; i < argc; i++)
+        if (argv[i][0] == '+') want_add((uint32_t)strtoul(argv[i] + 1, NULL, 0));
 }
 
 static void push_pixels(Bake *b, const uint8_t *src, int n) {
@@ -134,7 +152,7 @@ static int cmp_glyph(const void *a, const void *b) {
 
 static int is_wanted(uint32_t cp) {
     if (cp >= 32 && cp <= 126) return 1;
-    for (int i = 0; i < N_ICONS; i++) if (ICONS[i] == cp) return 1;
+    for (int i = 0; i < N_ICONS; i++) if (WANT[i] == cp) return 1;
     return 0;
 }
 
@@ -177,7 +195,7 @@ static void bake_ttf_size(FT_Library ft, const char *font_path, int px_size, Bak
     b->baseline = face->size->metrics.ascender >> 6;
 
     for (uint32_t c = 32; c <= 126; c++) rasterize(face, c, b);
-    for (int i = 0; i < N_ICONS; i++)    rasterize(face, ICONS[i], b);
+    for (int i = 0; i < N_ICONS; i++)    rasterize(face, WANT[i], b);
 
     qsort(b->glyphs, b->n_glyphs, sizeof(Glyph), cmp_glyph);
     FT_Done_Face(face);
@@ -304,7 +322,7 @@ static void read_psf(const uint8_t *d, size_t len, Bake *b) {
         /* pass 0: ASCII range; pass 1: icons */
         int count = pass ? N_ICONS : (int)(hi - lo + 1);
         for (int j = 0; j < count; j++) {
-            uint32_t cp = pass ? ICONS[j] : lo + j;
+            uint32_t cp = pass ? WANT[j] : lo + j;
             int idx = has_uc ? cpmap_lookup(map, nmap, cp)
                              : (cp < (uint32_t)length ? (int)cp : -1);
             if (idx < 0) continue;
@@ -479,6 +497,7 @@ static int collect_sizes(int argc, char **argv, int first, int *sizes, int cap) 
     sizes[n++] = ALIAS_SMALL;
     sizes[n++] = ALIAS_LARGE;
     for (int i = first; i < argc && n < cap; i++) {
+        if (argv[i][0] == '+') continue;      /* codepoint request, not a size */
         int v = atoi(argv[i]);
         if (v < 4 || v > 256) {
             fprintf(stderr, "bake: ignoring out-of-range size %s\n", argv[i]);
@@ -503,6 +522,7 @@ static enum Fmt detect_fmt(const uint8_t *d, size_t len) {
 }
 
 int main(int argc, char **argv) {
+    want_init(argc, argv);
     int sizes[64];
 
     /* --ft-stub: emit runtime skeletons, no glyph data. */

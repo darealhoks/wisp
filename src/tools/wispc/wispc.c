@@ -124,6 +124,25 @@ static void print_deps(SemaResult *r) {
 
 /* Print one unique font_size per line, ascending. The Makefile pipes the
  * output to `bake` so every size referenced by the unit gets a baked font. */
+/* Codepoints the config needs baked: `icon = 0x...` literals and any non-ASCII
+ * character in the source. Lexical on purpose — icons hide inside nested
+ * ternaries and string interpolations that an AST walk would have to chase. */
+static void print_font_glyphs(const char *src) {
+    for (const unsigned char *p = (const unsigned char *)src; *p; p++) {
+        if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) {
+            char *end; unsigned long v = strtoul((const char *)p + 2, &end, 16);
+            if (end > (char *)p + 2 && v > 0xff && v <= 0x10ffff) printf("+0x%lx\n", v);
+            p = (const unsigned char *)end - 1;
+        } else if (*p >= 0x80) {
+            unsigned n = (*p & 0xe0) == 0xc0 ? 2 : (*p & 0xf0) == 0xe0 ? 3 : (*p & 0xf8) == 0xf0 ? 4 : 1;
+            unsigned long cp = n == 1 ? 0 : *p & (0xffu >> (n + 1));
+            for (unsigned k = 1; k < n && p[k]; k++) cp = (cp << 6) | (p[k] & 0x3f);
+            if (cp > 0x7f) printf("+0x%lx\n", cp);
+            p += n - 1;
+        }
+    }
+}
+
 static void print_font_sizes(Unit *u) {
     int sizes[64]; int n = 0;
     for (int i = 0; i < u->n; i++) {
@@ -242,7 +261,7 @@ int main(int argc, char **argv) {
     if (diag_count() > 0) { arena_free(a); free(src); return 1; }
 
     if (mode == MODE_AST)   { dump_unit(stdout, u);   arena_free(a); free(src); return 0; }
-    if (mode == MODE_FONTS) { print_font_sizes(u);    arena_free(a); free(src); return 0; }
+    if (mode == MODE_FONTS) { print_font_sizes(u); print_font_glyphs(src); arena_free(a); free(src); return 0; }
 
     SemaResult *r = sema_check(a, u);
     if (diag_count() > 0) { arena_free(a); free(src); return 1; }
