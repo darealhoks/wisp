@@ -23,7 +23,7 @@ static const SrcDrv DRVS[] = {
                                {"ok", "(status.vpn_state == 1)", 0}} },
     { "wifi",    DRV_STATUS,  {{"ssid", "wispgen_wifi_ssid()", 1},
                                {"signal", "status.wifi_level", 0}} },
-    { "dwl_tags",DRV_DWL_TAGS,{{"title", "(($W)->s.bar.title)", 1}} },
+    { "tags",DRV_TAGS,{{"title", "(($W)->s.bar.title)", 1}} },
     /* DRV_WISP: value is read straight from daemon state, so polling it via
      * `exec_line("wispctl …")` (a fork + socket round-trip back into ourselves
      * every tick) is pure waste — these are free and update instantly. */
@@ -129,15 +129,15 @@ int collect_srcs(Unit *u, SrcInst *out, int max) {
             }
             out[n].fmt  = c->call.args[0]->str.s; out[n].flen  = c->call.args[0]->str.n;
             out[n].arg2 = c->call.args[1]->str.s; out[n].a2len = c->call.args[1]->str.n;
-        } else if (drv->drv == DRV_DWL_TAGS) {
-            /* dwl_tags(labels="term www chat", pinned="1 2 3") — both optional.
+        } else if (drv->drv == DRV_TAGS) {
+            /* tags(labels="term www chat", pinned="1 2 3") — both optional.
              * labels: space-separated, overrides TAG_LABELS positionally.
              * pinned: tag numbers whose pills always show (tag.pinned field). */
             for (int k = 0; k < c->call.nargs; k++) {
                 const char *kn = c->call.argnames ? c->call.argnames[k] : NULL;
                 size_t kl = c->call.anlen ? c->call.anlen[k] : 0;
                 if (!kn || c->call.args[k]->kind != EX_STRING) {
-                    diag_error(d->loc, "codegen: dwl_tags() args must be labels=\"...\" / pinned=\"...\"");
+                    diag_error(d->loc, "codegen: tags() args must be labels=\"...\" / pinned=\"...\"");
                     return -1;
                 }
                 if (kl == 6 && memcmp(kn, "labels", 6) == 0) {
@@ -147,7 +147,7 @@ int collect_srcs(Unit *u, SrcInst *out, int max) {
                     out[n].arg2  = c->call.args[k]->str.s;
                     out[n].a2len = c->call.args[k]->str.n;
                 } else {
-                    diag_error(d->loc, "codegen: dwl_tags() has no arg '%.*s'", (int)kl, kn);
+                    diag_error(d->loc, "codegen: tags() has no arg '%.*s'", (int)kl, kn);
                     return -1;
                 }
             }
@@ -177,8 +177,8 @@ int has_status_src(SrcInst *s, int n) {
     for (int i = 0; i < n; i++) if (s[i].drv->drv == DRV_STATUS) return 1;
     return 0;
 }
-int has_dwl_tags(SrcInst *s, int n) {
-    for (int i = 0; i < n; i++) if (s[i].drv->drv == DRV_DWL_TAGS) return 1;
+int has_tags(SrcInst *s, int n) {
+    for (int i = 0; i < n; i++) if (s[i].drv->drv == DRV_TAGS) return 1;
     return 0;
 }
 int has_dbus_src(SrcInst *s, int n) {
@@ -245,7 +245,7 @@ void emit_sources(FILE *o, SrcInst *srcs, int nsrc) {
     }
 
     /* Per-source state — clock owns its own timerfd; status sources share
-     * the global tick fd; dwl_tags has no fd (driven by wl_dispatch). */
+     * the global tick fd; tags has no fd (driven by wl_dispatch). */
     for (int i = 0; i < nsrc; i++) {
         SrcInst *s = &srcs[i];
         const char *nm = sname(s->decl->name, s->decl->nlen);
@@ -297,7 +297,7 @@ void emit_sources(FILE *o, SrcInst *srcs, int nsrc) {
             }
             free(fmt);
         }
-        /* DRV_STATUS and DRV_DWL_TAGS need only on_<n>_change(); the actual
+        /* DRV_STATUS and DRV_TAGS need only on_<n>_change(); the actual
          * dirty-flag setting is in gen_bindings.c. They're triggered by the
          * shared status tick / wl frame, not by a per-source fd. */
         if (s->drv->drv == DRV_EXEC) {
@@ -432,7 +432,7 @@ void emit_sources(FILE *o, SrcInst *srcs, int nsrc) {
         }
     }
     /* Shared status tick: fires every second, runs status_sample_all, then
-     * calls every status source's on_change. dwl_tags sources are pinged
+     * calls every status source's on_change. tags sources are pinged
      * from wl.c whenever bar_set_tags_on/title_on writes. */
     if (has_status_src(srcs, nsrc)) {
         fputs("int wispgen_status_tfd = -1;\n", o);
@@ -456,11 +456,11 @@ void emit_sources(FILE *o, SrcInst *srcs, int nsrc) {
         }
         fputs("}\n\n", o);
     }
-    /* Always emit wispgen_dwl_tags_changed() — empty stub if no dwl_tags
+    /* Always emit wispgen_tags_changed() — empty stub if no tags
      * source. The generated bar setters call it unconditionally. */
-    fputs("void wispgen_dwl_tags_changed(void) {\n", o);
+    fputs("void wispgen_tags_changed(void) {\n", o);
     for (int i = 0; i < nsrc; i++) {
-        if (srcs[i].drv->drv != DRV_DWL_TAGS) continue;
+        if (srcs[i].drv->drv != DRV_TAGS) continue;
         fprintf(o, "    on_%s_change();\n", sname(srcs[i].decl->name, srcs[i].decl->nlen));
     }
     fputs("}\n\n", o);
@@ -477,7 +477,7 @@ void emit_sources(FILE *o, SrcInst *srcs, int nsrc) {
         }
         fputs("}\n\n", o);
     }
-    (void)has_dwl_tags;
+    (void)has_tags;
 }
 
 /* ============================================================ */

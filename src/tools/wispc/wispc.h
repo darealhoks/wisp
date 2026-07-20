@@ -276,7 +276,7 @@ typedef struct SemaResult {
     /* feature set */
     bool has_dbus, has_osd, has_menu, has_hud, has_bar, has_lock, has_gamma, has_wallpaper, has_media, has_anim;
     bool has_src_cpu, has_src_mem, has_src_temp, has_src_bat, has_src_wifi, has_src_disk, has_src_vpn;
-    bool has_src_fs, has_src_exec, has_src_sock, has_src_pw, has_src_dwl, has_src_hypr;
+    bool has_src_fs, has_src_exec, has_src_sock, has_src_pw, has_src_tags, has_src_hypr;
 } SemaResult;
 
 SemaResult *sema_check(Arena *a, Unit *u);
@@ -284,7 +284,7 @@ SemaResult *sema_check(Arena *a, Unit *u);
 /* ---------- codegen ---------- */
 /* Emits gen_main.c, gen_sources.c, gen_surfaces.c, gen_bindings.c into dir.
  * Supports the DSL slice needed by configs/minimal.wisp + configs/bar.wisp:
- *   sources:  clock, cpu, mem, temp, bat, disk, vpn, wifi, dwl_tags
+ *   sources:  clock, cpu, mem, temp, bat, disk, vpn, wifi, tags
  *   surfaces: single anchored "bar" with multi-widget left/right flex pack,
  *             icon+text widgets, ternary/member/interp expressions,
  *             `for tag in tags.list { cell { … } }`, visible=expr guard,

@@ -55,8 +55,8 @@ int collect_bar_items(SBody *body, int nbody, BarItem *out, int max,
             }
         } else if (b->kind == SB_FOR) {
             ForBlock *f = b->forb;
-            /* iter must be IDENT.list (dwl_tags) or IDENT.history (dbus_signal). */
-            const char *dwl_src = NULL, *dbus_src = NULL;
+            /* iter must be IDENT.list (tags) or IDENT.history (dbus_signal). */
+            const char *tags_src = NULL, *dbus_src = NULL;
             if (f->iter && f->iter->kind == EX_MEMBER &&
                 f->iter->member.base->kind == EX_IDENT) {
                 SrcInst *si = find_inst(ctx->srcs, ctx->nsrc,
@@ -64,23 +64,23 @@ int collect_bar_items(SBody *body, int nbody, BarItem *out, int max,
                                         f->iter->member.base->ident.n);
                 if (si && f->iter->member.flen == 4 &&
                     memcmp(f->iter->member.field, "list", 4) == 0 &&
-                    si->drv->drv == DRV_DWL_TAGS)
-                    dwl_src = sname(si->decl->name, si->decl->nlen);
+                    si->drv->drv == DRV_TAGS)
+                    tags_src = sname(si->decl->name, si->decl->nlen);
                 else if (si && f->iter->member.flen == 7 &&
                          memcmp(f->iter->member.field, "history", 7) == 0 &&
                          si->drv->drv == DRV_DBUS)
                     dbus_src = sname(si->decl->name, si->decl->nlen);
             }
-            if (!dwl_src && !dbus_src) {
-                diag_error(f->loc, "codegen: for-iter must be <dwl_tags-src>.list or <dbus_signal-src>.history");
+            if (!tags_src && !dbus_src) {
+                diag_error(f->loc, "codegen: for-iter must be <tags-src>.list or <dbus_signal-src>.history");
                 *err = 1; return n;
             }
             if (f->ncells != 1) {
                 diag_error(f->loc, "codegen: for-block must contain exactly one cell { … }");
                 *err = 1; return n;
             }
-            if (dwl_src) {
-                char *src_dup = strdup(dwl_src);
+            if (tags_src) {
+                char *src_dup = strdup(tags_src);
                 for (int k = 0; k < 9 /* MAX_TAGS */; k++) {
                     if (n >= max) { *err = 1; return n; }
                     out[n] = (BarItem){0}; out[n].slider_idx = -1; out[n].group_id = -1;

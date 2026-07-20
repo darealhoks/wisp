@@ -1,6 +1,6 @@
 source time   = clock("%H:%M");
 source date_s = clock("%b %-d");
-source tags   = dwl_tags();
+source tags   = tags();
 source cpu_s  = cpu();
 source mem_s  = mem();
 source bat_s  = bat("BAT0");

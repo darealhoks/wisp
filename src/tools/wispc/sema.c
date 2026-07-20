@@ -14,7 +14,7 @@ typedef struct {
 enum {
     F_NONE = 0,
     F_CLOCK, F_CPU, F_MEM, F_TEMP, F_BAT, F_WIFI, F_DISK, F_VPN,
-    F_DWL, F_HYPR, F_MEDIA, F_FS, F_EXEC, F_DBUS, F_SOCK, F_PW, F_TIMER,
+    F_TAGS, F_HYPR, F_MEDIA, F_FS, F_EXEC, F_DBUS, F_SOCK, F_PW, F_TIMER,
 };
 
 static const SrcDef SOURCES[] = {
@@ -26,7 +26,7 @@ static const SrcDef SOURCES[] = {
     {"wifi",                 "ssid",   "ssid signal", F_WIFI },
     {"disk",                 "pct",    "pct free_gb", F_DISK },
     {"vpn",                  "state",  "state ok", F_VPN },
-    {"dwl_tags",             "title",  "title list occ act urg", F_DWL },
+    {"tags",             "title",  "title list occ act urg", F_TAGS },
     {"hyprland_workspaces",  "act",    "occ act", F_HYPR },
     {"mpris",                "title",  "title artist playing", F_MEDIA },
     {"inotify",              "value",  "value", F_FS },
@@ -131,7 +131,7 @@ static void set_flag(SemaResult *r, int f) {
     case F_WIFI: r->has_src_wifi = 1; break;
     case F_DISK: r->has_src_disk = 1; break;
     case F_VPN:  r->has_src_vpn = 1; break;
-    case F_DWL:  r->has_src_dwl = 1; break;
+    case F_TAGS:  r->has_src_tags = 1; break;
     case F_HYPR: r->has_src_hypr = 1; break;
     case F_MEDIA:r->has_media = 1; r->has_dbus = 1; break;
     case F_FS:   r->has_src_fs = 1; break;

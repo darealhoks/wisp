@@ -47,7 +47,7 @@ int         widget_value_align(Widget *w);
 typedef enum {
     DRV_CLOCK,
     DRV_STATUS,
-    DRV_DWL_TAGS,
+    DRV_TAGS,
     DRV_EXEC,
     DRV_DBUS,
     DRV_WISP,   /* in-process daemon state; no fd, pinged by wispgen_wisp_state_changed() */
@@ -73,7 +73,7 @@ const char   *drv_field_expr(const SrcDrv *d, const char *f, size_t n, int *is_s
 int           collect_srcs(Unit *u, SrcInst *out, int max);
 SrcInst      *find_inst(SrcInst *s, int n, const char *name, size_t L);
 int           has_status_src(SrcInst *s, int n);
-int           has_dwl_tags(SrcInst *s, int n);
+int           has_tags(SrcInst *s, int n);
 int           has_dbus_src(SrcInst *s, int n);
 void          emit_sources(FILE *o, SrcInst *srcs, int nsrc);
 void          emit_bindings(FILE *o, SrcInst *srcs, int nsrc, SemaResult *r,

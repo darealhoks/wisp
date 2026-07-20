@@ -1,8 +1,10 @@
 # wisp
 
 **W**idget **I**nterface, **S**ingle **P**rocess — one Wayland daemon that draws
-a whole desktop shell. Currently only developed on [mangoWM](https://github.com/DreamMaoMao/mango);
-it needs `wlr-layer-shell-unstable-v1` and nothing else from the compositor.
+a whole desktop shell. All it needs is `wlr-layer-shell-unstable-v1`, plus
+`ext-workspace-v1` if you want workspace tags (sway, niri, hyprland, labwc,
+cosmic, kwin, patched dwl). Developed on [mangoWM](https://github.com/DreamMaoMao/mango),
+which is served by a small IPC fallback instead.
 
 Bar, hover panels, notification slabs, app menu, session lock, night-mode gamma
 and wallpaper are not separate features. They are **surfaces**: the same layer
@@ -10,8 +12,8 @@ of Wayland surface, configured differently. What you declare is what exists.
 
 Everything visible or interactive is declared in a `.wisp` file, which the
 bundled compiler `wispc` lowers to C and links into the daemon. There is no
-runtime config file and no plugin loading. Writing `dwl_tags()` links the IPC
-client; declaring an osd surface links the D-Bus client; a config that mentions
+runtime config file and no plugin loading. Writing `tags()` links the
+workspace client; declaring an osd surface links the D-Bus client; a config that mentions
 neither produces a binary containing neither.
 
 The process links **libc and libm**. Wayland and D-Bus are spoken as raw wire,

@@ -74,7 +74,7 @@ These are the sources that work:
 | `wifi(iface=)` | `ssid` `signal` | |
 | `disk(path=)` | `pct` `free_gb` | |
 | `vpn(provider=)` | `state` `ok` | |
-| `dwl_tags(labels=, pinned=)` | `title`, `list` | `list` is for `for` only |
+| `tags(labels=, pinned=)` | `title`, `list` | `list` is for `for` only |
 | `gamma_warm()` | `value` | "1" or "0" |
 | `dnd()` | `value` | "on" or "off" |
 | `ui_hidden()` | `value` | "1" or "0", driven by `wispctl hide` |
@@ -304,9 +304,9 @@ item.
 `tag.output` is the slot index of the monitor the bar is on. Passing it to
 `wispctl tag` switches the clicked monitor rather than the keyboard-focused one.
 
-`dwl_tags()` takes two optional named args, both space-separated strings:
+`tags()` takes two optional named args, both space-separated strings:
 
-    source tags = dwl_tags(labels = "term www chat", pinned = "1 2 3");
+    source tags = tags(labels = "term www chat", pinned = "1 2 3");
 
 `labels` overrides the pill text positionally (unlisted tags keep their
 number); `pinned` names tags whose `tag.pinned` is true — put it in `visible`
@@ -415,7 +415,7 @@ not using it leaves the code out of the binary entirely.
 |---|---|
 | `exec_line(...)` | the exec runner |
 | `dbus_signal(...)` | the D-Bus client |
-| `dwl_tags()` | the workspace backends (mango IPC + ext-workspace) |
+| `tags()` | the workspace backends (mango IPC + ext-workspace) |
 | a surface with `reveal_on_hover` | `hud.c` |
 | `surface osd { spawned_by = osd }` | `osd.c` and D-Bus |
 | `exclusive_zone = -1`, or a surface named `menu` | `menu.c` |

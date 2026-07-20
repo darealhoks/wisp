@@ -48,7 +48,7 @@ static void emit_features(FILE *o, SemaResult *r) {
     if (r->has_bar || any_src) fputs("#define WISP_HAS_STATUS 1\n", o);
     P(has_src_cpu, "SRC_CPU");   P(has_src_mem, "SRC_MEM");   P(has_src_temp, "SRC_TEMP");
     P(has_src_bat, "SRC_BAT");   P(has_src_wifi, "SRC_WIFI"); P(has_src_disk, "SRC_DISK");
-    P(has_src_vpn, "SRC_VPN");   P(has_src_dwl, "SRC_DWL");   P(has_src_hypr, "SRC_HYPR");
+    P(has_src_vpn, "SRC_VPN");   P(has_src_tags, "SRC_TAGS");   P(has_src_hypr, "SRC_HYPR");
     P(has_src_fs, "SRC_FS");     P(has_src_exec, "SRC_EXEC"); P(has_src_sock, "SRC_SOCK");
     P(has_src_pw, "SRC_PW");
     #undef P

@@ -168,10 +168,11 @@ Groups hold plain widgets, so no sliders and no `for` inside one.
 
 ## Workspaces
 
-Workspace tags come from the compositor over dwl-ipc, and they arrive as a list.
+Workspace tags come from the compositor (`ext-workspace-v1`, or mango's IPC as
+a fallback), and they arrive as a list.
 A list is drawn with `for`, which needs exactly one `cell`:
 
-    source tags = dwl_tags();
+    source tags = tags();
 
     surface bar {
       ...
@@ -302,7 +303,7 @@ Roughly 60 lines that compile into a daemon linking libc and libm, drawing a bar
 that costs nothing while it sits still.
 
 Notice what you never did: no plugin was enabled, no module list was configured.
-Writing `dwl_tags()` linked dwl-ipc. Declaring the osd surface linked the D-Bus
+Writing `tags()` linked the workspace client. Declaring the osd surface linked the D-Bus
 client. A config without them produces a binary that does not contain that code
 at all.
 
