@@ -72,6 +72,7 @@ void wl_dispatch(void);
  * (wl_output, zwlr_gamma_control_v1, lock_surface)
  * live on the Output struct below — these are session-wide singletons. */
 extern uint32_t id_compositor, id_shm, id_seat;
+extern uint32_t compositor_ver;      /* bound wl_compositor version (set_buffer_scale needs 3) */
 extern uint32_t id_layer_shell, id_wm_base;
 extern uint32_t id_pointer, id_keyboard;
 extern uint32_t id_gamma_mgr;
@@ -112,6 +113,7 @@ struct Output {
     int      last_applied_k;         /* last Kelvin written to this output */
     int      widgets_created;        /* bar/wall/hud spawned for this output */
     int      mode_w, mode_h;         /* current mode pixel size (wl_output.mode) */
+    int      scale;                  /* wl_output.scale (integer), always >= 1 */
     struct Widget *bar, *wall, *hud, *lock;
 };
 
@@ -177,7 +179,12 @@ struct Widget {
     uint32_t   surface;
     uint32_t   layer_surface;
     int        configured;
+    /* Logical size. Buffers are w*scale by h*scale physical pixels; every
+     * coordinate outside the pixel layer (layout, input, cutouts) stays
+     * logical, which is what keeps the scale==1 path byte-identical. */
     int        w, h;
+    int        scale;                /* copy of the output's, >= 1 */
+    int        sent_scale;           /* last set_buffer_scale sent; 0 = none */
     int        client_fd;            /* deferred-reply fd, -1 if none */
 
     /* SHM pool: one pool, up to 2 slots ping-pong. */
@@ -289,7 +296,12 @@ void    widget_destroy(Widget *w);
 /* Pass NULL for `o` to let the compositor pick the output (dwl ships layer-
  * shell v3 which requires a non-null output, so callers must supply one in
  * practice — but we still send the call to keep upstream-future-compat). */
+/* Physical (buffer) dimensions — only the pixel layer may use these. */
+static inline int widget_pw(const Widget *w) { return w->w * w->scale; }
+static inline int widget_ph(const Widget *w) { return w->h * w->scale; }
 void    widget_setup_surface(Widget *w, uint32_t layer, const char *ns, Output *o);
+void    widget_repaint(Widget *w, int first_configure);
+void    widget_rescale_output(Output *o);
 void    widget_ensure_pool(Widget *w, int n_slots);
 /* Release the SHM pool (destroys buffers, destroys pool, munmaps, closes fd).
  * Safe to call after a frame.done has confirmed the compositor consumed the
@@ -330,7 +342,12 @@ void    widget_set_input_region_multi(Widget *w, const Rect *rects, int n);
 /* Rendering (render.c)                                          */
 /* ============================================================ */
 
-/* All colors are 0xAARRGGBB premultiplied at composite time. */
+/* All colors are 0xAARRGGBB premultiplied at composite time. Every primitive
+ * takes LOGICAL geometry (sw/sh included) and multiplies by the scale set
+ * here; the buffer is widget_pw x widget_ph physical pixels. Call this once
+ * per surface render, before the first primitive. */
+void render_set_scale(int scale);
+
 void clear_buf(uint32_t *px, int w, int h, uint32_t c);
 void fill_rect(uint32_t *px, int sw, int sh, int x, int y, int w, int h, uint32_t c);
 void fill_rect_rounded(uint32_t *px, int sw, int sh,

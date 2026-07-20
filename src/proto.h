@@ -50,6 +50,7 @@
 #define SURFACE_REQ_DAMAGE         2
 #define SURFACE_REQ_FRAME          3
 #define SURFACE_REQ_COMMIT         6
+#define SURFACE_REQ_SET_BUFFER_SCALE 8   /* since wl_surface v3 */
 #define SURFACE_REQ_DAMAGE_BUFFER  9
 
 /* wl_seat */

@@ -55,6 +55,10 @@ const Glyph *font_ft_find(const Font *f, uint32_t cp);
  * last call, then madvise(DONTNEED)s the font mmaps (re-fault from page cache on
  * the next miss). */
 void font_ft_trim(void);
+/* HiDPI: the same face rasterized at px_size*scale, with its own cache.
+ * Created on first use, so a scale-1 session never pays for it. Returns `f`
+ * itself when scale <= 1 or freetype is unavailable. */
+const Font *font_ft_at_scale(const Font *f, int scale);
 #else
 static inline void font_ft_trim(void) {}
 #endif

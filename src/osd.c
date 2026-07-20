@@ -321,7 +321,7 @@ static void osd_attach_empty(Widget *w) {
     widget_ensure_pool(w, 2);
     BufSlot *s = widget_free_slot(w);
     if (!s) return;
-    memset(s->px, 0, (size_t)w->w * w->h * 4);
+    memset(s->px, 0, (size_t)widget_pw(w) * widget_ph(w) * 4);
     widget_attach(w, s, 1);
     w->s.osd.has_pixels = 0;
     w->want_pool_free = 1;

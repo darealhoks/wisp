@@ -11,6 +11,14 @@
 #include <string.h>
 #include <math.h>
 
+/* Every primitive below takes LOGICAL geometry (including sw/sh — callers pass
+ * w->w/w->h) and multiplies it by the output scale on entry; the buffer itself
+ * is physical. Single-threaded, so one file-static is enough. At scale 1 the
+ * multiplies fold away to the previous behaviour. */
+static int cur_scale = 1;
+
+void render_set_scale(int s) { cur_scale = s < 1 ? 1 : s; }
+
 /* floor(x/255) for x in [0, 0xffff]; exact, branchless. */
 #define DIV255(x) (((x) + 1 + ((x) >> 8)) >> 8)
 
@@ -26,6 +34,7 @@ static inline uint32_t premul(uint32_t c) {
 }
 
 void clear_buf(uint32_t *px, int w, int h, uint32_t c) {
+    w *= cur_scale; h *= cur_scale;
     c = premul(c);
     int n = w * h, i = 0;
     /* 64-bit pair stores when aligned (shm pools are page-aligned, but a slot
@@ -89,6 +98,8 @@ static inline double sd_rbox(double px, double py, double cx, double cy,
  * Center may be fractional (knobs track sub-pixel positions). */
 void fill_circle(uint32_t *px, int sw, int sh, double cx, double cy, double r, uint32_t c) {
     if (r <= 0) return;
+    sw *= cur_scale; sh *= cur_scale;
+    cx *= cur_scale; cy *= cur_scale; r *= cur_scale;
     uint8_t ca = (c >> 24) & 0xff;
     if (!ca) return;
     uint8_t cr = (c >> 16) & 0xff, cg = (c >> 8) & 0xff, cb = c & 0xff;
@@ -115,6 +126,9 @@ void fill_circle(uint32_t *px, int sw, int sh, double cx, double cy, double r, u
 void fill_rounded_shadow(uint32_t *px, int sw, int sh,
                          int x, int y, int w, int h, int r, double blur, uint32_t c) {
     if (w <= 0 || h <= 0) return;
+    sw *= cur_scale; sh *= cur_scale;
+    x *= cur_scale; y *= cur_scale; w *= cur_scale; h *= cur_scale;
+    r *= cur_scale; blur *= cur_scale;
     uint8_t ca = (c >> 24) & 0xff;
     if (!ca) return;
     uint8_t cr = (c >> 16) & 0xff, cg = (c >> 8) & 0xff, cb = c & 0xff;
@@ -252,7 +266,8 @@ void draw_slider(uint32_t *px, int sw, int sh,
     }
 }
 
-void fill_rect(uint32_t *px, int sw, int sh, int x, int y, int w, int h, uint32_t c) {
+/* Physical-coordinate core; the public entry points scale into it. */
+static void fill_rect_px(uint32_t *px, int sw, int sh, int x, int y, int w, int h, uint32_t c) {
     int x0 = x < 0 ? 0 : x, y0 = y < 0 ? 0 : y;
     int x1 = x + w > sw ? sw : x + w;
     int y1 = y + h > sh ? sh : y + h;
@@ -264,13 +279,21 @@ void fill_rect(uint32_t *px, int sw, int sh, int x, int y, int w, int h, uint32_
     }
 }
 
+void fill_rect(uint32_t *px, int sw, int sh, int x, int y, int w, int h, uint32_t c) {
+    int s = cur_scale;
+    fill_rect_px(px, sw * s, sh * s, x * s, y * s, w * s, h * s, c);
+}
+
 void fill_rect_rounded(uint32_t *px, int sw, int sh,
                        int x, int y, int w, int h,
                        int r_tl, int r_tr, int r_br, int r_bl,
                        uint32_t c) {
     if (w <= 0 || h <= 0) return;
+    sw *= cur_scale; sh *= cur_scale;
+    x *= cur_scale; y *= cur_scale; w *= cur_scale; h *= cur_scale;
+    r_tl *= cur_scale; r_tr *= cur_scale; r_br *= cur_scale; r_bl *= cur_scale;
     if (r_tl == 0 && r_tr == 0 && r_br == 0 && r_bl == 0) {
-        fill_rect(px, sw, sh, x, y, w, h, c);
+        fill_rect_px(px, sw, sh, x, y, w, h, c);
         return;
     }
     int x0 = x < 0 ? 0 : x, y0 = y < 0 ? 0 : y;
@@ -370,6 +393,11 @@ void fill_rounded_clipped(uint32_t *px, int sw, int sh,
                           int cx, int cy, int cw, int ch,
                           int cr_tl, int cr_tr, int cr_br, int cr_bl, uint32_t c) {
     if (w <= 0 || h <= 0) return;
+    sw *= cur_scale; sh *= cur_scale;
+    x *= cur_scale; y *= cur_scale; w *= cur_scale; h *= cur_scale;
+    r_tl *= cur_scale; r_tr *= cur_scale; r_br *= cur_scale; r_bl *= cur_scale;
+    cx *= cur_scale; cy *= cur_scale; cw *= cur_scale; ch *= cur_scale;
+    cr_tl *= cur_scale; cr_tr *= cur_scale; cr_br *= cur_scale; cr_bl *= cur_scale;
     uint8_t ca = (c >> 24) & 0xff;
     if (!ca) return;
     uint8_t cr = (c >> 16) & 0xff, cg = (c >> 8) & 0xff, cb = c & 0xff;
@@ -406,6 +434,10 @@ void fill_rect_rounded_border(uint32_t *px, int sw, int sh,
                               int bw, int side_t, int side_r, int side_b, int side_l,
                               int clip_top, uint32_t c) {
     if (bw <= 0 || w <= 0 || h <= 0) return;
+    sw *= cur_scale; sh *= cur_scale;
+    x *= cur_scale; y *= cur_scale; w *= cur_scale; h *= cur_scale;
+    r_tl *= cur_scale; r_tr *= cur_scale; r_br *= cur_scale; r_bl *= cur_scale;
+    bw *= cur_scale; clip_top *= cur_scale;
     int rmax_w = w / 2, rmax_h = h / 2;
     int rm = rmax_w < rmax_h ? rmax_w : rmax_h;
     if (r_tl > rm) r_tl = rm;
@@ -484,6 +516,8 @@ void fill_corner_fillet(uint32_t *px, int sw, int sh,
                         int x_corner, int y_corner, int r, int corner_id,
                         uint32_t bg) {
     if (r <= 0) return;
+    sw *= cur_scale; sh *= cur_scale;
+    x_corner *= cur_scale; y_corner *= cur_scale; r *= cur_scale;
     /* Armpit bound depends on which corner. Disc center sits at the outer
      * corner of the armpit (opposite the surface body). Pixels outside the
      * disc (d² ≥ r²) get bg → inner wedge filled, outer wedge transparent. */
@@ -565,6 +599,8 @@ void fill_corner_fillet_border(uint32_t *px, int sw, int sh,
                                int x_corner, int y_corner, int r, int corner_id,
                                int bw, uint32_t c) {
     if (r <= 0 || bw <= 0) return;
+    sw *= cur_scale; sh *= cur_scale;
+    x_corner *= cur_scale; y_corner *= cur_scale; r *= cur_scale; bw *= cur_scale;
     int xlo, xhi, ylo, yhi;
     double cx, cy;
     switch (corner_id) {
@@ -633,6 +669,8 @@ void fill_corner_fillet_border(uint32_t *px, int sw, int sh,
 void punch_inner_corner(uint32_t *px, int sw, int sh,
                         int cx, int cy, int r, int corner_id) {
     if (r <= 0) return;
+    sw *= cur_scale; sh *= cur_scale;
+    cx *= cur_scale; cy *= cur_scale; r *= cur_scale;
     int bx0, by0, bx1, by1;
     switch (corner_id) {
     case 0: bx0 = cx;     by0 = cy;     bx1 = cx + r; by1 = cy + r; break;
@@ -674,6 +712,8 @@ void punch_inner_corner(uint32_t *px, int sw, int sh,
 void fill_inner_fillet(uint32_t *px, int sw, int sh,
                        int cx, int cy, int r, int corner_id, uint32_t color) {
     if (r <= 0) return;
+    sw *= cur_scale; sh *= cur_scale;
+    cx *= cur_scale; cy *= cur_scale; r *= cur_scale;
     int bx0, by0, bx1, by1;
     switch (corner_id) {
     case 0: bx0 = cx;     by0 = cy;     bx1 = cx + r; by1 = cy + r; break;
@@ -764,36 +804,43 @@ int text_width(const Font *f, const char *s) {
 /* Alpha-blend a single glyph's alpha8 bitmap onto a premultiplied-ARGB target.
  * For simplicity we treat the destination as already premultiplied-or-opaque
  * background and blend FG color modulated by glyph alpha as src-over. */
-void draw_glyph(uint32_t *px, int sw, int sh, int x, int y,
-                const Font *f, const Glyph *g, uint32_t fg) {
+/* `m` replicates each source pixel into an m x m block — the fallback when the
+ * strike is native-size on a scaled output (baked/bitmap backends). The source
+ * index is carried in a counter rather than an i/m divide: m == 1 is the whole
+ * scale-1 world and must not grow an idiv in the per-pixel loop. */
+static void draw_glyph_px(uint32_t *px, int sw, int sh, int x, int y,
+                          const Font *f, const Glyph *g, uint32_t fg, int m) {
     if (!g || g->w <= 0 || g->h <= 0) return;
-    int gx = x + g->bx;
-    int gy = y - g->by;     /* y is baseline; bitmap top is baseline - by */
+    int gx = x + g->bx * m;
+    int gy = y - g->by * m;     /* y is baseline; bitmap top is baseline - by */
     const uint8_t *src = f->px + g->px_off;
 
     if (g->color) {
         /* Premultiplied BGRA (color-bitmap emoji); drawn as-is, fg ignored.
          * src-over onto the ARGB target: out = src + dst*(255-a)/255. */
-        for (int j = 0; j < g->h; j++) {
-            int yy = gy + j;
-            if (yy < 0 || yy >= sh) continue;
-            for (int i = 0; i < g->w; i++) {
-                int xx = gx + i;
-                if (xx < 0 || xx >= sw) continue;
-                const uint8_t *p = src + ((size_t)j * g->w + i) * 4;
-                uint32_t a = p[3];
-                if (!a) continue;
-                uint32_t inv = 255 - a;
-                uint32_t d = px[yy * sw + xx];
-                uint32_t dr = (d >> 16) & 0xff, dg = (d >> 8) & 0xff, db = d & 0xff;
-                uint32_t da = (d >> 24) & 0xff;
-                /* Both src (premul BGRA emoji) and dst are premultiplied, so
-                 * each channel stays <= 255 — no clamp needed. */
-                uint32_t or_ = p[2] + DIV255(dr * inv);
-                uint32_t og  = p[1] + DIV255(dg * inv);
-                uint32_t ob  = p[0] + DIV255(db * inv);
-                uint32_t oa  = a + DIV255(da * inv);
-                px[yy * sw + xx] = (oa << 24) | (or_ << 16) | (og << 8) | ob;
+        for (int j = 0; j < g->h; j++)
+        for (int i = 0; i < g->w; i++) {
+            const uint8_t *p = src + ((size_t)j * g->w + i) * 4;
+            uint32_t a = p[3];
+            if (!a) continue;
+            uint32_t inv = 255 - a;
+            for (int by = 0; by < m; by++) {
+                int yy = gy + j * m + by;
+                if (yy < 0 || yy >= sh) continue;
+                for (int bx = 0; bx < m; bx++) {
+                    int xx = gx + i * m + bx;
+                    if (xx < 0 || xx >= sw) continue;
+                    uint32_t d = px[yy * sw + xx];
+                    uint32_t dr = (d >> 16) & 0xff, dg = (d >> 8) & 0xff, db = d & 0xff;
+                    uint32_t da = (d >> 24) & 0xff;
+                    /* Both src (premul BGRA emoji) and dst are premultiplied, so
+                     * each channel stays <= 255 — no clamp needed. */
+                    uint32_t or_ = p[2] + DIV255(dr * inv);
+                    uint32_t og  = p[1] + DIV255(dg * inv);
+                    uint32_t ob  = p[0] + DIV255(db * inv);
+                    uint32_t oa  = a + DIV255(da * inv);
+                    px[yy * sw + xx] = (oa << 24) | (or_ << 16) | (og << 8) | ob;
+                }
             }
         }
         return;
@@ -801,33 +848,63 @@ void draw_glyph(uint32_t *px, int sw, int sh, int x, int y,
 
     uint8_t fr = (fg >> 16) & 0xff, fg_g = (fg >> 8) & 0xff, fb = fg & 0xff;
     uint8_t fa = (fg >> 24) & 0xff;
-    for (int j = 0; j < g->h; j++) {
-        int yy = gy + j;
-        if (yy < 0 || yy >= sh) continue;
-        for (int i = 0; i < g->w; i++) {
-            int xx = gx + i;
-            if (xx < 0 || xx >= sw) continue;
-            uint8_t a = src[j * g->w + i];
-            if (!a) continue;
-            uint32_t na = DIV255(a * fa);
-            uint32_t d = px[yy * sw + xx];
-            uint8_t dr = (d >> 16) & 0xff, dg = (d >> 8) & 0xff, db = d & 0xff;
-            uint8_t da = (d >> 24) & 0xff;
-            uint32_t inv = 255 - na;
-            uint8_t or_ = DIV255(fr * na + dr * inv);
-            uint8_t og  = DIV255(fg_g * na + dg * inv);
-            uint8_t ob  = DIV255(fb * na + db * inv);
-            uint8_t oa  = na + DIV255(da * inv);
-            px[yy * sw + xx] = ((uint32_t)oa << 24) | ((uint32_t)or_ << 16)
-                             | ((uint32_t)og << 8)  | ob;
+    for (int j = 0; j < g->h; j++)
+    for (int i = 0; i < g->w; i++) {
+        uint8_t a = src[j * g->w + i];
+        if (!a) continue;
+        uint32_t na = DIV255(a * fa);
+        uint32_t inv = 255 - na;
+        for (int by = 0; by < m; by++) {
+            int yy = gy + j * m + by;
+            if (yy < 0 || yy >= sh) continue;
+            for (int bx = 0; bx < m; bx++) {
+                int xx = gx + i * m + bx;
+                if (xx < 0 || xx >= sw) continue;
+                uint32_t d = px[yy * sw + xx];
+                uint8_t dr = (d >> 16) & 0xff, dg = (d >> 8) & 0xff, db = d & 0xff;
+                uint8_t da = (d >> 24) & 0xff;
+                uint8_t or_ = DIV255(fr * na + dr * inv);
+                uint8_t og  = DIV255(fg_g * na + dg * inv);
+                uint8_t ob  = DIV255(fb * na + db * inv);
+                uint8_t oa  = na + DIV255(da * inv);
+                px[yy * sw + xx] = ((uint32_t)oa << 24) | ((uint32_t)or_ << 16)
+                                 | ((uint32_t)og << 8)  | ob;
+            }
         }
     }
 }
 
+/* Pick the strike to blit and how much to replicate it: the freetype backend
+ * can rasterize a real scale*px_size twin, the const-table backends can only
+ * pixel-double. Returns the font to read glyphs from; *m is the replication. */
+static const Font *strike_for(const Font *f, int s, int *m) {
+#ifdef WISP_FONT_FREETYPE
+    const Font *sf = font_ft_at_scale(f, s);
+    if (sf != f) { *m = 1; return sf; }
+#endif
+    *m = s;
+    return f;
+}
+
+void draw_glyph(uint32_t *px, int sw, int sh, int x, int y,
+                const Font *f, const Glyph *g, uint32_t fg) {
+    if (!g) return;
+    int s = cur_scale, m;
+    const Font *sf = strike_for(f, s, &m);
+    if (sf != f) { const Glyph *sg = font_find(sf, g->cp); if (sg) { f = sf; g = sg; } else m = s; }
+    draw_glyph_px(px, sw * s, sh * s, x * s, y * s, f, g, fg, m);
+}
+
+/* text_width() and the pen advances stay LOGICAL (advance * scale) so the
+ * generated centering math and the measured width can't drift apart; only the
+ * glyph bitmap comes from the physical strike. */
 void draw_text(uint32_t *px, int sw, int sh, int x, int y,
                const Font *f, const char *s, uint32_t fg) {
-    int pen_x = x;
-    int baseline = y + f->baseline;
+    int sc = cur_scale, m;
+    const Font *sf = strike_for(f, sc, &m);
+    sw *= sc; sh *= sc;
+    int pen_x = x * sc;
+    int baseline = y * sc + (sf == f ? f->baseline * sc : sf->baseline);
     while (*s) {
         uint32_t cp;
         int n = utf8_decode(s, &cp);
@@ -835,10 +912,14 @@ void draw_text(uint32_t *px, int sw, int sh, int x, int y,
         s += n;
         const Glyph *g = font_find(f, cp);
         if (g) {
-            draw_glyph(px, sw, sh, pen_x, baseline, f, g, fg);
-            pen_x += g->adv;
+            /* Miss in the scaled strike (font lost a glyph the native one has)
+             * falls back to pixel-doubling the native one. */
+            const Glyph *sg = sf == f ? NULL : font_find(sf, cp);
+            draw_glyph_px(px, sw, sh, pen_x, baseline, sg ? sf : f,
+                          sg ? sg : g, fg, sg ? 1 : sc);
+            pen_x += g->adv * sc;
         } else {
-            pen_x += f->px_size / 2;
+            pen_x += f->px_size / 2 * sc;
         }
     }
 }

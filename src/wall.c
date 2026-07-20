@@ -28,9 +28,12 @@ void wall_render(Widget *w) {
     /* Fast path: the disk cache already holds this exact output size, scaled
      * from the current file. A 4K source decodes in ~150ms; a read() of the
      * finished w*h buffer is a few ms, and it is what we'd have produced. */
-    uint32_t *cached = image_bgcache_load(WALL_PATH, w->w, w->h);
+    int pw = widget_pw(w), ph = widget_ph(w);
+    /* The disk cache keys on dst size, so a scaled output just caches the
+     * physical variant — no separate key needed. */
+    uint32_t *cached = image_bgcache_load(WALL_PATH, pw, ph);
     if (cached) {
-        memcpy(s->px, cached, (size_t)w->w * w->h * 4);
+        memcpy(s->px, cached, (size_t)pw * ph * 4);
         free(cached);
         w->s.wall.painted_w = w->w;
         w->s.wall.painted_h = w->h;
@@ -43,17 +46,17 @@ void wall_render(Widget *w) {
     uint8_t *src = image_load(WALL_PATH, &sw, &sh);
 
     if (src && sw > 1 && sh > 1) {
-        image_blit_cover(s->px, w->w, w->h, src, sw, sh);
+        image_blit_cover(s->px, pw, ph, src, sw, sh);
         image_free(src);
         /* Seed wisp-lock's background cache with the buffer we just built —
          * the lock shows the same unmodified wallpaper, so its first load
          * becomes a plain read() instead of a decode + scale. No-op when the
          * cache is already current. */
-        image_bgcache_store(WALL_PATH, w->w, w->h, s->px);
+        image_bgcache_store(WALL_PATH, pw, ph, s->px);
         w->s.wall.painted_w = w->w;
         w->s.wall.painted_h = w->h;
     } else {
-        clear_buf(s->px, w->w, w->h, WALL_BG);
+        clear_buf(s->px, w->w, w->h, WALL_BG);   /* clear_buf takes logical dims */
         msg("wisp: wallpaper decode failed (%s)", WALL_PATH);
     }
     /* Wallpaper attaches exactly once. The compositor will not fire

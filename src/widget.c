@@ -125,6 +125,10 @@ void widget_destroy(Widget *w) {
 
 void widget_setup_surface(Widget *w, uint32_t layer, const char *ns, Output *o) {
     w->output        = o;
+    /* Output-agnostic surfaces (menu/osd) follow the focused output. */
+    w->scale         = o ? o->scale : (focused_output ? focused_output->scale : 1);
+    if (w->scale < 1) w->scale = 1;
+    if (compositor_ver < 3) w->scale = 1;   /* set_buffer_scale is wl_surface v3 */
     w->surface       = wl_new_id();
     w->layer_surface = wl_new_id();
     uint32_t sa = w->surface;
@@ -207,8 +211,10 @@ void widget_set_input_region_multi(Widget *w, const Rect *rects, int n) {
 
 void widget_ensure_pool(Widget *w, int n_slots) {
     if (w->w <= 0 || w->h <= 0 || n_slots <= 0) return;
-    int stride = w->w * 4;
-    int one = stride * w->h;
+    if (w->scale < 1) w->scale = 1;
+    int pw = widget_pw(w), ph = widget_ph(w);
+    int stride = pw * 4;
+    int one = stride * ph;
     int total = one * n_slots;
     if (w->pool_size == total && w->n_slots == n_slots) return;
     widget_free_pool(w);
@@ -230,19 +236,30 @@ void widget_ensure_pool(Widget *w, int n_slots) {
         w->slots[i].busy = 0;
         w->slots[i].off = one * i;
         uint32_t ba[6] = { w->slots[i].id, (uint32_t)w->slots[i].off,
-                           (uint32_t)w->w, (uint32_t)w->h,
+                           (uint32_t)pw, (uint32_t)ph,
                            (uint32_t)stride, WL_SHM_FORMAT_ARGB8888 };
         wl_req(w->id_pool, POOL_REQ_CREATE_BUFFER, ba, 6, -1);
     }
 }
 
 BufSlot *widget_free_slot(Widget *w) {
+    /* Every render path acquires its buffer here, so this is the one choke
+     * point where the primitives' logical->physical scale can be armed
+     * without touching each (partly generated) render entry point. */
+    render_set_scale(w->scale);
     for (int i = 0; i < w->n_slots; i++)
         if (!w->slots[i].busy) return &w->slots[i];
     return NULL;
 }
 
 void widget_attach(Widget *w, BufSlot *s, int request_frame) {
+    /* Must accompany the first buffer of a new scale, or the compositor reads
+     * the physical buffer as logical and shows a surface scale× too big. */
+    if (w->sent_scale != w->scale && compositor_ver >= 3) {
+        uint32_t sc = (uint32_t)w->scale;
+        wl_req(w->surface, SURFACE_REQ_SET_BUFFER_SCALE, &sc, 1, -1);
+        w->sent_scale = w->scale;
+    }
     uint32_t at[3] = { s->id, 0, 0 };
     wl_req(w->surface, SURFACE_REQ_ATTACH, at, 3, -1);
     uint32_t dm[4] = { 0, 0, (uint32_t)w->w, (uint32_t)w->h };

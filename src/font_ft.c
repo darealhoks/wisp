@@ -299,6 +299,23 @@ const Glyph *font_ft_find(const Font *cf, uint32_t cp) {
     return cache_gray(f, cp, s, bm);
 }
 
+const Font *font_ft_at_scale(const Font *f, int scale) {
+    /* One twin per (font, scale). Two declared sizes x scale 2..4 fits easily;
+     * overflow just falls back to the native strike (blocky, not broken). */
+    static struct { const Font *base; int scale; Font *twin; } tw[8];
+    static int n_tw;
+    if (scale <= 1 || !ft_ok) return f;
+    for (int i = 0; i < n_tw; i++)
+        if (tw[i].base == f && tw[i].scale == scale) return tw[i].twin;
+    if (n_tw == (int)(sizeof tw / sizeof *tw)) return f;
+    Font *t = calloc(1, sizeof *t);
+    if (!t) return f;
+    t->px_size = f->px_size * scale;
+    tw[n_tw].base = f; tw[n_tw].scale = scale; tw[n_tw].twin = t;
+    n_tw++;
+    return t;   /* font_open() runs on its first font_ft_find() */
+}
+
 __attribute__((constructor, used))
 static void font_ft_init(void) {
     ft_load();

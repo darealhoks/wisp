@@ -218,6 +218,54 @@ void on_keyboard_event(uint16_t op, uint8_t *body, uint32_t bodylen) {
     }
 }
 
+/* Per-kind repaint. Shared by configure and the runtime output-scale change,
+ * which has to redraw without a configure ever arriving. */
+void widget_repaint(Widget *w, int first_configure) {
+    (void)first_configure;
+#ifdef WISP_HAS_BAR
+    if (w->kind == W_BAR) bar_render(w);
+#endif
+#ifdef WISP_HAS_WALL
+    if (w->kind == W_WALL) wall_render(w);
+#endif
+#ifdef WISP_HAS_MENU
+    if (w->kind == W_MENU) menu_render(w);
+#endif
+#ifdef WISP_HAS_OSD
+    if (w->kind == W_OSD) {
+        if (first_configure) osd_on_first_configure(w);
+        osd_render(w);
+    }
+#endif
+#ifdef WISP_HAS_HUD
+    if (w->kind == W_HUD) {
+        BufSlot *s = widget_free_slot(w);
+        if (!s) { widget_ensure_pool(w, 2); s = widget_free_slot(w); }
+        if (s) {
+            memset(s->px, 0, (size_t)widget_pw(w) * widget_ph(w) * 4);
+            widget_attach(w, s, 1);
+            w->want_pool_free = 1;
+        }
+    }
+#endif
+}
+
+/* wl_output.scale changed after startup: restamp every widget on that output,
+ * drop pools sized for the old scale, repaint. Rare (a monitorrule reload). */
+void widget_rescale_output(Output *o) {
+    if (compositor_ver < 3) return;
+    for (int i = 0; i < MAX_WIDGETS; i++) {
+        Widget *w = &widgets[i];
+        if (w->kind == W_NONE || w->output != o || w->scale == o->scale) continue;
+        w->scale = o->scale;
+        widget_free_pool(w);
+#ifdef WISP_HAS_WALL
+        if (w->kind == W_WALL) w->s.wall.painted_w = 0;   /* force re-decode */
+#endif
+        if (w->configured) widget_repaint(w, 0);
+    }
+}
+
 void on_ls_event(Widget *w, uint16_t op, uint8_t *body, uint32_t bodylen) {
     if (op == LS_EV_CONFIGURE) {
         if (bodylen < 12) return;
@@ -227,39 +275,15 @@ void on_ls_event(Widget *w, uint16_t op, uint8_t *body, uint32_t bodylen) {
         /* Clamp compositor-supplied dims: widget_ensure_pool sizes the memfd
          * with int math (w*h*4*slots); an absurd configure would overflow to a
          * tiny mapping that render then writes past. No real output exceeds 16k. */
-        if (nw > 16384 || nh > 16384) die("layer_surface configure %ux%u too large", nw, nh);
+        uint32_t sc = (uint32_t)(w->scale > 0 ? w->scale : 1);
+        if (nw * sc > 16384 || nh * sc > 16384)
+            die("layer_surface configure %ux%u (scale %u) too large", nw, nh, sc);
         if (nw) w->w = nw;
         if (nh) w->h = nh;
         wl_req(w->layer_surface, LS_REQ_ACK_CONFIGURE, &serial, 1, -1);
         int first_configure = !w->configured;
-        (void)first_configure;
         w->configured = 1;
-#ifdef WISP_HAS_BAR
-        if (w->kind == W_BAR) bar_render(w);
-#endif
-#ifdef WISP_HAS_WALL
-        if (w->kind == W_WALL) wall_render(w);
-#endif
-#ifdef WISP_HAS_MENU
-        if (w->kind == W_MENU) menu_render(w);
-#endif
-#ifdef WISP_HAS_OSD
-        if (w->kind == W_OSD) {
-            if (first_configure) osd_on_first_configure(w);
-            osd_render(w);
-        }
-#endif
-#ifdef WISP_HAS_HUD
-        if (w->kind == W_HUD) {
-            BufSlot *s = widget_free_slot(w);
-            if (!s) { widget_ensure_pool(w, 2); s = widget_free_slot(w); }
-            if (s) {
-                memset(s->px, 0, w->w * w->h * 4);
-                widget_attach(w, s, 1);
-                w->want_pool_free = 1;
-            }
-        }
-#endif
+        widget_repaint(w, first_configure);
         return;
     }
     if (op == LS_EV_CLOSED) {

@@ -25,6 +25,7 @@ static int  pending_fds[16];
 static int  n_pending_fds = 0;
 
 uint32_t id_compositor, id_shm, id_seat;
+uint32_t compositor_ver;
 uint32_t id_layer_shell, id_wm_base;
 uint32_t id_pointer, id_keyboard;
 uint32_t id_gamma_mgr;
@@ -60,6 +61,7 @@ Output *output_alloc(uint32_t registry_name) {
             outputs[i].active = 1;
             outputs[i].registry_name = registry_name;
             outputs[i].last_applied_k = 0;
+            outputs[i].scale = 1;
             return &outputs[i];
         }
     }
@@ -95,20 +97,6 @@ Output *output_by_registry_name(uint32_t name) {
         if (outputs[i].active && outputs[i].registry_name == name)
             return &outputs[i];
     return NULL;
-}
-
-static void spawn_autolayout(void) {
-    pid_t pid = fork();
-    if (pid == 0) {
-        setsid();
-        signal(SIGCHLD, SIG_DFL);
-        int devnull = open("/dev/null", O_RDWR);
-        if (devnull >= 0) { dup2(devnull, 0); dup2(devnull, 1); dup2(devnull, 2); close(devnull); }
-        execl("/bin/sh", "sh", "-c",
-              "exec \"$HOME/.local/bin/dwl-autolayout\"", (char *)NULL);
-        _exit(127);
-    }
-    /* Reaped automatically: main sets SIGCHLD to SIG_IGN (no zombie). */
 }
 
 int pad4(int x) { return (x + 3) & ~3; }
@@ -272,14 +260,11 @@ void wl_connect(void) {
         wl_dispatch();
     }
 
-    /* Fresh boot: the outputs delivered during this sync were bound while
-     * globals_synced was still 0, so handle_registry_global deliberately
-     * skipped dwl-autolayout (it only fires that on post-sync hotplugs). Fire
-     * it once now so multi-monitor position/layout is applied at login,
-     * matching the hotplug path. wl_adopt (reload) intentionally doesn't —
-     * outputs are already positioned and re-running flashes a reposition. */
-    for (int i = 0; i < MAX_OUTPUTS; i++)
-        if (outputs[i].active) { spawn_autolayout(); break; }
+    /* wlroots-family only: without these we'd connect, draw nothing and never
+     * exit (output_init_widgets returns silently). Fail loud instead. */
+    if (!id_compositor) die("compositor lacks wl_compositor");
+    if (!id_shm)        die("compositor lacks wl_shm");
+    if (!id_layer_shell) die("compositor lacks zwlr_layer_shell_v1 (GNOME is unsupported)");
 }
 
 /* Block on one display.sync round-trip, so events the compositor queued in
@@ -408,11 +393,12 @@ void output_destroy(Output *o) {
 
 static void handle_registry_global(uint32_t name, const char *iface, uint32_t ver) {
     if (!id_compositor && !strcmp(iface, "wl_compositor")) {
-        id_compositor = wl_new_id(); wl_registry_bind(name, iface, 4, id_compositor);
+        compositor_ver = ver < 4 ? ver : 4;
+        id_compositor = wl_new_id(); wl_registry_bind(name, iface, compositor_ver, id_compositor);
     } else if (!id_shm && !strcmp(iface, "wl_shm")) {
         id_shm = wl_new_id(); wl_registry_bind(name, iface, 1, id_shm);
     } else if (!id_seat && !strcmp(iface, "wl_seat")) {
-        id_seat = wl_new_id(); wl_registry_bind(name, iface, 5, id_seat);
+        id_seat = wl_new_id(); wl_registry_bind(name, iface, ver < 5 ? ver : 5, id_seat);
     } else if (!strcmp(iface, "wl_output")) {
         Output *o = output_alloc(name);
         if (!o) { msg("wisp: too many outputs (>%d), ignoring extra", MAX_OUTPUTS); return; }
@@ -421,11 +407,8 @@ static void handle_registry_global(uint32_t name, const char *iface, uint32_t ve
         wl_registry_bind(name, iface, ver < 4 ? ver : 4, o->wl_output);
         /* During the startup sync we wait until everything is bound before
          * spawning per-output widgets (output_init_widgets). For post-sync
-         * hotplugs, spawn immediately and fire dwl-autolayout. */
-        if (globals_synced) {
-            output_init_widgets(o);
-            spawn_autolayout();
-        }
+         * hotplugs, spawn immediately. */
+        if (globals_synced) output_init_widgets(o);
     } else if (!id_layer_shell && !strcmp(iface, "zwlr_layer_shell_v1")) {
         id_layer_shell = wl_new_id();
         wl_registry_bind(name, iface, ver < 4 ? ver : 4, id_layer_shell);
@@ -497,7 +480,6 @@ static void handle(uint32_t obj, uint16_t op, uint8_t *body, uint32_t bodylen) {
         Output *o = output_by_registry_name(name);
         if (o) {
             output_destroy(o);
-            if (globals_synced) spawn_autolayout();
         }
         return;
     }
@@ -531,6 +513,15 @@ static void handle(uint32_t obj, uint16_t op, uint8_t *body, uint32_t bodylen) {
             if (op == OUTPUT_EV_MODE && bodylen >= 16 && (*(uint32_t *)body & 1)) {
                 mo->mode_w = *(int32_t *)(body + 4);
                 mo->mode_h = *(int32_t *)(body + 8);
+            } else if (op == OUTPUT_EV_SCALE && bodylen >= 4) {
+                int32_t sc = *(int32_t *)body;
+                /* Clamp: the pool sizing below multiplies by this, and a
+                 * hostile/absurd factor must not overflow the int math. */
+                if (sc < 1) sc = 1; else if (sc > 4) sc = 4;
+                if (sc != mo->scale) {
+                    mo->scale = sc;
+                    if (mo->widgets_created) widget_rescale_output(mo);
+                }
             } else if (op == OUTPUT_EV_NAME && bodylen >= 4) {
                 /* wire string: uint32 len (incl. NUL) + padded bytes */
                 uint32_t slen = *(uint32_t *)body;
