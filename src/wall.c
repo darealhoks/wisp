@@ -11,6 +11,7 @@
 #include <malloc.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 void wall_render(Widget *w) {
     if (!w->configured || w->w <= 0 || w->h <= 0) return;
@@ -23,6 +24,20 @@ void wall_render(Widget *w) {
     widget_ensure_pool(w, 1);
     BufSlot *s = widget_free_slot(w);
     if (!s) return;
+
+    /* Fast path: the disk cache already holds this exact output size, scaled
+     * from the current file. A 4K source decodes in ~150ms; a read() of the
+     * finished w*h buffer is a few ms, and it is what we'd have produced. */
+    uint32_t *cached = image_bgcache_load(WALL_PATH, w->w, w->h);
+    if (cached) {
+        memcpy(s->px, cached, (size_t)w->w * w->h * 4);
+        free(cached);
+        w->s.wall.painted_w = w->w;
+        w->s.wall.painted_h = w->h;
+        widget_attach(w, s, 1);
+        w->want_pool_free = 1;
+        return;
+    }
 
     int sw = 0, sh = 0;
     uint8_t *src = image_load(WALL_PATH, &sw, &sh);
