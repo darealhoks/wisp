@@ -3,12 +3,20 @@
  * is the only command handled client-side. Keep the two in sync. */
 #define _GNU_SOURCE
 #include <errno.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
+#include <sys/wait.h>
+
+/* Overridden by the Makefile with the real $(PREFIX)/share/wisp. */
+#ifndef WISP_DATADIR
+#define WISP_DATADIR "/usr/local/share/wisp"
+#endif
 
 static int connect_daemon(void) {
     const char *dir = getenv("XDG_RUNTIME_DIR");
@@ -25,6 +33,91 @@ static int connect_daemon(void) {
     return s;
 }
 
+/* rebuild [name] — recompile the installed daemon from a .wisp, then reload.
+ * Runtime sources come from $WISP_SRC (a checkout) or the installed share dir;
+ * the chosen config is remembered in <confdir>/current so a bare `rebuild`
+ * repeats it. With no name and no memory, make's own sticky selection rules. */
+static int cmd_rebuild(const char *name) {
+    char conf[PATH_MAX];
+    const char *xdg = getenv("XDG_CONFIG_HOME"), *home = getenv("HOME");
+    if (xdg && *xdg) snprintf(conf, sizeof conf, "%s/wisp", xdg);
+    else if (home)   snprintf(conf, sizeof conf, "%s/.config/wisp", home);
+    else { fprintf(stderr, "wispctl: HOME not set\n"); return 1; }
+
+    const char *src = getenv("WISP_SRC");
+    if (!src || !*src) src = WISP_DATADIR;
+    char path[PATH_MAX];
+    snprintf(path, sizeof path, "%s/Makefile", src);
+    if (access(path, R_OK) != 0) {
+        fprintf(stderr, "wispctl: no runtime sources at %s "
+                "(run the installer, or point $WISP_SRC at a wisp checkout)\n", src);
+        return 1;
+    }
+
+    char cur[PATH_MAX], wisp[PATH_MAX] = "";
+    snprintf(cur, sizeof cur, "%s/current", conf);
+    if (name) {
+        char cand[4][PATH_MAX];
+        snprintf(cand[0], PATH_MAX, "%s", name);
+        snprintf(cand[1], PATH_MAX, "%s/%s.wisp", conf, name);
+        snprintf(cand[2], PATH_MAX, "%s/%s", conf, name);
+        snprintf(cand[3], PATH_MAX, "%s/configs/%s.wisp", src, name);
+        int found = 0;
+        for (int i = 0; i < 4 && !found; i++)
+            if (access(cand[i], R_OK) == 0 && realpath(cand[i], wisp)) found = 1;
+        if (!found) {
+            fprintf(stderr, "wispctl: config '%s' not found "
+                    "(looked in %s and %s/configs)\n", name, conf, src);
+            return 1;
+        }
+        /* Remember even if the build then fails: a bare `rebuild` retrying
+         * the config you're fixing is the behavior you want. */
+        mkdir(conf, 0755);
+        FILE *f = fopen(cur, "w");
+        if (f) { fprintf(f, "%s\n", wisp); fclose(f); }
+    } else {
+        FILE *f = fopen(cur, "r");
+        if (f) {
+            if (fgets(wisp, sizeof wisp, f)) wisp[strcspn(wisp, "\n")] = 0;
+            fclose(f);
+        }
+    }
+
+    pid_t pid = fork();
+    if (pid < 0) { perror("fork"); return 1; }
+    if (pid == 0) {
+        char wisparg[PATH_MAX + 8];
+        const char *mkargv[7] = { "make", "-s", "-C", src, "install" };
+        int n = 5;
+        if (wisp[0]) {
+            snprintf(wisparg, sizeof wisparg, "WISP=%s", wisp);
+            mkargv[n++] = wisparg;
+        }
+        mkargv[n] = NULL;
+        execvp("make", (char *const *)mkargv);
+        perror("wispctl: exec make");
+        _exit(127);
+    }
+    int st;
+    while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {}
+    if (!WIFEXITED(st) || WEXITSTATUS(st) != 0) {
+        fprintf(stderr, "wispctl: build failed\n");
+        return 1;
+    }
+
+    int s = connect_daemon();
+    if (s < 0) {
+        fprintf(stderr, "wispctl: installed; wisp not running — start it with `wisp`\n");
+        return 0;
+    }
+    if (send(s, "reload\n", 7, MSG_NOSIGNAL) < 0) { perror("send"); close(s); return 1; }
+    char rep[64];
+    ssize_t k = recv(s, rep, sizeof rep - 1, 0);
+    close(s);
+    if (k > 0) { rep[k] = 0; fputs(rep, stdout); }
+    return 0;
+}
+
 /* Commands below a module heading only exist if that module is declared in the
  * .wisp the running daemon was built from; the daemon replies "err" otherwise. */
 static const char USAGE[] =
@@ -33,7 +126,10 @@ static const char USAGE[] =
 "daemon\n"
 "  ping                      check the daemon is up (replies \"pong\")\n"
 "  reload                    re-exec the installed wisp binary in place.\n"
-"                            does NOT rebuild: run `make install` first\n"
+"                            does NOT rebuild: use `rebuild` for that\n"
+"  rebuild [config]          recompile from a .wisp, install, reload.\n"
+"                            config = a name in ~/.config/wisp (or a path);\n"
+"                            omitted = the last one used\n"
 "  quit                      stop the daemon\n"
 "  hide on|off|toggle|status hide surfaces that gate on ui_hidden()\n"
 "  tag <n> [output]          switch to tag n (1-based)\n"
@@ -86,6 +182,8 @@ int main(int argc, char **argv) {
      * directly so the session can still be locked when the wisp daemon is
      * down or crashed. The lock binary owns its own Wayland connection and
      * outlives wisp. */
+    if (!strcmp(argv[1], "rebuild"))
+        return cmd_rebuild(argc > 2 ? argv[2] : NULL);
     if (!strcmp(argv[1], "lock")) {
         execvp("wisp-lock", (char *const[]){ "wisp-lock", NULL });
         perror("wispctl: exec wisp-lock");

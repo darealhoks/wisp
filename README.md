@@ -30,7 +30,7 @@ backend you picked.
 
 ## Docs
 
-- [install.md](docs/install.md) — building, `config.mk`, font backends
+- [install.md](docs/install.md) — installing, build knobs, font backends
 - [tutorial.md](docs/tutorial.md) — one bar from an empty file to workspace clicks
 - [dsl.md](docs/dsl.md) — the language, complete
 - [wispctl.md](docs/wispctl.md) — the control client, and what `reload` really does
@@ -38,9 +38,12 @@ backend you picked.
 ## Quick start
 
 ```sh
-./configure          # pick a config, a font backend, and a font
-make install         # → ~/.local/bin (override with PREFIX=)
+curl -fsSL https://raw.githubusercontent.com/darealhoks/wisp/main/install.sh | sh
+wispctl rebuild bee  # compile an example config, install, run
 wisp                 # or: autostart = wisp
+
+# from a checkout instead:
+make install         # → ~/.local/bin (override with PREFIX=)
 ```
 
 Then drive it: `wispctl apps`, `wispctl volume up`, `wispctl notify 1 hi`.

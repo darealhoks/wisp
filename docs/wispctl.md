@@ -37,13 +37,24 @@ daemon built without a gamma block for `gamma night` and it replies `err`, and
 `wispctl help` lists everything the client knows about, not what your build
 supports. The two are the same only for a config that declares every module.
 
+## rebuild
+
+    wispctl rebuild [config]
+
+compiles a `.wisp` into a fresh daemon, installs it, and reloads. `config` is
+a name resolved against `~/.config/wisp/<name>.wisp`, then the examples in the
+installed `share/wisp/configs/` — or a plain path. Omitted, it reuses the last
+config (remembered in `~/.config/wisp/current`). Runtime sources come from the
+share dir the installer set up, or `$WISP_SRC` if you point it at a checkout.
+This is the whole edit loop: change the file, `wispctl rebuild`.
+
 ## reload
 
     make install && wispctl reload
 
 `reload` re-executes the *installed* `wisp` binary in place. It does not
-compile anything. Running it after editing a `.wisp` without rebuilding just
-restarts the daemon you already had.
+compile anything (that's `rebuild`). Running it after editing a `.wisp`
+without rebuilding just restarts the daemon you already had.
 
 The exec goes through `PATH`, not `/proc/self/exe`. `install -m 755` unlinks
 the destination before creating the new file, so the running daemon's

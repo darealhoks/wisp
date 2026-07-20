@@ -1,3 +1,7 @@
+//! font_backend = freetype
+//! font = ~/.local/share/fonts/MapleMono-NF-Bold.ttf
+//! font_fallback = /usr/share/fonts/noto-emoji/NotoColorEmoji.ttf
+
 source time   = clock("%H:%M");
 source date_s = clock("%b %-d");
 source tags   = tags();

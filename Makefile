@@ -21,15 +21,6 @@ ifeq (,$(findstring -j,$(MAKEFLAGS)))
 MAKEFLAGS += --jobs=$(JOBS)
 endif
 
-# Persisted selection from `./configure` (or `make config`): sets WISP,
-# FONT_BACKEND and FONT. Included early so it seeds the preset/font logic
-# below; an explicit CLI assignment (`make FONT_BACKEND=...`) still wins. The
-# `make check` matrix exports WISP_IGNORE_CONFIG so its preset builds aren't
-# steered by a user's config.mk.
-ifndef WISP_IGNORE_CONFIG
--include config.mk
-endif
-
 PREFIX  ?= $(HOME)/.local
 
 SRCDIR  := src
@@ -47,19 +38,18 @@ WISPC_CC := $(CC) -O2 -Wall -Wextra -Werror -Wno-unused-parameter -Wno-format-tr
 
 # Preset selector. wisp is DSL-first: `make WISP=configs/foo.wisp` runs wispc to
 # compile the .wisp into C (features.h + objects.mk + gen_*.c + main.c) and links
-# it. The selection is sticky across invocations (see below); ./configure seeds
-# it via config.mk.
+# it. The selection is sticky across invocations (see below); `wispctl rebuild`
+# passes an explicit WISP= from the user's config dir.
 BUILD_TAG_FILE := $(BUILD)/.build-tag
 
 # Selection is STICKY across separate make invocations: with no explicit WISP=
-# on the command line or in config.mk, reuse whatever the previous build
-# persisted in .build-tag (WISP *and* FONT_BACKEND/FONT). This is what makes the
-# two-step
+# on the command line, reuse whatever the previous build persisted in
+# .build-tag (WISP *and* FONT_BACKEND/FONT). This is what makes the two-step
 #   make WISP=configs/foo.wisp FONT_BACKEND=freetype && make install
 # install `foo` (with the chosen backend) instead of silently reverting — the
 # second `make install` recovers the whole selection from the tag rather than
-# re-defaulting. CLI / config.mk assignments always win (origin != undefined,
-# or `ifndef` false → recovery skipped).
+# re-defaulting. CLI assignments always win (origin != undefined → recovery
+# skipped); `//!` directives in the .wisp override the tag further below.
 PERSISTED_TAG := $(shell [ -f $(BUILD_TAG_FILE) ] && cat $(BUILD_TAG_FILE) 2>/dev/null)
 
 ifndef WISP
@@ -79,8 +69,28 @@ FONT := $(patsubst FONT=%,%,$(filter FONT=%,$(PERSISTED_TAG)))
 endif
 endif
 
-# Still no selector (fresh build/, no tag, no config.mk) → canonical default.
+# Still no selector (fresh build/, no tag) → canonical default.
 WISP ?= configs/dwlarp.wisp
+
+# Build knobs declared in the .wisp itself as `//! key = value` directive
+# comments (plain // comments to wispc, so the compiler never sees them).
+# Priority: CLI assignment > .wisp directive > persisted tag > default below.
+# The directive block must sit between WISP resolution and the ?= defaults:
+# a directive overwrites a tag-recovered value (origin "file") but an
+# origin=="command line" assignment is left alone.
+wispdir = $(shell sed -n 's|^//! *$(1) *= *||p' $(WISP) 2>/dev/null | tail -1)
+define KNOB
+ifneq ($$(origin $(1)),command line)
+D_$(1) := $$(call wispdir,$(2))
+ifneq ($$(D_$(1)),)
+$(1) := $$(D_$(1))
+endif
+endif
+endef
+$(eval $(call KNOB,FONT_BACKEND,font_backend))
+$(eval $(call KNOB,FONT,font))
+$(eval $(call KNOB,FONT_FALLBACK,font_fallback))
+$(eval $(call KNOB,FRACTIONAL,fractional))
 
 # Font backend (one per build) + font path defaults — lowest priority.
 #   baked    — FreeType bakes a TTF into const tables (default, leanest).
@@ -94,6 +104,16 @@ FONT         ?= $(HOME)/.local/share/fonts/MapleMono-NF-Bold.ttf
 # color (downscaled to text size). SVG-only color fonts won't render (FreeType
 # needs an external SVG library). $WISP_FONT_FALLBACK overrides at runtime.
 FONT_FALLBACK ?=
+# Directive values can't rely on shell expansion — honor a leading ~/ here.
+FONT          := $(patsubst ~/%,$(HOME)/%,$(FONT))
+FONT_FALLBACK := $(patsubst ~/%,$(HOME)/%,$(FONT_FALLBACK))
+# Fractional scaling needs real strikes at arbitrary sizes — the const baked/
+# bitmap tables can only pixel-double, so selecting it forces freetype.
+FRACTIONAL ?= 0
+ifeq ($(FRACTIONAL),1)
+override FONT_BACKEND := freetype
+CFLAGS += -DWISP_FRACTIONAL
+endif
 ifeq ($(filter $(FONT_BACKEND),baked bitmap freetype),)
 $(error FONT_BACKEND must be one of: baked bitmap freetype (got '$(FONT_BACKEND)'))
 endif
@@ -110,7 +130,7 @@ CFLAGS += $(FONT_DEFS)
 # `make check` footgun: check loops WISP=A..WISP=Z and leaves build/wisp linked
 # against Z; the next `make WISP=A` then reused stale objects). FONT last so a
 # spaced path can't corrupt the earlier fields during recovery.
-BUILD_TAG := WISP=$(WISP) FONT_BACKEND=$(FONT_BACKEND) FONT=$(FONT) FONT_FALLBACK=$(FONT_FALLBACK)
+BUILD_TAG := WISP=$(WISP) FRACTIONAL=$(FRACTIONAL) FONT_BACKEND=$(FONT_BACKEND) FONT=$(FONT) FONT_FALLBACK=$(FONT_FALLBACK)
 TAG_RESET := $(shell mkdir -p $(BUILD); \
   prev=""; [ -f $(BUILD_TAG_FILE) ] && prev=$$(cat $(BUILD_TAG_FILE)); \
   if [ "$$prev" != "$(BUILD_TAG)" ]; then \
@@ -232,7 +252,7 @@ $(BUILD)/gen_spawn.o:    $(GENDIR)/gen_spawn.c    $(SRCDIR)/osd.c $(SRCDIR)/osd_
 	$(CC) $(CFLAGS) $(GEN_WNO) -c $< -o $@
 
 $(BUILD)/wispctl: $(SRCDIR)/wispctl.c | $(BUILD)
-	$(CC) $(CFLAGS) $< -o $@ -Wl,--gc-sections -Wl,-s
+	$(CC) $(CFLAGS) -Wno-format-truncation -DWISP_DATADIR='"$(PREFIX)/share/wisp"' $< -o $@ -Wl,--gc-sections -Wl,-s
 	strip --strip-all --remove-section=.comment --remove-section=.note* $@ 2>/dev/null || true
 
 $(BUILD)/wispc: $(WISPC_SRC) $(TOOLDIR)/wispc/wispc.h | $(BUILD)
@@ -281,14 +301,37 @@ install: $(BIN)
 	install -d $(DESTDIR)$(PREFIX)/bin
 	install -m 755 $(BUILD)/wisp              $(DESTDIR)$(PREFIX)/bin/wisp
 	install -m 755 $(BUILD)/wispctl           $(DESTDIR)$(PREFIX)/bin/wispctl
+	install -m 755 $(BUILD)/wispc             $(DESTDIR)$(PREFIX)/bin/wispc
 	install -m 755 $(BUILD)/wisp-lock         $(DESTDIR)$(PREFIX)/bin/wisp-lock
 	install -m 755 $(BUILD)/wisp-lock-helper  $(DESTDIR)$(PREFIX)/bin/wisp-lock-helper
+
+# The tools alone need no config: wispc + wispctl are what a from-share user
+# gets from install.sh; `wispctl rebuild` then compiles the daemon itself.
+tools: $(BUILD)/wispc $(BUILD)/wispctl
+
+install-tools: tools
+	install -d $(DESTDIR)$(PREFIX)/bin
+	install -m 755 $(BUILD)/wispc   $(DESTDIR)$(PREFIX)/bin/wispc
+	install -m 755 $(BUILD)/wispctl $(DESTDIR)$(PREFIX)/bin/wispctl
+
+# Runtime sources for `wispctl rebuild`: the runtime is compiled per config
+# (every TU #includes the generated features.h), so what ships is source, not
+# a library. Wiped on reinstall so updates can't leave stale files behind.
+SHAREDIR := $(DESTDIR)$(PREFIX)/share/wisp
+install-share:
+	rm -rf $(SHAREDIR)
+	install -d $(SHAREDIR)/configs $(SHAREDIR)/docs
+	cp -r Makefile src $(SHAREDIR)/
+	install -m 644 configs/*.wisp $(SHAREDIR)/configs/
+	install -m 644 docs/*.md $(SHAREDIR)/docs/
 
 uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/wisp \
 	      $(DESTDIR)$(PREFIX)/bin/wispctl \
+	      $(DESTDIR)$(PREFIX)/bin/wispc \
 	      $(DESTDIR)$(PREFIX)/bin/wisp-lock \
 	      $(DESTDIR)$(PREFIX)/bin/wisp-lock-helper
+	rm -rf $(SHAREDIR)
 
 clean:
 	rm -rf $(BUILD)
@@ -300,12 +343,10 @@ distclean: clean
 # `make check`; add new ones by dropping them in configs/ — no Makefile edit.
 CONFIGS := $(patsubst configs/%.wisp,%,$(wildcard configs/*.wisp))
 
-# Build matrix: every config present under configs/. WISP_IGNORE_CONFIG is
-# exported so a user's config.mk can't steer the preset builds.
+# Build matrix: every config present under configs/.
 # Each WISP invocation needs a clean build dir because objects.mk differs.
 # The nm DCE assertions run only when configs/minimal.wisp is present — it's
 # the only unit whose stripped-down feature set makes the assertion meaningful.
-check: export WISP_IGNORE_CONFIG := 1
 check:
 	@set -e; \
 	fail=0; \
@@ -338,9 +379,4 @@ check:
 	if [ $$fail -ne 0 ]; then echo "check: FAIL"; exit 1; fi; \
 	echo "check: PASS"
 
-# Interactive picker: choose a config + font backend + font, write config.mk,
-# optionally build & install. Pure POSIX sh; no compile step to run it.
-config:
-	@./configure
-
-.PHONY: all install uninstall clean distclean check config
+.PHONY: all tools install install-tools install-share uninstall clean distclean check
