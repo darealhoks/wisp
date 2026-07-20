@@ -54,10 +54,20 @@ static const char *mg_find(const char *p, const char *end, const char *key) {
     return NULL;
 }
 
-static void mg_flush(Output *o, uint32_t occ, uint32_t act, uint32_t urg) {
-    (void)o; (void)occ; (void)act; (void)urg;
+/* mango's overview marks every tag active; that's a transient view, not a
+ * workspace switch — keep showing the state you're switching away from. */
+static void mg_flush(Output *o, uint32_t occ, uint32_t act, uint32_t urg, uint32_t all) {
+    static struct { Output *o; uint32_t act; } last[4];
+    size_t i;
+    if (!o) return;
+    for (i = 0; i < 4 && last[i].o && last[i].o != o; i++) ;
+    if (i == 4) i = 0;                      /* ponytail: 4 outputs, then LRU-less reuse */
+    if (all && act == all && last[i].o == o) act = last[i].act;
+    else { last[i].o = o; last[i].act = act; }
 #ifdef WISP_HAS_BAR
-    if (o) bar_set_tags_on(o, occ, act, urg);
+    bar_set_tags_on(o, occ, act, urg);
+#else
+    (void)occ; (void)urg;
 #endif
 }
 
@@ -65,7 +75,7 @@ static void mg_flush(Output *o, uint32_t occ, uint32_t act, uint32_t urg) {
  * "is_active":true,"is_urgent":false,...,"client_count":2},...]},...]} */
 static void mg_parse_line(const char *p, const char *end) {
     Output *o = NULL;
-    uint32_t occ = 0, act = 0, urg = 0;
+    uint32_t occ = 0, act = 0, urg = 0, all = 0;
     for (;;) {
         const char *mon = mg_find(p, end, "\"monitor\":\"");
         const char *idx = mg_find(p, end, "\"index\":");
@@ -74,6 +84,7 @@ static void mg_parse_line(const char *p, const char *end) {
             const char *e = mg_find(idx, end, "\"client_count\":");
             if (!e || n < 1 || n > 32) break;
             bit = 1u << (n - 1);
+            all |= bit;
             const char *q = mg_find(idx, end, "\"is_active\":");
             if (q && q < e && *q == 't') act |= bit;
             q = mg_find(idx, end, "\"is_urgent\":");
@@ -81,14 +92,14 @@ static void mg_parse_line(const char *p, const char *end) {
             if (atoi(e) > 0) occ |= bit;
             p = e;
         } else if (mon) {
-            mg_flush(o, occ, act, urg);
-            occ = act = urg = 0;
+            mg_flush(o, occ, act, urg, all);
+            occ = act = urg = all = 0;
             char name[64]; size_t i = 0;
             for (p = mon; p < end && *p != '"' && i + 1 < sizeof name; p++) name[i++] = *p;
             name[i] = 0;
             o = output_by_name(name);
         } else {
-            mg_flush(o, occ, act, urg);
+            mg_flush(o, occ, act, urg, all);
             return;
         }
     }
