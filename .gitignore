@@ -1,0 +1,19 @@
+# Build artifacts
+build/
+*.o
+
+# Build selection from ./configure + decompressed bitmap fonts
+config.mk
+.font-cache/
+
+# Editor / cache
+.ccls-cache/
+*.swp
+*~
+
+# Claude / local
+.claude/
+nohup.out
+*.log
+.map/
+CLAUDE.md
