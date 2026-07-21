@@ -1,11 +1,7 @@
-/* Menu — dmenu-wl clone. Horizontal top bar:
- *
- *   [ run: query_  | item1  item2  [selected]  item3 ... ]
- *
- * Full-width anchored layer surface, MENU_HEIGHT tall. Type-to-filter,
- * Left/Right to navigate, Enter picks, Esc cancels. Items past the right
- * edge are scrolled in as the selection moves. Reply (over the original
- * control fd): "<idx>\t<text>\n" or "-1\t\n" on cancel. */
+/* Menu — dmenu-wl clone. Type-to-filter, arrows navigate, Enter picks, Esc
+ * cancels. Reply (over the original control fd): "<idx>\t<text>\n" or
+ * "-1\t\n" on cancel. What it looks like is declared in the .wisp and drawn
+ * by the generated renderer; this file owns state, keys, sizing and scroll. */
 
 #include "wisp.h"
 
@@ -90,11 +86,6 @@ static void rebuild_filtered(Widget *w) {
     if (w->s.menu.sel < 0)  w->s.menu.sel = 0;
 }
 
-/* Width of one item's slab (text + 2× padding). */
-static int item_slab_w(const Font *f, const char *text) {
-    return text_width(f, text) + 2 * MENU_ITEM_PAD_X;
-}
-
 static int menu_row_h(const Font *f) {
     return MENU_ROW_H ? MENU_ROW_H : f->line_h + 10;
 }
@@ -102,172 +93,52 @@ static int menu_row_h(const Font *f) {
 
 int menu_icon_px(void) { return menu_row_h(&font_small) - 12; }
 
-/* Vertical launcher float: query row on top, up to MENU_MAX_VIS item rows
- * below, height tracks the filtered count. On size change we only commit the
- * new size — the configure event re-enters menu_render at the right w/h. */
-static void menu_render_vert(Widget *w) {
-    const Font *f = &font_small;
-    int rh = menu_row_h(f);
-    int nf = w->s.menu.n_filtered;
-    /* Fixed height from the TOTAL item count, not the filtered count: a
-     * per-keystroke resize costs a commit + configure round-trip + pool
-     * realloc, which reads as lag. Empty rows just show background. */
-    int slots = w->s.menu.n_items < MENU_MAX_VIS ? w->s.menu.n_items : MENU_MAX_VIS;
-    int vis = nf < slots ? nf : slots;
-    int want_h = rh + slots * rh + 2 * MENU_VPAD;
-    if (w->w != MENU_W || w->h != want_h) {
-        widget_set_size(w, MENU_W, want_h);
-        wl_req(w->surface, SURFACE_REQ_COMMIT, NULL, 0, -1);
-        return;
-    }
-    widget_ensure_pool(w, 1);
-    BufSlot *s = widget_free_slot(w);
-    if (!s) return;
-    int W = w->w, H = w->h, R = MENU_RADIUS;
-    clear_buf(s->px, W, H, R ? 0x00000000u : MENU_BG);
-    if (R) fill_rect_rounded(s->px, W, H, 0, 0, W, H, R, R, R, R, MENU_BG);
-    if (MENU_BORDER >> 24)
-        fill_rect_rounded_border(s->px, W, H, 0, 0, W, H, R, R, R, R,
-                                 MENU_BORDER_W, 1, 1, 1, 1, 0, MENU_BORDER);
-
-    int ty = MENU_VPAD + (rh - f->line_h) / 2;
-    int x = MENU_PAD_X + MENU_ITEM_PAD_X;
-    const char *prompt = w->s.menu.prompt ? w->s.menu.prompt : MENU_PROMPT;
-    draw_text(s->px, W, H, x, ty, f, prompt, MENU_DIM);
-    char q[140];
-    snprintf(q, sizeof q, "%s_", w->s.menu.query);
-    draw_text(s->px, W, H, x + text_width(f, prompt) + 6, ty, f, q, MENU_FG);
-
-    /* keep selection inside the visible window */
-    int *top = &w->s.menu.view_top;
-    if (w->s.menu.sel < *top) *top = w->s.menu.sel;
-    if (w->s.menu.sel >= *top + vis) *top = w->s.menu.sel - vis + 1;
-    if (*top > nf - vis) *top = nf - vis;
-    if (*top < 0) *top = 0;
-
-    int ipx = w->s.menu.icons ? w->s.menu.icon_px : 0;
-    for (int r = 0; r < vis; r++) {
-        int i = *top + r;
-        int idx = w->s.menu.filtered[i];
-        int y0 = MENU_VPAD + rh + r * rh;
-        uint32_t fg = MENU_FG;
-        if (i == w->s.menu.sel) {
-            fill_rect_rounded(s->px, W, H, MENU_PAD_X, y0 + 1,
-                              W - 2 * MENU_PAD_X, rh - 2, 4, 4, 4, 4, MENU_SEL_BG);
-            fg = MENU_SEL_FG;
-        }
-        int tx = x;
-        if (ipx) {
-            if (w->s.menu.icons[idx])
-                blit_argb(s->px, W, H, x, y0 + (rh - ipx) / 2,
-                          w->s.menu.icons[idx], ipx);
-            tx += ipx + 8;   /* indent all rows so text stays aligned */
-        }
-        draw_text(s->px, W, H, tx, y0 + (rh - f->line_h) / 2, f,
-                  w->s.menu.items[idx], fg);
-    }
-    widget_attach(w, s, 0);
-}
-
+/* Layout lives in the .wisp: `render` is the generated renderer for this
+ * menu's declared body (or the `spawned_by = menu` template's). menu.c owns
+ * only what surrounds it — the surface size, and keeping the selection inside
+ * the visible window. */
 void menu_render(Widget *w) {
     if (!w->configured) return;
-    if (MENU_VERTICAL) { menu_render_vert(w); return; }
-    widget_ensure_pool(w, 1);
-    BufSlot *s = widget_free_slot(w);
-    if (!s) return;
-
     const Font *f = &font_small;
-    int W = w->w, H = w->h;
-    clear_buf(s->px, W, H, MENU_BG);
-
-    int y = (H - f->line_h) / 2;
-    int x = MENU_PAD_X;
-
-    /* prompt + query — query gets a faux cursor "_" so the field looks live */
-    char inp[256];
-    snprintf(inp, sizeof inp, "%s %s_",
-             w->s.menu.prompt ? w->s.menu.prompt : MENU_PROMPT, w->s.menu.query);
-    draw_text(s->px, W, H, x, y, f, inp, MENU_FG);
-    x += text_width(f, inp) + MENU_GAP;
-
-    /* scroll: keep selection on-screen by sliding the items strip leftward */
-    int items_x0 = x;
-    int items_right = W - MENU_PAD_X;
-    int avail = items_right - items_x0;
-    if (avail <= 0) { widget_attach(w, s, 0); return; }
-
-    /* compute selection's left/right within the un-scrolled items strip */
-    int sel_left = 0, sel_w = 0;
-    int total_w = 0;
-    for (int i = 0; i < w->s.menu.n_filtered; i++) {
-        int iw = item_slab_w(f, w->s.menu.items[w->s.menu.filtered[i]]);
-        if (i == w->s.menu.sel) { sel_left = total_w; sel_w = iw; }
-        total_w += iw;
-    }
-    int scroll = 0;
-    if (sel_left + sel_w > avail) scroll = (sel_left + sel_w) - avail;
-    if (scroll > sel_left) scroll = sel_left;
-
-    /* render items left→right with horizontal scroll applied */
-    int cx = items_x0 - scroll;
-    for (int i = 0; i < w->s.menu.n_filtered; i++) {
-        const char *text = w->s.menu.items[w->s.menu.filtered[i]];
-        int iw = item_slab_w(f, text);
-        if (cx + iw < items_x0) { cx += iw; continue; }  /* fully off-left */
-        if (cx >= items_right) break;                     /* fully off-right */
-        uint32_t fg = MENU_FG;
-        if (i == w->s.menu.sel) {
-            fill_rect(s->px, W, H, cx, 0, iw, H, MENU_SEL_BG);
-            fg = MENU_SEL_FG;
-        }
-        draw_text(s->px, W, H, cx + MENU_ITEM_PAD_X, y, f, text, fg);
-        cx += iw;
-    }
-
-    widget_attach(w, s, 0);
-}
-
-/* Click→pick: walk the same scrolled item layout used by menu_render. */
-void menu_on_click(Widget *w, int px_x, int px_y) {
+    int rh = menu_row_h(f);
     if (MENU_VERTICAL) {
-        const Font *fv = &font_small;
-        int rh = menu_row_h(fv);
-        int r = (px_y - MENU_VPAD - rh) / rh;
-        if (px_y >= MENU_VPAD + rh && r >= 0) {
-            int i = w->s.menu.view_top + r;
-            if (i < w->s.menu.n_filtered)
-                menu_reply_and_close(w, w->s.menu.filtered[i]);
-        }
-        return;
-    }
-    (void)px_y;
-    const Font *f = &font_small;
-    int W = w->w;
-    char inp[256];
-    snprintf(inp, sizeof inp, "%s %s_",
-             w->s.menu.prompt ? w->s.menu.prompt : MENU_PROMPT, w->s.menu.query);
-    int items_x0 = MENU_PAD_X + text_width(f, inp) + MENU_GAP;
-    int items_right = W - MENU_PAD_X;
-    int avail = items_right - items_x0;
-    if (avail <= 0) return;
-    int sel_left = 0, sel_w = 0, total_w = 0;
-    for (int i = 0; i < w->s.menu.n_filtered; i++) {
-        int iw = item_slab_w(f, w->s.menu.items[w->s.menu.filtered[i]]);
-        if (i == w->s.menu.sel) { sel_left = total_w; sel_w = iw; }
-        total_w += iw;
-    }
-    int scroll = 0;
-    if (sel_left + sel_w > avail) scroll = (sel_left + sel_w) - avail;
-    if (scroll > sel_left) scroll = sel_left;
-    int cx = items_x0 - scroll;
-    for (int i = 0; i < w->s.menu.n_filtered; i++) {
-        int iw = item_slab_w(f, w->s.menu.items[w->s.menu.filtered[i]]);
-        if (px_x >= cx && px_x < cx + iw && cx + iw > items_x0 && cx < items_right) {
-            menu_reply_and_close(w, w->s.menu.filtered[i]);
+        /* Height from the TOTAL item count, not the filtered count: a
+         * per-keystroke resize costs a commit + configure round-trip + pool
+         * realloc, which reads as lag. Empty rows just show background. */
+        int slots = w->s.menu.n_items < MENU_MAX_VIS ? w->s.menu.n_items : MENU_MAX_VIS;
+        int want_h = rh + slots * rh + 2 * MENU_VPAD;
+        if (w->w != MENU_W || w->h != want_h) {
+            widget_set_size(w, MENU_W, want_h);
+            wl_req(w->surface, SURFACE_REQ_COMMIT, NULL, 0, -1);
             return;
         }
-        cx += iw;
+        int vis = w->s.menu.n_filtered < slots ? w->s.menu.n_filtered : slots;
+        int *top = &w->s.menu.view_top;
+        if (w->s.menu.sel < *top) *top = w->s.menu.sel;
+        if (w->s.menu.sel >= *top + vis) *top = w->s.menu.sel - vis + 1;
+        if (*top > w->s.menu.n_filtered - vis) *top = w->s.menu.n_filtered - vis;
+        if (*top < 0) *top = 0;
+    } else {
+        /* Horizontal: scroll by whole items, so the selection is always the
+         * last row that can start inside the strip. */
+        if (w->s.menu.sel < w->s.menu.view_top) w->s.menu.view_top = w->s.menu.sel;
+        if (w->s.menu.view_top < 0) w->s.menu.view_top = 0;
     }
+    if (w->s.menu.render) w->s.menu.render(w);
+}
+
+/* Click→pick: rows are a fixed grid, so the row under the pointer is
+ * arithmetic. Horizontal menus have variable-width items and no hit grid of
+ * their own, so only the vertical layout is clickable. */
+void menu_on_click(Widget *w, int px_x, int px_y) {
+    (void)px_x;
+    if (!MENU_VERTICAL) return;
+    int rh = menu_row_h(&font_small);
+    int r = (px_y - MENU_VPAD - rh) / rh;
+    if (px_y < MENU_VPAD + rh || r < 0) return;
+    int i = w->s.menu.view_top + r;
+    if (i < w->s.menu.n_filtered)
+        menu_reply_and_close(w, w->s.menu.filtered[i]);
 }
 
 void menu_on_scroll(Widget *w, int dir) {
@@ -416,7 +287,8 @@ Widget *menu_create(const char *title, char items[][ITEM_MAX], int n, int client
     w->client_fd = client_fd;
     w->s.menu.n_items = n;
     w->s.menu.sel = 0;
-    w->s.menu.prompt = title;   /* static lit or NULL; render falls back to MENU_PROMPT */
+    if (title) snprintf(w->s.menu.prompt, sizeof w->s.menu.prompt, "%s", title);
+    else       w->s.menu.prompt[0] = 0;
     for (int i = 0; i < n; i++) {
         size_t l = strnlen(items[i], ITEM_MAX - 1);
         memcpy(w->s.menu.items[i], items[i], l);
@@ -431,6 +303,7 @@ Widget *menu_create(const char *title, char items[][ITEM_MAX], int n, int client
     w->s.menu.view_top = 0;
     w->s.menu.icons = NULL;
     w->s.menu.icon_px = 0;
+    w->s.menu.render = render_menu_default;
 
     /* Menu sits on the user's current monitor — wherever dwl says focus is. */
     Output *o = focused_output;

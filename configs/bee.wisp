@@ -295,12 +295,32 @@ surface menu {
   max_visible = 5;
   row_h       = 34;
 
-  sel_bg = REST;
-  sel_fg = TEXT;
-  dim    = SUBTXT;
   prompt = "run:";
   sort   = "most_used";
   icons  = true;
+
+  pad_x = 8;   // legacy MENU_PAD_X
+  pad_y = 6;   // legacy MENU_VPAD
+
+  // query row: dim prompt, the typed text, then a caret
+  group query {
+    height = 34; pad = 0; pad_x = 8; gap = 6;
+    bg = #00000000; border = #00000000;
+    cell { text = menu.prompt; fg = SUBTXT; }
+    cell { text = menu.query;  fg = TEXT; }
+    cell { text = "_";         fg = TEXT; }
+  }
+  for row in rows {
+    cell {
+      height = 34;
+      icon   = row.icon;
+      text   = row.label;
+      fg     = TEXT;
+      bg     = row.selected ? REST : #00000000;
+      radius = 4;
+      pad_x  = 8;
+    }
+  }
 }
 
 #hud, #osd, #menu { bg = CRUST; fg = TEXT; border = BORD; border_width = 2; radius = 8; }

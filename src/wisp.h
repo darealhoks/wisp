@@ -263,7 +263,9 @@ struct Widget {
             int      sel;
             char     query[128];
             int      query_len;
-            const char *prompt;      /* prompt override (static lit); NULL → MENU_PROMPT */
+            /* prompt override, copied: every caller builds it in a stack
+             * buffer or the ctl command buffer, both gone by first render */
+            char     prompt[48];
             int      mods;            /* xkb-free: tracked from key events */
             const int *rank;          /* optional per-item sort weight (apps usage counts); not owned */
             int      view_top;        /* vertical mode: first visible filtered row */
@@ -271,6 +273,9 @@ struct Widget {
              * ARGB icon_px×icon_px buffers; NULL entries ok; not owned */
             uint32_t *const *icons;
             int      icon_px;
+            /* generated renderer: the declared default, or this menu's own
+             * body if its `menu NAME {}` decl carried one */
+            void   (*render)(struct Widget *);
         } menu;
         struct {
             Osd      items[MAX_OSDS];
@@ -530,7 +535,11 @@ int  hud_check_deferred(int64_t now);   /* returns timeout-ms or -1 */
 
 /* A `menu NAME {}` decl lowered by wispc; table lives in gen_menus.h. */
 typedef struct { const char *item, *cmd; } WispMenuEntry;
-typedef struct { const char *name; const WispMenuEntry *e; int n; int emoji; } WispMenu;
+/* Generated from the `spawned_by = menu` template's body. */
+void render_menu_default(Widget *w);
+
+typedef struct { const char *name; const WispMenuEntry *e; int n; int emoji;
+                 void (*render)(struct Widget *); } WispMenu;
 
 Widget *menu_create(const char *title, char items[][ITEM_MAX], int n,
                     int client_fd);
@@ -605,6 +614,7 @@ void wall_render(Widget *w);
 int  wall_set(const char *path);   /* runtime switch + crossfade; -1 = no file */
 void wall_fade_frame(Widget *w);   /* anim-tick blend (anim.c owner hook) */
 void wall_fade_cancel(Widget *w);
+int  wall_fade_active(void);       /* any output mid-crossfade */
 
 /* ============================================================ */
 /* Gamma / night mode (gamma.c)                                  */

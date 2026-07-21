@@ -270,7 +270,20 @@ surface menu {
   exclusive_zone = -1;
   keyboard = exclusive;
   bg = #ff0f1219;
+  prompt = "run:";
+  pad_x = 8;    // legacy MENU_PAD_X
 
+  widget prompt { text = menu.prompt; fg = #ffffffff; pad = 4; }
+  widget query { text = menu.query;  fg = #ffffffff; }
+  widget caret { text = "_";         fg = #ffffffff; pad = 12; }  // legacy MENU_GAP
+  for row in rows {
+    cell {
+      text  = row.label;
+      fg    = #ffffffff;
+      bg    = row.selected ? #ff2a2f3a : #00000000;
+      pad_x = 8;   // legacy MENU_ITEM_PAD_X
+    }
+  }
 }
 
 // Menus, formerly compiled in unconditionally (POWERMENU_INIT / EMOJI_INIT).

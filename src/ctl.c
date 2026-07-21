@@ -149,8 +149,10 @@ static int open_declared_menu(Client *c, const char *name) {
         }
         char title[64];
         snprintf(title, sizeof title, "%s:", name);
-        if (!menu_create_action(title, items, cmds, n))
+        Widget *mw = menu_create_action(title, items, cmds, n);
+        if (!mw)
             return fail(c, "menu: no free widget slot or out of memory");
+        if (m->render) mw->s.menu.render = m->render;
         (void)!write(c->fd, "ok\n", 3);
         return 0;
     }

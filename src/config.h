@@ -36,36 +36,9 @@
 #define HUD_ANIM_EPSILON   0.5
 
 /* ---------- Menu (dmenu-wl clone, horizontal top bar) ---------- */
-#ifndef MENU_BG
-#define MENU_BG         0xff0f1219u   /* wallpaper shadow tone (matches bar/osd) */
-#endif
-#ifndef MENU_FG
-#define MENU_FG         0xffffffffu   /* dmenu-wl -nf */
-#endif
-#ifndef MENU_SEL_BG
-#define MENU_SEL_BG     0xff2a2f3au   /* = active-workspace tag (BAR_ACTIVE_BG) */
-#endif
-#ifndef MENU_SEL_FG
-#define MENU_SEL_FG     0xffffffffu   /* white text on the navy-grey slab */
-#endif
-#ifndef MENU_DIM
-#define MENU_DIM        0xff7a808bu
-#endif
 
 #ifndef MENU_HEIGHT
 #define MENU_HEIGHT     28            /* dmenu-wl -h 28 */
-#endif
-#ifndef MENU_PAD_X
-#define MENU_PAD_X      8             /* L/R inset */
-#endif
-#ifndef MENU_ITEM_PAD_X
-#define MENU_ITEM_PAD_X 8             /* horizontal padding inside each item slab */
-#endif
-#ifndef MENU_GAP
-#define MENU_GAP        12            /* prompt → first item */
-#endif
-#ifndef MENU_PROMPT
-#define MENU_PROMPT     "run:"
 #endif
 
 /* Vertical (launcher) mode — enabled by `axis = vertical;` on the menu
@@ -85,15 +58,6 @@
 #endif
 #ifndef MENU_ROW_H
 #define MENU_ROW_H      0             /* 0 = font line_h + 10 */
-#endif
-#ifndef MENU_RADIUS
-#define MENU_RADIUS     0
-#endif
-#ifndef MENU_BORDER
-#define MENU_BORDER     0x00000000u   /* alpha 0 = off */
-#endif
-#ifndef MENU_BORDER_W
-#define MENU_BORDER_W   1
 #endif
 #ifndef MENU_TERMINAL
 #define MENU_TERMINAL   "foot -e"     /* prefix for .desktop Terminal=true apps */

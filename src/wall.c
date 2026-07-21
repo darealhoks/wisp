@@ -135,6 +135,13 @@ void wall_fade_cancel(Widget *w) {
     w->s.wall.fade_from = w->s.wall.fade_to = NULL;
 }
 
+int wall_fade_active(void) {
+    for (int i = 0; i < MAX_OUTPUTS; i++)
+        if (outputs[i].active && outputs[i].wall && outputs[i].wall->s.wall.fade_to)
+            return 1;
+    return 0;
+}
+
 static int fade_u(double f) {
     int u = (int)(f * 255.0 + 0.5);
     return u < 0 ? 0 : u > 255 ? 255 : u;
