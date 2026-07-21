@@ -234,7 +234,7 @@ int emit_spawned_osd_skeleton(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
 
     /* Measure + draw passes — same scaffolding as a real surface, just inside
      * the slab loop. center_pos math uses __reg_w as the extent. */
-    fprintf(o, "        struct { int tw, vis; uint32_t cp, fg, bg, border, press_bg; const char *txt; int pad, align; int h; int ch; int body_lines; } st[%d];\n", n_arr);
+    fprintf(o, "        struct { int tw, vis; uint32_t cp, fg, bg, border, press_bg; const uint32_t *pm; int pms; const char *txt; int pad, align; int h; int ch; int body_lines; } st[%d];\n", n_arr);
     fprintf(o, "        for (int __i = 0; __i < %d; __i++) { st[__i].vis = 0; st[__i].h = 0; st[__i].ch = 0; st[__i].body_lines = 1; st[__i].border = 0; st[__i].press_bg = 0; }\n", n_arr);
     fputs("        (void)st;\n", o);
     fputs("        int center_total = 0;\n", o);
@@ -1095,7 +1095,7 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     else
         fputs("    int y = (__chs - f->line_h) / 2 + __coy;\n", o);
     fprintf(o,
-        "    struct { int tw, vis; uint32_t cp, fg, bg, border, press_bg; const char *txt; int pad, align; int h; int ch; int body_lines; } st[%d];\n",
+        "    struct { int tw, vis; uint32_t cp, fg, bg, border, press_bg; const uint32_t *pm; int pms; const char *txt; int pad, align; int h; int ch; int body_lines; } st[%d];\n",
         n_arr);
     fprintf(o, "    for (int __i = 0; __i < %d; __i++) { st[__i].vis = 0; st[__i].h = 0; st[__i].ch = 0; st[__i].body_lines = 1; st[__i].border = 0; st[__i].press_bg = 0; }\n", n_arr);
     fputs("    (void)st;\n", o);
@@ -1640,7 +1640,7 @@ int emit_generated_compound(FILE *o, Decl *cmp, CGCtx *ctx, const char *nm) {
         fputs("    (void)__reg_x; (void)__reg_y; (void)__reg_w; (void)__reg_h;\n", o);
         if (vertical) fputs("    int y = __reg_y; (void)y;\n", o);
         else          fputs("    int y = __reg_y + (__reg_h - f->line_h) / 2;\n", o);
-        fprintf(o, "    struct { int tw, vis; uint32_t cp, fg, bg, border, press_bg; const char *txt; int pad, align; int h; int ch; int body_lines; } st[%d];\n", arr);
+        fprintf(o, "    struct { int tw, vis; uint32_t cp, fg, bg, border, press_bg; const uint32_t *pm; int pms; const char *txt; int pad, align; int h; int ch; int body_lines; } st[%d];\n", arr);
         fprintf(o, "    for (int __i = 0; __i < %d; __i++) { st[__i].vis = 0; st[__i].h = 0; st[__i].ch = 0; st[__i].body_lines = 1; st[__i].border = 0; st[__i].press_bg = 0; }\n", arr);
         fputs("    (void)st;\n", o);
         fputs("    int center_total = 0;\n", o);
@@ -1849,12 +1849,16 @@ int emit_surfaces(FILE *o, Unit *u, CGCtx *ctx) {
     /* Helpers we use: cp_width, draw_cp, fill_rect, draw_text, text_width,
      * exec_cmd. Provide local statics that bar.c had; we lost those when we
      * replaced bar.c, so re-emit minimal ones. */
-    fputs("\nstatic int cp_width(const Font *f, uint32_t cp) {\n"
+    /* An icon is a codepoint or a pixmap (a decoded app icon); pm wins. */
+    fputs("\nstatic int cp_width(const Font *f, uint32_t cp, const uint32_t *pm, int pms) {\n"
+          "    if (pm) return pms;\n"
           "    const Glyph *g = font_find(f, cp);\n"
           "    return g ? g->adv : f->px_size / 2;\n"
           "}\n", o);
     fputs("static int draw_cp(uint32_t *px, int sw, int sh, int x, int y,\n"
-          "                   const Font *f, uint32_t cp, uint32_t fg) {\n"
+          "                   const Font *f, uint32_t cp, uint32_t fg,\n"
+          "                   const uint32_t *pm, int pms) {\n"
+          "    if (pm) { blit_argb(px, sw, sh, x, y + (f->line_h - pms) / 2, pm, pms); return pms; }\n"
           "    const Glyph *g = font_find(f, cp); if (!g) return 0;\n"
           "    draw_glyph(px, sw, sh, x, y + f->baseline, f, g, fg);\n"
           "    return g->adv;\n"
@@ -1897,7 +1901,9 @@ int emit_surfaces(FILE *o, Unit *u, CGCtx *ctx) {
     fputs("__attribute__((unused))\n"
           "static void draw_cp_centered(uint32_t *px, int sw, int sh,\n"
           "                             int bx, int by, int bw, int bh,\n"
-          "                             const Font *f, uint32_t cp, uint32_t fg) {\n"
+          "                             const Font *f, uint32_t cp, uint32_t fg,\n"
+          "                             const uint32_t *pm, int pms) {\n"
+          "    if (pm) { blit_argb(px, sw, sh, bx + (bw - pms) / 2, by + (bh - pms) / 2, pm, pms); return; }\n"
           "    const Glyph *g = font_find(f, cp); if (!g) return;\n"
           "    int x = bx + (bw - g->w) / 2 - g->bx;\n"
           "    int baseline = by + (bh - g->h) / 2 + g->by;\n"

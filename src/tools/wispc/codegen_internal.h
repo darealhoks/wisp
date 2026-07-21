@@ -90,11 +90,16 @@ void          emit_bindings(FILE *o, SrcInst *srcs, int nsrc, SemaResult *r,
 
 /* ---------- codegen_expr.c ---------- */
 
-typedef enum { T_INT, T_FLOAT, T_BOOL, T_STR, T_COLOR, T_UNK } CT;
+/* T_PIXMAP: a premultiplied-ARGB square (a decoded app icon), not a value —
+ * it only ever reaches a widget's `icon` prop, which accepts it beside a
+ * codepoint. Every other consumer treats it as T_UNK. */
+typedef enum { T_INT, T_FLOAT, T_BOOL, T_STR, T_COLOR, T_PIXMAP, T_UNK } CT;
 
 typedef struct {
     char text[1024];
     CT type;
+    /* T_PIXMAP only: expression for the square's side in logical px. */
+    const char *pm_size;
 } CE;
 
 typedef enum {

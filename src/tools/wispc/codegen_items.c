@@ -225,9 +225,18 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
     fprintf(o, "%sconst char *txt = %s;\n", indent, ctxt.text);
 
     CE cicon = { .text = "0", .type = T_INT };
-    if (icon) { cicon = lower(ctx, icon); cicon = coerce_to_int(ctx, cicon); }
-    cgctx_flush_prelude(ctx, o, indent);
-    fprintf(o, "%suint32_t cp = (uint32_t)(%s);\n", indent, cicon.text);
+    if (icon) cicon = lower(ctx, icon);
+    if (cicon.type == T_PIXMAP) {
+        cgctx_flush_prelude(ctx, o, indent);
+        fprintf(o, "%suint32_t cp = 0;\n", indent);
+        fprintf(o, "%sconst uint32_t *pm = %s; int pms = %s;\n",
+                indent, cicon.text, cicon.pm_size);
+    } else {
+        if (icon) cicon = coerce_to_int(ctx, cicon);
+        cgctx_flush_prelude(ctx, o, indent);
+        fprintf(o, "%suint32_t cp = (uint32_t)(%s);\n", indent, cicon.text);
+        fprintf(o, "%sconst uint32_t *pm = 0; int pms = 0;\n", indent);
+    }
 
     /* Step 6.1: each colour prop optionally interpolates via a TransSlot. The
      * lowered expression yields a target; on change we kick anim_start_color
@@ -283,8 +292,8 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
         fprintf(o, "%sint tw = f->line_h * __bl;\n", indent);
     } else {
         fprintf(o, "%sint tw = 0;\n", indent);
-        fprintf(o, "%sif (cp)  tw += cp_width(f, cp);\n", indent);
-        fprintf(o, "%sif (cp && txt && txt[0]) tw += 2;\n", indent);
+        fprintf(o, "%sif (cp || pm)  tw += cp_width(f, cp, pm, pms);\n", indent);
+        fprintf(o, "%sif ((cp || pm) && txt && txt[0]) tw += 2;\n", indent);
         fprintf(o, "%sif (txt) {\n", indent);
         fprintf(o, "%s    const char *__p = txt; int __w = 0;\n", indent);
         fprintf(o, "%s    while (__p && *__p) {\n", indent);
@@ -317,6 +326,8 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
     fprintf(o, "%sst[%s].vis = vis;\n", indent, idx_expr);
     fprintf(o, "%sst[%s].txt = txt;\n", indent, idx_expr);
     fprintf(o, "%sst[%s].cp  = cp;\n", indent, idx_expr);
+    fprintf(o, "%sst[%s].pm  = pm;\n", indent, idx_expr);
+    fprintf(o, "%sst[%s].pms = pms;\n", indent, idx_expr);
     fprintf(o, "%sst[%s].fg  = fg;\n", indent, idx_expr);
     fprintf(o, "%sst[%s].bg  = bg;\n", indent, idx_expr);
     fprintf(o, "%sst[%s].press_bg = press_bg;\n", indent, idx_expr);
@@ -501,7 +512,7 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
     fprintf(o, "%s    int tw = st[%s].tw, pad = st[%s].pad;\n", indent, idx_expr, idx_expr);
     fprintf(o, "%s    int __h = st[%s].h;\n", indent, idx_expr);
     fprintf(o, "%s    int __adv = __h > 0 ? __h : tw;\n", indent);
-    fprintf(o, "%s    const char *txt = st[%s].txt; uint32_t cp = st[%s].cp;\n", indent, idx_expr, idx_expr);
+    fprintf(o, "%s    const char *txt = st[%s].txt; uint32_t cp = st[%s].cp; const uint32_t *pm = st[%s].pm; int pms = st[%s].pms;\n", indent, idx_expr, idx_expr, idx_expr, idx_expr);
     fprintf(o, "%s    uint32_t fg = st[%s].fg, bg = st[%s].bg, bdr = st[%s].border;\n",
             indent, idx_expr, idx_expr, idx_expr);
     /* press_bg override: while this st-index is the surface's pressed_st, swap
@@ -551,7 +562,7 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
             fprintf(o, "%s        fill_rect(sl->px, w->w, w->h, __reg_x + __reg_w - %d, pos, %d, __adv, bdr);\n", indent, vbw, vbw);
             fprintf(o, "%s    }\n", indent);
         }
-        fprintf(o, "%s    if (cp) { cx += draw_cp(sl->px, w->w, w->h, cx, cy, f, cp, fg); if (txt && txt[0]) { draw_text(sl->px, w->w, w->h, cx, cy, f, \" \", fg); cx += 2; } }\n", indent);
+        fprintf(o, "%s    if (cp || pm) { cx += draw_cp(sl->px, w->w, w->h, cx, cy, f, cp, fg, pm, pms); if (txt && txt[0]) { draw_text(sl->px, w->w, w->h, cx, cy, f, \" \", fg); cx += 2; } }\n", indent);
         fprintf(o, "%s    if (txt) {\n", indent);
         fprintf(o, "%s        const char *__p = txt; int __ln = 0;\n", indent);
         fprintf(o, "%s        while (__p && *__p && __ln < body_lines) {\n", indent);
@@ -656,16 +667,16 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
          * offset x so icon+text sits in the middle of the cell (within pad_x). */
         if (has_fixed_w) {
             fprintf(o, "%s    int __cw = 0;\n", indent);
-            fprintf(o, "%s    if (cp) __cw += cp_width(f, cp);\n", indent);
-            fprintf(o, "%s    if (cp && txt && txt[0]) __cw += 2;\n", indent);
+            fprintf(o, "%s    if (cp || pm) __cw += cp_width(f, cp, pm, pms);\n", indent);
+            fprintf(o, "%s    if ((cp || pm) && txt && txt[0]) __cw += 2;\n", indent);
             fprintf(o, "%s    if (txt) { const char *__p = txt; while (*__p && *__p != '\\n') __p++; char __t2[256]; int __L = (int)(__p - txt); if (__L > 255) __L = 255; memcpy(__t2, txt, __L); __t2[__L] = 0; __cw += text_width(f, __t2); }\n", indent);
             fprintf(o, "%s    if (__cw < tw) x += (tw - __cw) / 2;\n", indent);
         }
         /* Icon-only path uses pixel-bbox centering inside the cell bg box;
          * icon+text falls through to advance-based layout so text kerns. */
-        fprintf(o, "%s    if (cp && (!txt || !txt[0])) {\n", indent);
-        fprintf(o, "%s        draw_cp_centered(sl->px, w->w, w->h, __bx, __by, __bw, __bh, f, cp, fg);\n", indent);
-        fprintf(o, "%s    } else if (cp) { x += draw_cp(sl->px, w->w, w->h, x, __ty, f, cp, fg); if (txt && txt[0]) { draw_text(sl->px, w->w, w->h, x, __ty, f, \" \", fg); x += 2; } }\n", indent);
+        fprintf(o, "%s    if ((cp || pm) && (!txt || !txt[0])) {\n", indent);
+        fprintf(o, "%s        draw_cp_centered(sl->px, w->w, w->h, __bx, __by, __bw, __bh, f, cp, fg, pm, pms);\n", indent);
+        fprintf(o, "%s    } else if (cp || pm) { x += draw_cp(sl->px, w->w, w->h, x, __ty, f, cp, fg, pm, pms); if (txt && txt[0]) { draw_text(sl->px, w->w, w->h, x, __ty, f, \" \", fg); x += 2; } }\n", indent);
         fprintf(o, "%s    if (txt) {\n", indent);
         fprintf(o, "%s        const char *__p = txt; int __ln = 0;\n", indent);
         fprintf(o, "%s        while (__p && *__p && __ln < body_lines) {\n", indent);
@@ -1023,7 +1034,7 @@ static void emit_group_member(FILE *o, BarItem *it, const char *nm, int gap) {
     WBody *clk = widget_onclick(wd);
     fprintf(o, "        if (st[%d].vis) {\n", sb);
     fprintf(o, "            int __ma = (st[%d].h>0?st[%d].h:st[%d].tw);\n", sb, sb, sb);
-    fprintf(o, "            const char *txt = st[%d].txt; uint32_t cp = st[%d].cp;\n", sb, sb);
+    fprintf(o, "            const char *txt = st[%d].txt; uint32_t cp = st[%d].cp; const uint32_t *pm = st[%d].pm; int pms = st[%d].pms;\n", sb, sb, sb, sb);
     fprintf(o, "            uint32_t fg = st[%d].fg, bg = st[%d].bg, bdr = st[%d].border;\n", sb, sb, sb);
     fprintf(o, "            if (st[%d].press_bg & 0xff000000u && __%s_pressed_st == %d && __%s_pressed_w == w) bg = st[%d].press_bg;\n",
             sb, nm, sb, nm, sb);
@@ -1034,11 +1045,11 @@ static void emit_group_member(FILE *o, BarItem *it, const char *nm, int gap) {
         fprintf(o, "            if (bg  & 0xff000000u) fill_rect(sl->px,w->w,w->h, __gx,__gy,__ma,__gh, bg);\n");
     }
     fprintf(o, "            int __ty = __gy + (__gh - f->line_h)/2;\n");
-    fprintf(o, "            int __cw = 0; if (cp) __cw += cp_width(f,cp); if (cp && txt && txt[0]) __cw += 2;\n");
+    fprintf(o, "            int __cw = 0; if (cp || pm) __cw += cp_width(f, cp, pm, pms); if ((cp || pm) && txt && txt[0]) __cw += 2;\n");
     fprintf(o, "            if (txt) { const char *__p=txt; while(*__p&&*__p!='\\n')__p++; char __t2[256]; int __L=(int)(__p-txt); if(__L>255)__L=255; memcpy(__t2,txt,__L); __t2[__L]=0; __cw += text_width(f,__t2); }\n");
     fprintf(o, "            int __cx = __gx + (__ma - __cw)/2; if (__cx < __gx) __cx = __gx;\n");
-    fprintf(o, "            if (cp && (!txt || !txt[0])) draw_cp_centered(sl->px,w->w,w->h,__gx,__gy,__ma,__gh,f,cp,fg);\n");
-    fprintf(o, "            else { if (cp) { __cx += draw_cp(sl->px,w->w,w->h,__cx,__ty,f,cp,fg); if (txt&&txt[0]) { draw_text(sl->px,w->w,w->h,__cx,__ty,f,\" \",fg); __cx+=2; } } if (txt) draw_text(sl->px,w->w,w->h,__cx,__ty,f,txt,fg); }\n");
+    fprintf(o, "            if ((cp || pm) && (!txt || !txt[0])) draw_cp_centered(sl->px,w->w,w->h,__gx,__gy,__ma,__gh,f,cp,fg,pm,pms);\n");
+    fprintf(o, "            else { if (cp || pm) { __cx += draw_cp(sl->px,w->w,w->h,__cx,__ty,f,cp,fg,pm,pms); if (txt&&txt[0]) { draw_text(sl->px,w->w,w->h,__cx,__ty,f,\" \",fg); __cx+=2; } } if (txt) draw_text(sl->px,w->w,w->h,__cx,__ty,f,txt,fg); }\n");
     if (clk)
         fprintf(o, "            { int __i = __%s_nhit++; __%s_hits_buf[__i].x=__gx; __%s_hits_buf[__i].y=__reg_y; __%s_hits_buf[__i].w=__ma; __%s_hits_buf[__i].h=__reg_h; __%s_hits_buf[__i].kind=0; __%s_hits_buf[__i].arg=%d; __%s_hits_buf[__i].slider_idx=-1; __%s_hits_buf[__i].st_idx=%d; }\n",
                 nm, nm, nm, nm, nm, nm, nm, it->handler_idx, nm, nm, sb);
