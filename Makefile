@@ -166,7 +166,7 @@ endif
 
 # Force-include the preset's feature macros into every TU before any other
 # header so module sources can #ifdef WISP_HAS_* at the top.
-CFLAGS += -include $(GENDIR)/features.h -include $(GENDIR)/gen_overrides.h -I$(SRCDIR)
+CFLAGS += -include $(GENDIR)/features.h -include $(GENDIR)/gen_overrides.h -I$(SRCDIR) -iquote $(GENDIR)
 
 include $(GENDIR)/objects.mk
 
@@ -177,7 +177,7 @@ endif
 
 HDR := $(SRCDIR)/wisp.h $(SRCDIR)/proto.h $(SRCDIR)/config.h \
        $(SRCDIR)/font.h $(SRCDIR)/bake.h \
-       $(GENDIR)/features.h $(GENDIR)/gen_overrides.h
+       $(GENDIR)/features.h $(GENDIR)/gen_overrides.h $(GENDIR)/gen_menus.h
 
 WISPC_SRC := $(TOOLDIR)/wispc/arena.c $(TOOLDIR)/wispc/diag.c $(TOOLDIR)/wispc/lex.c \
             $(TOOLDIR)/wispc/parse.c $(TOOLDIR)/wispc/style.c $(TOOLDIR)/wispc/sema.c $(TOOLDIR)/wispc/dump.c \
@@ -205,7 +205,7 @@ LOCK_CFLAGS := -Os -Wall -Wextra -Werror -Wno-unused-parameter \
                -fno-asynchronous-unwind-tables -fdata-sections -ffunction-sections \
                $(FONT_DEFS) $(FT_CFLAGS) \
                -include $(SRCDIR)/lock-features.h \
-               -include $(GENDIR)/gen_overrides.h -I$(SRCDIR)
+               -include $(GENDIR)/gen_overrides.h -I$(SRCDIR) -iquote $(GENDIR)
 
 all: $(BIN)
 
@@ -347,9 +347,20 @@ CONFIGS := $(patsubst configs/%.wisp,%,$(wildcard configs/*.wisp))
 # Each WISP invocation needs a clean build dir because objects.mk differs.
 # The nm DCE assertions run only when configs/minimal.wisp is present — it's
 # the only unit whose stripped-down feature set makes the assertion meaningful.
+# check clobbers the sticky preset with whatever config it built last, so a
+# plain `make install` afterwards silently ships the wrong preset. Restore the
+# caller's WISP=/FONT_* fields on the way out, but stamped `STALE=check`: the
+# fields make stickiness recover the right preset, the marker guarantees the
+# tag can never equal a computed BUILD_TAG, so the auto-wipe fires and the
+# matrix's leftover objects can't be relinked under the restored name.
 check:
 	@set -e; \
 	fail=0; \
+	saved=$$(cat $(BUILD_TAG_FILE) 2>/dev/null || true); \
+	restore_tag() { \
+	    if [ -n "$$saved" ]; then mkdir -p $(BUILD); printf '%s STALE=check\n' "$$saved" > $(BUILD_TAG_FILE); \
+	    else rm -f $(BUILD_TAG_FILE); fi; \
+	}; \
 	build1() { \
 	    name="$$1"; shift; \
 	    $(MAKE) -s clean >/dev/null 2>&1; \
@@ -376,6 +387,7 @@ check:
 	else \
 	    echo "==> nm assertions skipped (configs/minimal.wisp absent)"; \
 	fi; \
+	restore_tag; \
 	if [ $$fail -ne 0 ]; then echo "check: FAIL"; exit 1; fi; \
 	echo "check: PASS"
 

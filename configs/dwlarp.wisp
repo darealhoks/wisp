@@ -260,17 +260,16 @@ surface menu {
   keyboard = exclusive;
   bg = #ff0f1219;
 
-  widget prompt.dim { align = left; text = $prompt; pad = 8; }
-  widget items {
-    align = left;
-    for item in $items {
-      cell {
-        text = item.label;
-        bg   = item.selected ? ACT : #00000000;
-        on_click() = emit(menu_reply, index = item.index);
-      }
-    }
-  }
 }
 
-#menu cell { fg = FG; }
+// Menus, formerly compiled in unconditionally (POWERMENU_INIT / EMOJI_INIT).
+// ponytail: sleep/hibernate are `true` no-ops — not set up on this machine.
+menu power {
+  item { icon = 0xf011; label = "Poweroff";  exec = "loginctl poweroff"; }
+  item { icon = 0xf021; label = "Reboot";    exec = "loginctl reboot"; }
+  item { icon = 0xf08b; label = "Logout";    exec = "pkill -x mango"; }
+  item { icon = 0xf186; label = "Sleep";     exec = "true"; }
+  item { icon = 0xf28d; label = "Hibernate"; exec = "true"; }
+}
+
+menu emoji { preset = emoji; }

@@ -14,6 +14,7 @@
 #ifdef WISP_HAS_MENU
 
 #include <dirent.h>
+#include <malloc.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -112,7 +113,7 @@ static int parse_desktop(const char *path, App *a) {
     fclose(f);
     if (!is_app || hidden || !a->name[0] || !exec[0]) return 0;
     /* strip %f/%F/%u/%U/… field codes; "%%" → "%" */
-    char clean[EXEC_MAX - 16];   /* leave room for the "foot -e " prefix */
+    char clean[EXEC_MAX - 16];   /* leave room for the MENU_TERMINAL prefix */
     int o = 0;
     for (const char *p = exec; *p && o < EXEC_MAX - 1; p++) {
         if (*p == '%') {
@@ -124,11 +125,9 @@ static int parse_desktop(const char *path, App *a) {
     }
     while (o > 0 && clean[o-1] == ' ') o--;
     clean[o] = 0;
-    if (terminal) {
-        /* ponytail: terminal hardcoded to foot — it's this rice's terminal */
-        memcpy(a->exec, "foot -e ", 8);
-        scpy(a->exec + 8, sizeof a->exec - 8, clean);
-    } else
+    if (terminal)
+        snprintf(a->exec, sizeof a->exec, "%s %s", MENU_TERMINAL, clean);
+    else
         scpy(a->exec, sizeof a->exec, clean);
     a->count = 0;
     return 1;
@@ -288,6 +287,7 @@ static void icons_free(void) {
 /* Decode all app icons in current apps[] order. */
 static void load_icons(void) {
     icons_free();
+    if (!MENU_ICONS) return;
     icons = calloc(APP_CAP, sizeof *icons);
     if (!icons) return;
     icon_sz = menu_icon_px();
@@ -312,6 +312,10 @@ static void apps_free(void) {
     free(apps);  apps  = NULL;  n_apps = 0;
     free(ranks); ranks = NULL;
     icons_free();
+    /* Icon decode churns MBs of transient buffers through the heap; without a
+     * trim glibc retains them and idle RSS sits ~2x until the next wall/glyph
+     * event happens to trim. */
+    malloc_trim(0);
 }
 
 static void on_pick(int idx) {

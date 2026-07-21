@@ -224,7 +224,6 @@ struct Widget {
             uint32_t urgent_mask;     /* bit i set => tag i is urgent   */
             char     title[MAX_TEXT];
             int      have_tags;
-            uint32_t render_hash;     /* FNV-1a over displayed state; 0 = uninit */
         } bar;
         struct {
             /* Slide-axis margin: cur_off interpolates toward target_off.
@@ -515,6 +514,10 @@ int  hud_check_deferred(int64_t now);   /* returns timeout-ms or -1 */
 /* Menu (dmenu replacement) (menu.c)                             */
 /* ============================================================ */
 
+/* A `menu NAME {}` decl lowered by wispc; table lives in gen_menus.h. */
+typedef struct { const char *item, *cmd; } WispMenuEntry;
+typedef struct { const char *name; const WispMenuEntry *e; int n; int emoji; } WispMenu;
+
 Widget *menu_create(const char *title, char items[][ITEM_MAX], int n,
                     int client_fd);
 Widget *menu_create_action(const char *title,
@@ -744,6 +747,10 @@ typedef struct { int has; uint32_t last; uint32_t cur; } TransSlot;
  * expression flips to false. */
 typedef struct { int has; int prev; double rev; } VisSlot;
 
+/* Like TransSlot but for a tweened size (`transition_size`). Layout re-runs
+ * from `cur` every tick, so neighbours shift along instead of jumping. */
+typedef struct { int has; int last; double cur; } SizeSlot;
+
 uint32_t anim_start_num(void *target, AnimType type, double from, double to,
                         int duration_ms, Easing e, const double bez[4],
                         Widget *owner, AnimDone on_done, void *user);
@@ -755,6 +762,7 @@ void     anim_tick(int64_t now);
 int      anim_any_active(void);
 int      anim_fd(void);
 void     anim_on_tfd(void);
+int      anim_px(double v);      /* tweened size -> pixels, pair-stable */
 double   anim_ease(int easing, double t);  /* exposed for hud reveal tween */
 
 /* ============================================================ */

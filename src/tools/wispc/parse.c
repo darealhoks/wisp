@@ -737,6 +737,71 @@ static Decl *parse_block_decl(P *p, DKind dk, const char *name) {
     return d;
 }
 
+/* ---------- user menus ----------
+ * `menu NAME { item { icon = 0xf011; label = "…"; exec = "…"; } … }`, or
+ * `menu NAME { preset = emoji; }`. Not a keyword: `menu` stays usable as an
+ * ident (`spawned_by = menu`, `#menu {}`), so the decl is recognised by the
+ * ident + ident + '{' shape at top level. */
+static Decl *parse_menu(P *p) {
+    Tok kw = cur(p); lex_next(&p->L);
+    Decl *d = NEW(p, Decl);
+    d->kind = D_MENU; d->loc = kw.loc;
+    Tok nm = cur(p); lex_next(&p->L);
+    d->name = arena_strn(p->a, nm.s, nm.len); d->nlen = nm.len;
+    d->menu.emoji = 0;
+    expect(p, TK_LBRACE, "'{'");
+    VList items = {0};
+    while (!at(p, TK_RBRACE) && !at(p, TK_EOF)) {
+        Tok t = cur(p);
+        if (t.kind != TK_IDENT) { diag_error(t.loc, "expected 'item' or 'preset'"); lex_next(&p->L); continue; }
+        if (t.len == 6 && memcmp(t.s, "preset", 6) == 0) {
+            lex_next(&p->L); expect(p, TK_ASSIGN, "'='");
+            Tok v = cur(p);
+            if (v.kind != TK_IDENT || v.len != 5 || memcmp(v.s, "emoji", 5) != 0)
+                diag_error(v.loc, "only 'emoji' preset exists");
+            else d->menu.emoji = 1;
+            lex_next(&p->L); eat(p, TK_SEMI);
+            continue;
+        }
+        if (t.len != 4 || memcmp(t.s, "item", 4) != 0) {
+            diag_error(t.loc, "expected 'item' or 'preset'"); lex_next(&p->L); continue;
+        }
+        lex_next(&p->L);
+        expect(p, TK_LBRACE, "'{' after item");
+        MenuItem *it = NEW(p, MenuItem);
+        *it = (MenuItem){0};
+        while (!at(p, TK_RBRACE) && !at(p, TK_EOF)) {
+            Tok k = cur(p);
+            /* `exec` is a keyword token elsewhere in the grammar. */
+            if (k.kind != TK_IDENT && k.kind != TK_KW_EXEC) { diag_error(k.loc, "expected item property"); lex_next(&p->L); continue; }
+            lex_next(&p->L); expect(p, TK_ASSIGN, "'='");
+            Tok v = cur(p); lex_next(&p->L);
+            if (k.len == 4 && memcmp(k.s, "icon", 4) == 0) {
+                if (v.kind != TK_INT) diag_error(v.loc, "icon takes a codepoint literal");
+                else it->icon = (uint32_t)v.i;
+            } else if (k.len == 5 && memcmp(k.s, "label", 5) == 0) {
+                if (v.kind != TK_STRING) diag_error(v.loc, "label takes a string");
+                else { it->label = arena_strn(p->a, v.s, v.len); it->llen = v.len; }
+            } else if (k.len == 4 && memcmp(k.s, "exec", 4) == 0) {
+                if (v.kind != TK_STRING) diag_error(v.loc, "exec takes a string");
+                else { it->exec = arena_strn(p->a, v.s, v.len); it->elen = v.len; }
+            } else {
+                diag_error(k.loc, "unknown item property");
+            }
+            eat(p, TK_SEMI);
+        }
+        expect(p, TK_RBRACE, "'}'");
+        if (!it->label || !it->exec) diag_error(t.loc, "item needs label and exec");
+        vl_push(&items, it);
+    }
+    expect(p, TK_RBRACE, "'}'");
+    int n; MenuItem **arr = (MenuItem**)vl_freeze(p, &items, &n);
+    d->menu.items = NEW_ARR(p, MenuItem, n ? n : 1);
+    for (int i = 0; i < n; i++) d->menu.items[i] = *arr[i];
+    d->menu.n = n;
+    return d;
+}
+
 /* ---------- style rules ----------
  * `sel[, sel]* { prop = val; ... }` where sel is a descendant chain of
  * `[type][#id|id][.class]*`. A bare identifier is an id (node name); type
@@ -847,7 +912,10 @@ Unit *parse_file(Arena *a, const char *file, const char *src) {
             break;
         case TK_KW_WIDGET: case TK_KW_GROUP: case TK_KW_CELL: case TK_KW_REGION:
         case TK_IDENT: case TK_HASH: case TK_DOT:
-            d = parse_style_rule(&p); break;
+            d = (t.kind == TK_IDENT && t.len == 4 && memcmp(t.s, "menu", 4) == 0 &&
+                 lex_peek(&p.L).kind == TK_IDENT)
+                ? parse_menu(&p) : parse_style_rule(&p);
+            break;
         case TK_KW_COMPOUND:  d = parse_surface_or_compound(&p, D_COMPOUND); break;
         case TK_KW_CONST:     d = parse_const_or_mut(&p, D_CONST); break;
         case TK_KW_MUT:       d = parse_const_or_mut(&p, D_MUT); break;

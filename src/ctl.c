@@ -1,9 +1,9 @@
 /* Control socket: SOCK_STREAM at $XDG_RUNTIME_DIR/wisp.sock. Commands are
  * tab-separated args, one per line. */
 #include "wisp.h"
-#include "emoji_data.h"   /* EMOJI_INIT for `wispctl emoji` */
 
 #include <errno.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -106,6 +106,59 @@ static int parse_hex(const char *s, unsigned *out) {
     *out = v; return 0;
 }
 
+/* Reply "err: <why>\n". wispctl prints the reply line verbatim and exits
+ * nonzero on anything but ok — so the message can say what actually went
+ * wrong without breaking any script that checks the exit code. */
+static int fail(Client *c, const char *fmt, ...) {
+    char b[256];
+    int n = snprintf(b, sizeof b, "err: ");
+    va_list ap;
+    va_start(ap, fmt);
+    n += vsnprintf(b + n, sizeof b - n - 1, fmt, ap);
+    va_end(ap);
+    if (n > (int)sizeof b - 2) n = (int)sizeof b - 2;
+    b[n++] = '\n';
+    (void)!write(c->fd, b, n);
+    return 0;
+}
+
+#ifdef WISP_HAS_MENU
+#include "gen_menus.h"   /* -iquote, not -I: GENDIR holds a features.h that would shadow glibc's */
+
+/* Open a menu declared in the .wisp. Entries are pre-rendered by wispc
+ * (icon already UTF-8); the emoji preset expands the baked gemoji table. */
+static int open_declared_menu(Client *c, const char *name) {
+    for (const WispMenu *m = wisp_menus; m->name; m++) {
+        if (strcmp(m->name, name)) continue;
+        char items[MAX_ITEMS][ITEM_MAX], cmds[MAX_ITEMS][ITEM_MAX];
+        int n = 0;
+#ifdef WISP_MENU_EMOJI
+        if (m->emoji) {
+            struct { const char *glyph; const char *name; } e[] = EMOJI_INIT;
+            n = (int)(sizeof e / sizeof *e);
+            if (n > MAX_ITEMS) n = MAX_ITEMS;
+            for (int i = 0; i < n; i++) {
+                snprintf(items[i], ITEM_MAX, "%s  %s", e[i].glyph, e[i].name);
+                snprintf(cmds[i],  ITEM_MAX, "printf %%s '%s' | wl-copy", e[i].glyph);
+            }
+        }
+#endif
+        for (int i = 0; i < m->n && n < MAX_ITEMS; i++, n++) {
+            snprintf(items[n], ITEM_MAX, "%s", m->e[i].item);
+            snprintf(cmds[n],  ITEM_MAX, "%s", m->e[i].cmd);
+        }
+        char title[64];
+        snprintf(title, sizeof title, "%s:", name);
+        if (!menu_create_action(title, items, cmds, n))
+            return fail(c, "menu: no free widget slot or out of memory");
+        (void)!write(c->fd, "ok\n", 3);
+        return 0;
+    }
+    return fail(c, "no menu '%s' declared in the config", name);
+}
+#endif
+
+
 /* Returns 1 if client should be kept open (deferred reply by widget), 0 close.
  * argv[] is sized for the menu command (which carries up to MAX_ITEMS items);
  * non-menu commands never use beyond the first few slots. */
@@ -151,7 +204,7 @@ static int dispatch(Client *c, char *cmd) {
      * which passes `tag.output` so the clicked monitor switches, not the
      * kbd-focused one. Without the slot arg, falls back to focused output. */
     if (!strcmp(op, "tag")) {
-        if (argc < 2) goto err;
+        if (argc < 2) return fail(c, "usage: tag <n> [output-slot]");
         Output *o = focused_output;
         if (argc >= 3) {
             int oi = atoi(argv[2]);
@@ -162,7 +215,7 @@ static int dispatch(Client *c, char *cmd) {
     }
 #ifdef WISP_HAS_BAR
     if (!strcmp(op, "bar")) {
-        if (argc < 2) goto err;
+        if (argc < 2) return fail(c, "usage: bar title|tags|refresh ...");
         const char *sub = argv[1];
         if (!strcmp(sub, "title")) {
             bar_set_title(argc >= 3 ? argv[2] : "");
@@ -171,7 +224,7 @@ static int dispatch(Client *c, char *cmd) {
         if (!strcmp(sub, "tags") && argc >= 5) {
             unsigned occ, act, urg;
             if (parse_hex(argv[2], &occ) || parse_hex(argv[3], &act) || parse_hex(argv[4], &urg))
-                goto err;
+                return fail(c, "bar tags: masks must be hex");
             bar_set_tags(occ, act, urg);
             (void)!write(c->fd, "ok\n", 3); return 0;
         }
@@ -179,7 +232,7 @@ static int dispatch(Client *c, char *cmd) {
             bar_redraw_all();
             (void)!write(c->fd, "ok\n", 3); return 0;
         }
-        goto err;
+        return fail(c, "unknown bar subcommand: %s", sub);
     }
 #endif
 #ifdef WISP_HAS_MENU
@@ -188,7 +241,10 @@ static int dispatch(Client *c, char *cmd) {
             menu_cancel_all();
             (void)!write(c->fd, "ok\n", 3); return 0;
         }
-        if (argc < 3) goto err;
+        /* `menu <name>` opens a menu declared in the .wisp; two or more args
+         * is still the ad-hoc "pick one of these strings" form. */
+        if (argc == 2) return open_declared_menu(c, argv[1]);
+        if (argc < 3) return fail(c, "usage: menu <title> <item>... | menu <name>");
         const char *title = argv[1];
         int n = argc - 2;
         if (n > MAX_ITEMS) n = MAX_ITEMS;
@@ -200,13 +256,13 @@ static int dispatch(Client *c, char *cmd) {
             memcpy(items[i], argv[2 + i], l); items[i][l] = 0;
         }
         Widget *w = menu_create(title[0] ? title : NULL, items, n, c->fd);
-        if (!w) { (void)!write(c->fd, "err\n", 4); return 0; }
+        if (!w) return fail(c, "menu: no free widget slot or out of memory");
         return 1;  /* fd handed off; reply on pick/cancel */
     }
     /* App launcher: daemon owns items + exec; reply immediately. */
     if (!strcmp(op, "apps")) {
         if (apps_open()) (void)!write(c->fd, "ok\n", 3);
-        else             (void)!write(c->fd, "err\n", 4);
+        else             return fail(c, "apps: no free widget slot or out of memory");
         return 0;
     }
 #endif
@@ -225,7 +281,7 @@ static int dispatch(Client *c, char *cmd) {
      *   icon-cp: hex nerd-font codepoint (e.g. f028 for volume)
      *   muted: 1 → red styling */
     if (!strcmp(op, "osd")) {
-        if (argc < 3) goto err;
+        if (argc < 3) return fail(c, "usage: osd <slot> <summary> [progress] [icon-cp] [muted]");
         unsigned slot = 0; parse_hex(argv[1], &slot);
         const char *summary = argv[2];
         int progress = argc >= 4 ? atoi(argv[3]) : -1;
@@ -238,7 +294,7 @@ static int dispatch(Client *c, char *cmd) {
     /* notify <urgency:0|1|2> <summary> [body] [icon-cp] [timeout-ms]
      *   timeout: -1 → urgency default; 0 → sticky. */
     if (!strcmp(op, "notify")) {
-        if (argc < 3) goto err;
+        if (argc < 3) return fail(c, "usage: notify <urgency> <summary> [body] [icon-cp] [timeout-ms]");
         int urgency = atoi(argv[1]);
         const char *summary = argv[2];
         const char *body = argc >= 4 ? argv[3] : "";
@@ -254,52 +310,6 @@ static int dispatch(Client *c, char *cmd) {
     }
 #endif
 #ifdef WISP_HAS_MENU
-    /* Built-in power menu — absorbed ws-powermenu script. Entries+actions
-     * come from POWERMENU_INIT in config.h; icons are pre-baked. */
-    if (!strcmp(op, "powermenu")) {
-        struct { uint32_t icon; const char *label; const char *cmd; }
-            entries[] = POWERMENU_INIT;
-        int n = (int)(sizeof entries / sizeof *entries);
-        char items[MAX_ITEMS][ITEM_MAX], cmds[MAX_ITEMS][ITEM_MAX];
-        for (int i = 0; i < n; i++) {
-            /* "<icon-utf8> <label>" — emit the codepoint in UTF-8 ourselves
-             * rather than depend on a helper, since the encoding is trivial. */
-            uint32_t cp = entries[i].icon;
-            char ic[8]; int il = 0;
-            if (cp < 0x80) { ic[il++] = cp; }
-            else if (cp < 0x800) {
-                ic[il++] = 0xc0 | (cp >> 6);
-                ic[il++] = 0x80 | (cp & 0x3f);
-            } else if (cp < 0x10000) {
-                ic[il++] = 0xe0 | (cp >> 12);
-                ic[il++] = 0x80 | ((cp >> 6) & 0x3f);
-                ic[il++] = 0x80 | (cp & 0x3f);
-            } else {
-                ic[il++] = 0xf0 | (cp >> 18);
-                ic[il++] = 0x80 | ((cp >> 12) & 0x3f);
-                ic[il++] = 0x80 | ((cp >> 6) & 0x3f);
-                ic[il++] = 0x80 | (cp & 0x3f);
-            }
-            ic[il] = 0;
-            snprintf(items[i], ITEM_MAX, "%s  %s", ic, entries[i].label);
-            snprintf(cmds[i],  ITEM_MAX, "%s",     entries[i].cmd);
-        }
-        menu_create_action("power:", items, cmds, n);
-        (void)!write(c->fd, "ok\n", 3); return 0;
-    }
-    /* Built-in emoji picker — entries from EMOJI_INIT; pick copies the glyph
-     * to the clipboard. Glyphs are already UTF-8, so no encoding dance. */
-    if (!strcmp(op, "emoji")) {
-        struct { const char *glyph; const char *name; } entries[] = EMOJI_INIT;
-        int n = (int)(sizeof entries / sizeof *entries);
-        char items[MAX_ITEMS][ITEM_MAX], cmds[MAX_ITEMS][ITEM_MAX];
-        for (int i = 0; i < n; i++) {
-            snprintf(items[i], ITEM_MAX, "%s  %s", entries[i].glyph, entries[i].name);
-            snprintf(cmds[i],  ITEM_MAX, "printf %%s '%s' | wl-copy", entries[i].glyph);
-        }
-        menu_create_action("copy:", items, cmds, n);
-        (void)!write(c->fd, "ok\n", 3); return 0;
-    }
 #endif
 #ifdef WISP_HAS_MEDIA
     /* media controls — absorbed dwl-osd. */
@@ -319,7 +329,7 @@ static int dispatch(Client *c, char *cmd) {
 #ifdef WISP_HAS_GAMMA
     /* gamma auto|day|night|flat|off|state|is-warm */
     if (!strcmp(op, "gamma")) {
-        if (argc < 2) goto err;
+        if (argc < 2) return fail(c, "usage: gamma auto|day|night|flat|off|state|is-warm");
         const char *sub = argv[1];
         if (!strcmp(sub, "auto"))       gamma_set_mode(GM_AUTO);
         else if (!strcmp(sub, "day"))   gamma_set_mode(GM_DAY);
@@ -338,7 +348,7 @@ static int dispatch(Client *c, char *cmd) {
             (void)!write(c->fd, s, 2);
             return 0;
         }
-        else goto err;
+        else return fail(c, "unknown gamma mode: %s", sub);
         (void)!write(c->fd, "ok\n", 3);
         return 0;
     }
@@ -356,8 +366,9 @@ static int dispatch(Client *c, char *cmd) {
     /* wall <path> — switch the wallpaper at runtime with a crossfade. Path is
      * resolved by the daemon ("~/" ok); a missing file keeps the current one. */
     if (!strcmp(op, "wall")) {
-        if (argc < 2 || !argv[1][0]) goto err;
-        if (wall_set(argv[1]) < 0) goto err;
+        if (argc < 2 || !argv[1][0]) return fail(c, "usage: wall <path.png>");
+        if (wall_set(argv[1]) < 0)
+            return fail(c, "unreadable or not a PNG: %s", argv[1]);
         (void)!write(c->fd, "ok\n", 3);
         return 0;
     }
@@ -367,7 +378,7 @@ static int dispatch(Client *c, char *cmd) {
      * release, so windows reclaim the space). ponytail: global, not
      * per-output — apply_visibility has no focused-output filter yet. */
     if (!strcmp(op, "hide")) {
-        if (argc < 2) goto err;
+        if (argc < 2) return fail(c, "usage: hide on|off|toggle|status");
         const char *sub = argv[1];
         if (!strcmp(sub, "on"))          ui_hidden = 1;
         else if (!strcmp(sub, "off"))    ui_hidden = 0;
@@ -376,7 +387,7 @@ static int dispatch(Client *c, char *cmd) {
             (void)!write(c->fd, ui_hidden ? "on\n" : "off\n", ui_hidden ? 3 : 4);
             return 0;
         }
-        else goto err;
+        else return fail(c, "unknown hide subcommand: %s", sub);
         {
             extern void wispgen_wisp_state_changed(void) __attribute__((weak));
             if (wispgen_wisp_state_changed) wispgen_wisp_state_changed();
@@ -388,7 +399,7 @@ static int dispatch(Client *c, char *cmd) {
     /* dnd on|off|toggle|status — when on, dbus app notifications (urgency<2)
      * are swallowed. Critical urgency=2 always passes through. */
     if (!strcmp(op, "dnd")) {
-        if (argc < 2) goto err;
+        if (argc < 2) return fail(c, "usage: dnd on|off|toggle|status");
         const char *sub = argv[1];
         if (!strcmp(sub, "on"))      dnd_on = 1;
         else if (!strcmp(sub, "off")) dnd_on = 0;
@@ -397,7 +408,7 @@ static int dispatch(Client *c, char *cmd) {
             (void)!write(c->fd, dnd_on ? "on\n" : "off\n", dnd_on ? 3 : 4);
             return 0;
         }
-        else goto err;
+        else return fail(c, "unknown dnd subcommand: %s", sub);
         {
             extern void wispgen_wisp_state_changed(void) __attribute__((weak));
             if (wispgen_wisp_state_changed) wispgen_wisp_state_changed();
@@ -406,8 +417,9 @@ static int dispatch(Client *c, char *cmd) {
         return 0;
     }
 #endif
-err:
-    (void)!write(c->fd, "err\n", 4);
+    /* Feature-gated ops fall through here when their #ifdef is off — say so,
+     * a bare "err" once cost a debugging session against a stale daemon. */
+    return fail(c, "unknown command: %s (not in this build/preset?)", op);
     return 0;
 }
 

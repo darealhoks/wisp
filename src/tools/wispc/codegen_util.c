@@ -211,7 +211,47 @@ const char *surface_easing_id(Decl *sur, const char *prop_name) {
 int item_has_any_transition(Widget *wd) {
     return transition_dur(wd, "bg") > 0
         || transition_dur(wd, "fg") > 0
-        || transition_dur(wd, "border") > 0;
+        || transition_dur(wd, "border") > 0
+        || transition_dur(wd, "size") > 0;
+}
+
+/* Step 6.5: the tween slot pattern, emitted once per property instead of once
+ * per property *kind*: seed on first render, retarget when the declared value
+ * changes (anim_start_* restarts from the current value — the CSS semantic),
+ * always read `.cur`. Without WISP_HAS_ANIM the property just snaps. */
+void emit_color_slot(FILE *o, const char *ind, const char *var, const char *slot,
+                     const char *tgt_expr, const SlotCtx *sc, int dur) {
+    if (dur <= 0) { fprintf(o, "%suint32_t %s = (uint32_t)(%s);\n", ind, var, tgt_expr); return; }
+    fprintf(o, "%suint32_t __%s_tgt = (uint32_t)(%s); uint32_t %s;\n", ind, var, tgt_expr, var);
+    fprintf(o, "%s#ifdef WISP_HAS_ANIM\n", ind);
+    fprintf(o, "%s{ TransSlot *__s = &%s_tr%d_%s[%s];\n", ind, sc->surf, sc->item, slot, sc->idx);
+    fprintf(o, "%s  if (!__s->has) { __s->cur = __%s_tgt; __s->last = __%s_tgt; __s->has = 1; }\n", ind, var, var);
+    fprintf(o, "%s  else if (__s->last != __%s_tgt) { anim_start_color(&__s->cur, __s->cur, __%s_tgt, %d, %s, NULL, w, NULL, NULL); __s->last = __%s_tgt; }\n",
+            ind, var, var, dur, sc->ease, var);
+    fprintf(o, "%s  %s = __s->cur; }\n", ind, var);
+    fprintf(o, "%s#else\n%s  %s = __%s_tgt;\n%s#endif\n", ind, ind, var, var, ind);
+}
+
+/* Same, for an already-declared int size var tweened through a SizeSlot.
+ * `even` quantises to even pixels — see the cross-axis note in codegen_items.c. */
+void emit_size_slot(FILE *o, const char *ind, const char *var, const char *slot,
+                    const SlotCtx *sc, int dur, int even) {
+    if (dur <= 0) return;
+    fprintf(o, "%s#ifdef WISP_HAS_ANIM\n", ind);
+    fprintf(o, "%s{ SizeSlot *__s = &%s_tr%d_%s[%s];\n", ind, sc->surf, sc->item, slot, sc->idx);
+    fprintf(o, "%s  if (!__s->has) { __s->cur = %s; __s->last = %s; __s->has = 1; }\n", ind, var, var);
+    fprintf(o, "%s  else if (__s->last != %s) { anim_start_num(&__s->cur, ANIM_T_FLOAT, __s->cur, %s, %d, %s, NULL, w, NULL, NULL); __s->last = %s; }\n",
+            ind, var, var, dur, sc->ease, var);
+    fprintf(o, "%s  %s = anim_px(__s->cur)%s; }\n", ind, var, even ? " & ~1" : "");
+    fprintf(o, "%s#endif\n", ind);
+}
+
+/* The storage behind the above — slot names are the contract between the two. */
+void emit_item_slot_decls(FILE *o, Widget *wd, const char *nm, int idx, int slots) {
+    if (transition_dur(wd, "bg")     > 0) fprintf(o, "static TransSlot %s_tr%d_bg[%d];\n",     nm, idx, slots);
+    if (transition_dur(wd, "fg")     > 0) fprintf(o, "static TransSlot %s_tr%d_fg[%d];\n",     nm, idx, slots);
+    if (transition_dur(wd, "border") > 0) fprintf(o, "static TransSlot %s_tr%d_border[%d];\n", nm, idx, slots);
+    if (transition_dur(wd, "size")   > 0) fprintf(o, "static SizeSlot %s_tr%d_tw[%d], %s_tr%d_ch[%d];\n", nm, idx, slots, nm, idx, slots);
 }
 
 /* Step 6.3: enter_anim / exit_anim on a widget's `visible` expression. */

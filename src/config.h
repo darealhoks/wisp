@@ -95,6 +95,12 @@
 #ifndef MENU_BORDER_W
 #define MENU_BORDER_W   1
 #endif
+#ifndef MENU_TERMINAL
+#define MENU_TERMINAL   "foot -e"     /* prefix for .desktop Terminal=true apps */
+#endif
+#ifndef MENU_ICONS
+#define MENU_ICONS      0             /* app-icon decode: off by default, it is the launcher's fattest RAM/IO cost */
+#endif
 #ifndef MENU_SORT_FREQ
 #define MENU_SORT_FREQ  1             /* apps launcher: most-used first (0 = alphabetical) */
 #endif
@@ -121,31 +127,8 @@
 /* Tag labels (9). */
 #define TAG_LABELS { "1","2","3","4","5","6","7","8","9" }
 
-/* Show modules */
-#define SHOW_DISK    1
-#define SHOW_CPU     1
-#define SHOW_MEM     1
-#define SHOW_BAT     1
-#define SHOW_VPN     1
-#define SHOW_WIFI    1
-
 #define CTL_SOCK_NAME "wisp.sock"
 
-/* ---------- Powermenu (built-in `wispctl powermenu`) ----------
- * Each entry: { icon-codepoint, label, shell-command }. Icons must also
- * appear in tools/bake.c's ICONS[]. */
-/* ponytail: sleep/hibernate are `true` no-ops — not set up on this machine yet.
- * Swap in `loginctl suspend` / `loginctl hibernate` once configured. */
-#define POWERMENU_INIT { \
-    { 0xf011, "Poweroff",  "loginctl poweroff" }, \
-    { 0xf021, "Reboot",    "loginctl reboot"   }, \
-    { 0xf08b, "Logout",    "pkill -x mango"    }, \
-    { 0xf186, "Sleep",     "true"              }, \
-    { 0xf28d, "Hibernate", "true"              }, \
-}
-/* Emoji picker (`wispctl emoji`) data lives in src/emoji_data.h (EMOJI_INIT),
- * generated from gemoji — too long to inline here. Freetype-only: the baked
- * bitmap backend has no emoji glyphs. */
 
 /* ---------- Wallpaper ----------
  * PNG decoded once at first configure. If the file is missing or the decoder
@@ -159,6 +142,15 @@
 /* Crossfade length for `wispctl wall <path>` (ms). */
 #ifndef WALL_FADE_MS
 #define WALL_FADE_MS 300
+#endif
+/* How the two frames are combined per tick: cross-dissolve or block reveal. */
+#define WALL_TRANSITION_FADE   0
+#define WALL_TRANSITION_DITHER 1
+#ifndef WALL_TRANSITION
+#define WALL_TRANSITION WALL_TRANSITION_FADE
+#endif
+#ifndef WALL_DITHER_PX
+#define WALL_DITHER_PX 16
 #endif
 
 /* ---------- OSD / notifications (mako + dwl-osd replacement) ----------

@@ -378,12 +378,27 @@ the render loop.
 
 Colours are `bg fg sel_bg sel_fg dim border`; sizes are `height pad_x
 item_pad_x gap radius border_width width margin max_visible row_h`. `sort` is
-`"most_used"` or `"alphabetical"`. Add `axis = vertical;` and the full-width
-strip becomes a top-centred launcher float with scrolling rows, wheel and arrow
-navigation, and app icons resolved from hicolor PNGs.
+`"most_used"` or `"alphabetical"`. `terminal = "foot -e";` is the prefix put in
+front of `Terminal=true` desktop entries. `icons = true;` turns on app-icon
+decode for `wispctl apps` (off by default — it is the launcher's fattest
+RAM/IO cost). Add `axis = vertical;` and the full-width strip becomes a
+top-centred launcher float with scrolling rows, wheel and arrow navigation.
 
 Writing `for item in $items { cell ... }` inside a menu still parses, but
 `menu.c` never consumed it. It does nothing.
+
+### Declared menus
+
+    menu power {
+      item { icon = 0xf011; label = "Poweroff"; exec = "loginctl poweroff"; }
+      item { label = "Logout"; exec = "pkill -x mango"; }
+    }
+    menu emoji { preset = emoji; }
+
+`wispctl menu <name>` opens one; picking runs `exec`. `icon` is a codepoint
+that must also be in `tools/bake.c`'s `ICONS[]` (baked backend). No `menu`
+decl means those entries — and, for `preset = emoji`, the whole baked gemoji
+table — are not compiled in. Menus share the `surface menu` styling.
 
 ## Optional blocks
 

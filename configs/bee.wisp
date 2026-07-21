@@ -130,7 +130,8 @@ widget { fg = TEXT; }
 
 /* Active tag grows 4px */
 .ws        { align = left; fg = TEXT; bg = CRUST; border = BORD; border_width = 2;
-             radius = 8; pad = 6; width = 28; height = 28; }
+             radius = 8; pad = 6; width = 28; height = 28;
+             transition_size = 160ms; }
 .ws:active { fg = TEXT; border = BORD; width = 34; height = 34; }
 
 
@@ -250,7 +251,10 @@ gamma {
 
 wallpaper {
   path = "~/next/rice/themes/current/wallpaper.png";
-  bg   = SOLID;
+  transition = dither;
+  dither_px  = 16;
+  fade_ms    = 300;
+  bg         = SOLID;
 }
 
 media {}
@@ -272,6 +276,17 @@ surface menu {
   dim    = SUBTXT;
   prompt = "run:";
   sort   = "most_used";
+  icons  = true;
 }
 
 #hud, #osd, #menu { bg = CRUST; fg = TEXT; border = BORD; border_width = 2; radius = 8; }
+
+menu power {
+  item { icon = 0xf011; label = "Poweroff";  exec = "loginctl poweroff"; }
+  item { icon = 0xf021; label = "Reboot";    exec = "loginctl reboot"; }
+  item { icon = 0xf08b; label = "Logout";    exec = "pkill -x mango"; }
+  item { icon = 0xf186; label = "Sleep";     exec = "true"; }
+  item { icon = 0xf28d; label = "Hibernate"; exec = "true"; }
+}
+
+menu emoji { preset = emoji; }

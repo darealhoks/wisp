@@ -376,10 +376,7 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     for (int i = 0; i < nitems; i++) {
         if (!item_has_any_transition(items[i].w)) continue;
         int slots = items[i].is_runtime_for_cell ? items[i].runtime_for_cap : 1;
-        Widget *wd = items[i].w;
-        if (transition_dur(wd, "bg")     > 0) fprintf(o, "static TransSlot %s_tr%d_bg[%d];\n",     nm, i, slots);
-        if (transition_dur(wd, "fg")     > 0) fprintf(o, "static TransSlot %s_tr%d_fg[%d];\n",     nm, i, slots);
-        if (transition_dur(wd, "border") > 0) fprintf(o, "static TransSlot %s_tr%d_border[%d];\n", nm, i, slots);
+        emit_item_slot_decls(o, items[i].w, nm, i, slots);
     }
     /* Step 6.3: per-item VisSlot for enter/exit animations on `visible`. */
     for (int i = 0; i < nitems; i++) {
@@ -1414,10 +1411,7 @@ int emit_generated_compound(FILE *o, Decl *cmp, CGCtx *ctx, const char *nm) {
             BarItem *it = &all_items[n_all + i];
             if (!item_has_any_transition(it->w)) continue;
             int slots = it->is_runtime_for_cell ? it->runtime_for_cap : 1;
-            Widget *wd = it->w;
-            if (transition_dur(wd, "bg")     > 0) fprintf(o, "static TransSlot %s_tr%d_bg[%d];\n",     rnm, n_all + i, slots);
-            if (transition_dur(wd, "fg")     > 0) fprintf(o, "static TransSlot %s_tr%d_fg[%d];\n",     rnm, n_all + i, slots);
-            if (transition_dur(wd, "border") > 0) fprintf(o, "static TransSlot %s_tr%d_border[%d];\n", rnm, n_all + i, slots);
+            emit_item_slot_decls(o, it->w, rnm, n_all + i, slots);
         }
         for (int i = 0; i < got; i++) {
             BarItem *it = &all_items[n_all + i];

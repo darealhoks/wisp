@@ -98,6 +98,36 @@ static void wall_blend(uint32_t *dst, const uint32_t *a, const uint32_t *b,
     }
 }
 
+/* Block dissolve: each n×n block gets a fixed pseudo-random threshold and
+ * flips to the new frame when t passes it. Cheaper than the blend (row
+ * memcpy, no per-pixel math) and reads as a different transition, not a
+ * dimmer fade. */
+static void wall_dither(uint32_t *dst, const uint32_t *a, const uint32_t *b,
+                        int w, int h, int u) {
+    int bs = WALL_DITHER_PX < 1 ? 1 : WALL_DITHER_PX;
+    for (int by = 0; by < h; by += bs) {
+        int bh = by + bs > h ? h - by : bs;
+        for (int bx = 0; bx < w; bx += bs) {
+            int bw = bx + bs > w ? w - bx : bs;
+            /* xorshift-ish mix of the block coords → threshold 0..255 */
+            uint32_t k = (uint32_t)(bx / bs) * 73856093u ^ (uint32_t)(by / bs) * 19349663u;
+            k ^= k >> 13; k *= 0x5bd1e995u; k ^= k >> 15;
+            const uint32_t *src = (int)(k & 0xff) < u ? b : a;
+            for (int y = by; y < by + bh; y++)
+                memcpy(dst + (size_t)y * w + bx, src + (size_t)y * w + bx,
+                       (size_t)bw * 4);
+        }
+    }
+}
+
+/* The one f(from,to,t) seam — every transition type goes through here, so
+ * the mid-transition retarget freeze in wall_start_fade generalizes for free. */
+static void wall_compose(uint32_t *dst, const uint32_t *a, const uint32_t *b,
+                         int w, int h, int u) {
+    if (WALL_TRANSITION == WALL_TRANSITION_DITHER) wall_dither(dst, a, b, w, h, u);
+    else wall_blend(dst, a, b, (size_t)w * h, u);
+}
+
 void wall_fade_cancel(Widget *w) {
     if (!w->s.wall.fade_from && !w->s.wall.fade_to) return;
     anim_cancel_for(&w->s.wall.fade);
@@ -116,8 +146,8 @@ void wall_fade_frame(Widget *w) {
     if (widget_pw(w) != w->s.wall.fade_w || widget_ph(w) != w->s.wall.fade_h) return;
     BufSlot *s = widget_free_slot(w);
     if (!s) return;   /* both slots pending release; next tick */
-    wall_blend(s->px, w->s.wall.fade_from, w->s.wall.fade_to,
-               (size_t)w->s.wall.fade_w * w->s.wall.fade_h, fade_u(w->s.wall.fade));
+    wall_compose(s->px, w->s.wall.fade_from, w->s.wall.fade_to,
+                 w->s.wall.fade_w, w->s.wall.fade_h, fade_u(w->s.wall.fade));
     widget_attach(w, s, 1);
 }
 
@@ -163,13 +193,12 @@ static uint32_t *wall_frame_of(const char *path, int pw, int ph, int store) {
 static void wall_start_fade(Widget *w, const char *oldpath) {
     if (!w->configured || w->w <= 0 || w->h <= 0) { w->s.wall.painted_w = 0; return; }
     int pw = widget_pw(w), ph = widget_ph(w);
-    size_t n = (size_t)pw * ph;
 
     uint32_t *from;
     if (w->s.wall.fade_to) {
         /* Retarget mid-fade: freeze the current blend as the new start. */
-        wall_blend(w->s.wall.fade_from, w->s.wall.fade_from, w->s.wall.fade_to,
-                   n, fade_u(w->s.wall.fade));
+        wall_compose(w->s.wall.fade_from, w->s.wall.fade_from, w->s.wall.fade_to,
+                     pw, ph, fade_u(w->s.wall.fade));
         from = w->s.wall.fade_from;
         free(w->s.wall.fade_to); w->s.wall.fade_to = NULL;
     } else {

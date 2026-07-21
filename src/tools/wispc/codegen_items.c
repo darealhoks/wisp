@@ -226,54 +226,22 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
     int tr_bdr = transition_dur(wd, "border");
     const char *tr_ease = transition_easing_id(wd);
     const char *tr_idx = it->is_runtime_for_cell ? "it" : "0";
+    SlotCtx sc = { surf_nm, item_idx, tr_idx, tr_ease };
 
     CE fg = { .text = "0xffffffffu", .type = T_COLOR };
     if (fge) fg = lower(ctx, fge);
     cgctx_flush_prelude(ctx, o, indent);
-    if (tr_fg > 0) {
-        fprintf(o, "%suint32_t __fg_tgt = (uint32_t)(%s); uint32_t fg;\n", indent, fg.text);
-        fprintf(o, "%s#ifdef WISP_HAS_ANIM\n", indent);
-        fprintf(o, "%s{ TransSlot *__s = &%s_tr%d_fg[%s];\n", indent, surf_nm, item_idx, tr_idx);
-        fprintf(o, "%s  if (!__s->has) { __s->cur = __fg_tgt; __s->last = __fg_tgt; __s->has = 1; }\n", indent);
-        fprintf(o, "%s  else if (__s->last != __fg_tgt) { anim_start_color(&__s->cur, __s->cur, __fg_tgt, %d, %s, NULL, w, NULL, NULL); __s->last = __fg_tgt; }\n",
-                indent, tr_fg, tr_ease);
-        fprintf(o, "%s  fg = __s->cur; }\n", indent);
-        fprintf(o, "%s#else\n%s  fg = __fg_tgt;\n%s#endif\n", indent, indent, indent);
-    } else {
-        fprintf(o, "%suint32_t fg = (uint32_t)(%s);\n", indent, fg.text);
-    }
+    emit_color_slot(o, indent, "fg", "fg", fg.text, &sc, tr_fg);
 
     CE bg = { .text = "0u", .type = T_COLOR };
     if (bge) bg = lower(ctx, bge);
     cgctx_flush_prelude(ctx, o, indent);
-    if (tr_bg > 0) {
-        fprintf(o, "%suint32_t __bg_tgt = (uint32_t)(%s); uint32_t bg;\n", indent, bg.text);
-        fprintf(o, "%s#ifdef WISP_HAS_ANIM\n", indent);
-        fprintf(o, "%s{ TransSlot *__s = &%s_tr%d_bg[%s];\n", indent, surf_nm, item_idx, tr_idx);
-        fprintf(o, "%s  if (!__s->has) { __s->cur = __bg_tgt; __s->last = __bg_tgt; __s->has = 1; }\n", indent);
-        fprintf(o, "%s  else if (__s->last != __bg_tgt) { anim_start_color(&__s->cur, __s->cur, __bg_tgt, %d, %s, NULL, w, NULL, NULL); __s->last = __bg_tgt; }\n",
-                indent, tr_bg, tr_ease);
-        fprintf(o, "%s  bg = __s->cur; }\n", indent);
-        fprintf(o, "%s#else\n%s  bg = __bg_tgt;\n%s#endif\n", indent, indent, indent);
-    } else {
-        fprintf(o, "%suint32_t bg = (uint32_t)(%s);\n", indent, bg.text);
-    }
+    emit_color_slot(o, indent, "bg", "bg", bg.text, &sc, tr_bg);
 
     CE bdr = { .text = "0u", .type = T_COLOR };
     if (bord) bdr = lower(ctx, bord);
     cgctx_flush_prelude(ctx, o, indent);
-    if (tr_bdr > 0) {
-        fprintf(o, "%suint32_t __bdr_tgt = (uint32_t)(%s); uint32_t bdr;\n", indent, bdr.text);
-        fprintf(o, "%s#ifdef WISP_HAS_ANIM\n", indent);
-        fprintf(o, "%s{ TransSlot *__s = &%s_tr%d_border[%s];\n", indent, surf_nm, item_idx, tr_idx);
-        fprintf(o, "%s  if (!__s->has) { __s->cur = __bdr_tgt; __s->last = __bdr_tgt; __s->has = 1; }\n", indent);
-        fprintf(o, "%s  else if (__s->last != __bdr_tgt) { anim_start_color(&__s->cur, __s->cur, __bdr_tgt, %d, %s, NULL, w, NULL, NULL); __s->last = __bdr_tgt; }\n",
-                indent, tr_bdr, tr_ease);
-        fprintf(o, "%s  bdr = __s->cur; }\n", indent);
-        fprintf(o, "%s#else\n%s  bdr = __bdr_tgt;\n%s#endif\n", indent, indent, indent);
-    } else {
-        fprintf(o, "%suint32_t bdr = (uint32_t)(%s);\n", indent, bdr.text);
-    }
+    emit_color_slot(o, indent, "bdr", "border", bdr.text, &sc, tr_bdr);
 
     /* Step 6.3: apply the reveal factor to the alpha byte of each colour. */
     if (has_ve) {
@@ -334,13 +302,26 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
     fprintf(o, "%sst[%s].bg  = bg;\n", indent, idx_expr);
     fprintf(o, "%sst[%s].press_bg = press_bg;\n", indent, idx_expr);
     fprintf(o, "%sst[%s].border = bdr;\n", indent, idx_expr);
+    /* Step 6.4: `transition_size` tweens the *input* sizes, then the normal
+     * layout runs from them each tick — neighbours slide instead of snapping.
+     * The cross-axis size is quantised to even pixels: it is centered as
+     * integer `(box - ch) / 2`, so an odd intermediate value hops the item half
+     * a pixel. The main axis must NOT be quantised — items advance left to
+     * right, and independent rounding of a growing and a shrinking neighbour
+     * stops cancelling, wobbling everything after them by 2px. */
+    int tr_sz = transition_dur(wd, "size");
+    if (tr_sz > 0) emit_size_slot(o, indent, "tw", "tw", &sc, tr_sz, 0);
     fprintf(o, "%sst[%s].tw  = tw;\n", indent, idx_expr);
     fprintf(o, "%sst[%s].h   = __h;\n", indent, idx_expr);
     /* Cross-axis size (horizontal: height, vertical: width) lowered as an expr
      * so `tag.active ? 34 : 30` resizes per-item; 0 = fill the region. */
     Expr *che = widget_prop(wd, vertical ? "width" : "height");
     if (che) { CE cc = lower(ctx, che); cc = coerce_to_int(ctx, cc);
-               fprintf(o, "%sst[%s].ch = %s;\n", indent, idx_expr, cc.text); }
+               if (tr_sz > 0) {
+                   fprintf(o, "%sint __ch = %s;\n", indent, cc.text);
+                   emit_size_slot(o, indent, "__ch", "ch", &sc, tr_sz, 1);
+                   fprintf(o, "%sst[%s].ch = __ch;\n", indent, idx_expr);
+               } else fprintf(o, "%sst[%s].ch = %s;\n", indent, idx_expr, cc.text); }
     fprintf(o, "%sst[%s].pad = %d;\n", indent, idx_expr, padE);
     fprintf(o, "%sst[%s].align = %d;\n", indent, idx_expr, (int)al);
     fprintf(o, "%sst[%s].body_lines = %d;\n", indent, idx_expr, blines);

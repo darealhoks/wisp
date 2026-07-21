@@ -195,7 +195,11 @@ static uint32_t lerp_color(uint32_t a, uint32_t b, double u) {
 }
 
 void anim_tick(int64_t now) {
-    int repainted[MAX_WIDGETS] = {0};
+    int repaint[MAX_WIDGETS] = {0};
+    int done_slots[ANIM_MAX]; int n_done = 0;
+    /* Update EVERY target before any render: two tweens on one owner (grow +
+     * shrink pill) must be sampled at the same tick, or the painted widths
+     * stop cancelling and everything laid out after them wobbles. */
     for (int i = 0; i < ANIM_MAX; i++) {
         Anim *a = &anims[i];
         if (!a->active) continue;
@@ -218,23 +222,39 @@ void anim_tick(int64_t now) {
         }
         if (a->owner) {
             int idx = (int)(a->owner - widgets);
-            if (idx >= 0 && idx < MAX_WIDGETS && !repainted[idx]) {
-                repainted[idx] = 1;
+            if (idx >= 0 && idx < MAX_WIDGETS) repaint[idx] = 1;
+        }
+        if (done) done_slots[n_done++] = i;
+    }
+    for (int idx = 0; idx < MAX_WIDGETS; idx++) {
+        if (!repaint[idx]) continue;
+        Widget *ow = &widgets[idx];
 #ifdef WISP_HAS_WALL
-                if (a->owner->kind == W_WALL) wall_fade_frame(a->owner);
-                else
+        if (ow->kind == W_WALL) wall_fade_frame(ow);
+        else
 #endif
-                bar_render(a->owner);
-            }
-        }
-        if (done) {
-            AnimDone cb = a->on_done; void *u2 = a->user;
-            a->active = 0;
-            if (anim_active_count > 0) anim_active_count--;
-            if (cb) cb(u2);
-        }
+        bar_render(ow);
+    }
+    for (int k = 0; k < n_done; k++) {
+        Anim *a = &anims[done_slots[k]];
+        AnimDone cb = a->on_done; void *u2 = a->user;
+        a->active = 0;
+        if (anim_active_count > 0) anim_active_count--;
+        if (cb) cb(u2);
     }
     if (anim_active_count == 0) anim_tfd_disarm();
+}
+
+/* Round a tweened size to whole pixels so that two complementary tweens (one
+ * item growing by n while its neighbour shrinks by n) always sum to the same
+ * total — otherwise everything laid out after them jitters a pixel for one
+ * frame. Snapping to 1/64 kills FP dust; half-to-even makes the tie cancel. */
+int anim_px(double v) {
+    double q = (double)(long)(v * 64.0 + (v < 0 ? -0.5 : 0.5)) / 64.0;
+    double f = q - (double)(long)q;
+    long i = (long)q;
+    if (f > 0.5 || (f == 0.5 && (i & 1))) i++;
+    return (int)i;
 }
 
 /* Drain the timerfd; main loop calls this when EPOLLIN fires on anim_fd(). */

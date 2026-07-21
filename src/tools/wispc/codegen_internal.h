@@ -32,6 +32,15 @@ int         transition_dur(Widget *wd, const char *which);
 const char *transition_easing_id(Widget *wd);
 const char *surface_easing_id(Decl *sur, const char *prop_name);
 int         item_has_any_transition(Widget *wd);
+/* Step 6.5: one emission path for every animatable item property. `slot` names
+ * the storage suffix (`<surf>_tr<item>_<slot>`), which must match what
+ * emit_item_slot_decls() declared. */
+typedef struct { const char *surf; int item; const char *idx; const char *ease; } SlotCtx;
+void        emit_color_slot(FILE *o, const char *ind, const char *var, const char *slot,
+                            const char *tgt_expr, const SlotCtx *sc, int dur);
+void        emit_size_slot(FILE *o, const char *ind, const char *var, const char *slot,
+                           const SlotCtx *sc, int dur, int even);
+void        emit_item_slot_decls(FILE *o, Widget *wd, const char *nm, int idx, int slots);
 int         widget_enter_ms(Widget *wd);
 int         widget_exit_ms (Widget *wd);
 int         widget_has_vis_anim(Widget *wd);

@@ -78,8 +78,9 @@ one frame. That flash is expected.
 sets the workspace bitmasks as hex, for driving the tag display from outside.
 
 **menu** — `menu <title> <item>...` shows a picker and prints
-`<index>\t<text>`. `apps`, `powermenu` and `emoji` are prebuilt menus; `emoji`
-copies the pick with `wl-copy`. `menu-cancel` closes whatever is open.
+`<index>\t<text>`. `apps` is the prebuilt launcher. `menu <name>` (one argument)
+opens a menu declared in the `.wisp` and runs the picked entry's `exec`; the
+`emoji` preset copies the pick with `wl-copy`. `menu-cancel` closes whatever is open.
 
 **osd / notifications** — `osd <slot> <summary> [progress] [icon-cp] [muted]`
 draws a slab; reusing a slot replaces the previous one, and a progress of -1
