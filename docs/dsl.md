@@ -89,13 +89,9 @@ not repaint.
 reach for them through `exec_line("wispctl ...")`, which forks the daemon back
 into itself once a second.
 
-`hyprland_workspaces()`, `mpris()`, `inotify()`, `socket()`, `timer()` and
-`pipewire_volume()` are named in the compiler but have no code generator. They
-survive `wispc --check` and then fail the build:
-
-    codegen: source type 'mpris' not supported in this slice
-
-Treat them as unimplemented.
+The table above is the whole list — a source the compiler accepts is a source
+it can build. `mpris()` and `inotify()` were removed rather than left as names
+that passed `--check` and failed `--emit`; they come back with their drivers.
 
 ### exec_line
 

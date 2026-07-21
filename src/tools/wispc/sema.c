@@ -14,9 +14,13 @@ typedef struct {
 enum {
     F_NONE = 0,
     F_CLOCK, F_CPU, F_MEM, F_TEMP, F_BAT, F_WIFI, F_DISK, F_VPN,
-    F_TAGS, F_HYPR, F_MEDIA, F_FS, F_EXEC, F_DBUS, F_SOCK, F_PW, F_TIMER,
+    F_TAGS, F_EXEC, F_DBUS,
 };
 
+/* A row here without a driver in codegen_sources.c makes --check pass and
+ * --emit die — add the row in the same commit as the driver, never before.
+ * Wanted but undriven: mpris (dbus.c already speaks the wire), inotify (a
+ * poll-free file source, unlike exec_line). */
 static const SrcDef SOURCES[] = {
     {"clock",                "value",  "value", F_CLOCK },
     {"cpu",                  "pct",    "pct load1", F_CPU },
@@ -27,17 +31,11 @@ static const SrcDef SOURCES[] = {
     {"disk",                 "pct",    "pct free_gb", F_DISK },
     {"vpn",                  "state",  "state ok", F_VPN },
     {"tags",             "title",  "title list occ act urg", F_TAGS },
-    {"hyprland_workspaces",  "act",    "occ act", F_HYPR },
-    {"mpris",                "title",  "title artist playing", F_MEDIA },
-    {"inotify",              "value",  "value", F_FS },
     {"gamma_warm",           "value",  "value", F_NONE },
     {"dnd",                  "value",  "value", F_NONE },
     {"ui_hidden",            "value",  "value", F_NONE },
     {"exec_line",            "value",  "value", F_EXEC },
     {"dbus_signal",          "value",  "value history", F_DBUS },
-    {"socket",               "value",  "value", F_SOCK },
-    {"timer",                "tick",   "tick", F_TIMER },
-    {"pipewire_volume",      "pct",    "pct muted", F_PW },
 };
 
 static const SrcDef *find_src(const char *name, size_t n) {
@@ -132,13 +130,8 @@ static void set_flag(SemaResult *r, int f) {
     case F_DISK: r->has_src_disk = 1; break;
     case F_VPN:  r->has_src_vpn = 1; break;
     case F_TAGS:  r->has_src_tags = 1; break;
-    case F_HYPR: r->has_src_hypr = 1; break;
-    case F_MEDIA:r->has_media = 1; r->has_dbus = 1; break;
-    case F_FS:   r->has_src_fs = 1; break;
     case F_EXEC: r->has_src_exec = 1; break;
     case F_DBUS: r->has_dbus = 1; break;
-    case F_SOCK: r->has_src_sock = 1; break;
-    case F_PW:   r->has_src_pw = 1; break;
     default: break;
     }
 }
@@ -418,7 +411,7 @@ static void analyze_surface(S *s, Decl *d) {
         }
     }
     if (has_hud)        s->r->has_hud = true;
-    if (has_excl_negative || nameq(d->name, d->nlen, "menu")) s->r->has_menu = true;
+    if (has_excl_negative) s->r->has_menu = true;
     if (nameq(d->name, d->nlen, "osd")) { s->r->has_osd = true; s->r->has_dbus = true; }
 
     /* Walk all properties / widgets / for blocks. */
@@ -526,6 +519,7 @@ SemaResult *sema_check(Arena *a, Unit *u) {
         case D_GAMMA:     if (s.s.gamma) diag_error(d->loc, "duplicate gamma block");     s.s.gamma = d; s.r->has_gamma = 1;    break;
         case D_WALLPAPER: if (s.s.wall)  diag_error(d->loc, "duplicate wallpaper block"); s.s.wall = d;  s.r->has_wallpaper = 1; break;
         case D_MEDIA:     s.r->has_media = 1; break;
+        case D_MENU:      s.r->has_menu = 1; break;
         case D_STYLE:     break;   /* stripped by style_apply */
         }
     }
