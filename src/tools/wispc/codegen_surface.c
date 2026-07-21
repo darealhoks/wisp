@@ -321,8 +321,24 @@ int emit_spawned_osd_skeleton(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
  * a bar's — all this adds is the body fill and the pool handling that menu.c
  * used to open-code. Lifecycle (create, size, filter, keys, scroll, reply)
  * stays in menu.c, which is why this emits no create_on/apply_visibility. */
+/* Does this surface declare anything to draw (as opposed to only props)? */
+static int surface_has_body(Decl *d) {
+    for (int i = 0; i < d->surface.n; i++)
+        if (d->surface.items[i].kind != SB_PROP) return 1;
+    return 0;
+}
+
 int emit_menu_render(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     BarItem items[64]; int err = 0;
+    /* `menu.prompt` falls back to the surface's declared prompt when the
+     * caller passed no title. */
+    Expr *pr = surface_prop(sur, "prompt");
+    char prompt_lit[128];
+    if (pr && pr->kind == EX_STRING)
+        snprintf(prompt_lit, sizeof prompt_lit, "\"%.*s\"", (int)pr->str.n, pr->str.s);
+    else
+        snprintf(prompt_lit, sizeof prompt_lit, "\"\"");
+    push_local(ctx, "menu", 4, LB_MENU_SELF, prompt_lit, NULL);
     int nitems = collect_bar_items(sur->surface.items, sur->surface.n,
                                    items, 64, ctx, &err);
     if (err) return 1;
@@ -369,6 +385,8 @@ int emit_menu_render(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     int bord_w      = eval_int(surface_prop(sur, "border_width"), 0);
     int radius      = eval_int(surface_prop(sur, "radius"), 0);
     int pad         = eval_int(surface_prop(sur, "pad"), 0);
+    int pad_x       = eval_int(surface_prop(sur, "pad_x"), pad);
+    int pad_y       = eval_int(surface_prop(sur, "pad_y"), pad);
 
     fprintf(o, "void render_%s(Widget *w) {\n", nm);
     fputs("    if (!w->configured || w->w <= 0 || w->h <= 0) return;\n", o);
@@ -386,7 +404,7 @@ int emit_menu_render(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     fprintf(o, "    const Font *f = &font_%d;\n",
             eval_int(surface_prop(sur, "font_size"), 14));
     fprintf(o, "    int __cox = %d, __coy = %d, __cws = w->w - %d, __chs = w->h - %d;\n",
-            pad, pad, 2 * pad, 2 * pad);
+            pad_x, pad_y, 2 * pad_x, 2 * pad_y);
     fputs("    (void)__cox; (void)__coy; (void)__cws; (void)__chs;\n", o);
     fputs("    int __clip_top = 0; (void)__clip_top;\n", o);
     /* Vertical draw uses the row band's x extent; for a menu that is the
@@ -405,7 +423,7 @@ int emit_menu_render(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
 
     fputs("    /* --- measure pass --- */\n", o);
     for (int i = 0; i < nitems; i++) {
-        emit_item_measure(o, &items[i], ctx, 1 /*vertical*/, nm, i);
+        emit_item_measure(o, &items[i], ctx, items[i].group_id >= 0 ? 0 : 1, nm, i);
         if (ctx->failed) return 1;
     }
     fputs("    if (center_total > __center_trail_pad) center_total -= __center_trail_pad;\n", o);
@@ -415,6 +433,11 @@ int emit_menu_render(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     fputs("    (void)start_pos; (void)end_pos; (void)center_pos;\n", o);
     fputs("    /* --- draw pass --- */\n", o);
     for (int i = 0; i < nitems; i++) {
+        if (items[i].group_id >= 0) {
+            if (items[i].group_first)
+                i += emit_group_draw(o, items, i, nitems, ctx, nm, 1) - 1;
+            continue;
+        }
         emit_item_draw(o, &items[i], ctx, 1 /*vertical*/, nm);
         if (ctx->failed) return 1;
     }
@@ -422,6 +445,7 @@ int emit_menu_render(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     fputs("    widget_attach(w, sl, 0);\n", o);
     fputs("}\n\n", o);
 
+    pop_local(ctx);
     emit_surface_click_dispatch(o, items, nitems, ctx, ctx->r, nm);
     fprintf(o, "void %s_redraw(void) {\n"
                "    for (int i = 0; i < __%s_nw; i++) render_%s(__%s_widgets[i]);\n"
@@ -1222,7 +1246,8 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     fputs("    /* --- measure pass --- */\n", o);
 
     for (int i = 0; i < nitems; i++) {
-        emit_item_measure(o, &items[i], ctx, vertical, nm, i);
+        /* A group's members always pack along the band's own axis. */
+        emit_item_measure(o, &items[i], ctx, items[i].group_id >= 0 ? 0 : vertical, nm, i);
         if (ctx->failed) return 1;
     }
 
@@ -1235,10 +1260,8 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     fputs("    /* --- draw pass --- */\n", o);
     for (int i = 0; i < nitems; i++) {
         if (items[i].group_id >= 0) {
-            if (vertical) { diag_error(items[i].grp ? items[i].grp->loc : sur->loc,
-                    "codegen: group not supported on vertical surfaces"); return 1; }
             if (items[i].group_first)
-                i += emit_group_draw(o, items, i, nitems, ctx, nm) - 1;
+                i += emit_group_draw(o, items, i, nitems, ctx, nm, vertical) - 1;
             continue;
         }
         emit_item_draw(o, &items[i], ctx, vertical, nm);
@@ -1967,14 +1990,14 @@ int emit_surfaces(FILE *o, Unit *u, CGCtx *ctx) {
     fprintf(o, "\n#define MENU_ROWS_CAP %d\n", MENU_ROWS_CAP);
     /* An icon is a codepoint or a pixmap (a decoded app icon); pm wins. */
     fputs("\nstatic int cp_width(const Font *f, uint32_t cp, const uint32_t *pm, int pms) {\n"
-          "    if (pm) return pms;\n"
+          "    if (pms) return pms;\n"
           "    const Glyph *g = font_find(f, cp);\n"
           "    return g ? g->adv : f->px_size / 2;\n"
           "}\n", o);
     fputs("static int draw_cp(uint32_t *px, int sw, int sh, int x, int y,\n"
           "                   const Font *f, uint32_t cp, uint32_t fg,\n"
           "                   const uint32_t *pm, int pms) {\n"
-          "    if (pm) { blit_argb(px, sw, sh, x, y + (f->line_h - pms) / 2, pm, pms); return pms; }\n"
+          "    if (pms) { if (pm) blit_argb(px, sw, sh, x, y + (f->line_h - pms) / 2, pm, pms); return pms; }\n"
           "    const Glyph *g = font_find(f, cp); if (!g) return 0;\n"
           "    draw_glyph(px, sw, sh, x, y + f->baseline, f, g, fg);\n"
           "    return g->adv;\n"
@@ -2019,7 +2042,7 @@ int emit_surfaces(FILE *o, Unit *u, CGCtx *ctx) {
           "                             int bx, int by, int bw, int bh,\n"
           "                             const Font *f, uint32_t cp, uint32_t fg,\n"
           "                             const uint32_t *pm, int pms) {\n"
-          "    if (pm) { blit_argb(px, sw, sh, bx + (bw - pms) / 2, by + (bh - pms) / 2, pm, pms); return; }\n"
+          "    if (pms) { if (pm) blit_argb(px, sw, sh, bx + (bw - pms) / 2, by + (bh - pms) / 2, pm, pms); return; }\n"
           "    const Glyph *g = font_find(f, cp); if (!g) return;\n"
           "    int x = bx + (bw - g->w) / 2 - g->bx;\n"
           "    int baseline = by + (bh - g->h) / 2 + g->by;\n"
@@ -2059,12 +2082,18 @@ int emit_surfaces(FILE *o, Unit *u, CGCtx *ctx) {
                 emit_spawned_osd_skeleton(o, d, ctx, nm);
                 free(nm);
             }
+            /* `spawned_by = menu` is the default look every menu gets unless
+             * its own decl carries a body. */
+            int is_menu_tmpl = sb && sb->kind == EX_IDENT
+                            && sb->ident.n == 4 && memcmp(sb->ident.s, "menu", 4) == 0;
+            if (is_menu_tmpl && surface_has_body(d)
+                && emit_menu_render(o, d, ctx, "menu_default")) return 1;
             continue;
         }
         if (d->is_menu) {
             /* An item-only menu (no widget body) stays on the legacy
              * menu.c render path until every preset is ported. */
-            if (d->surface.n == 0) continue;
+            if (!surface_has_body(d)) continue;
             if (nmenu >= 8) { diag_error(d->loc, "codegen: too many menus"); return 1; }
             char *mn = malloc(d->nlen + 8);
             sprintf(mn, "menu_%.*s", (int)d->nlen, d->name);

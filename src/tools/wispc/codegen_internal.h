@@ -108,6 +108,9 @@ typedef enum {
     LB_DBUS_HIST_IT,
     /* menu row: c_expr indexes s.menu.filtered[] */
     LB_MENU_ROW,
+    /* the menu itself (`menu.query` / `.prompt` / `.count`); c_expr is the
+     * fallback prompt literal declared on the surface. */
+    LB_MENU_SELF,
     /* $-name → C-expression binding, used inside a spawned_by template's
      * generated render to resolve `$summary`/`$icon`/`$pct`/... to the
      * current slab's field (e.g. `w->s.osd.items[__sl].summary`). Pushed by
@@ -183,9 +186,10 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
                        const char *surf_nm, int item_idx);
 void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *nm);
 /* Draw one group (container + members) starting at items[first]; returns the
- * count of member items consumed. Horizontal surfaces only. */
+ * count of member items consumed. On a vertical surface the group is a
+ * horizontal band occupying one row of the stack. */
 int  emit_group_draw(FILE *o, BarItem *items, int first, int nitems,
-                     CGCtx *ctx, const char *nm);
+                     CGCtx *ctx, const char *nm, int vertical);
 void emit_stmt(FILE *o, CGCtx *ctx, Stmt *st, const char *indent,
                SemaResult *r);
 int  emit_surface_click_dispatch(FILE *o, BarItem *items, int nitems,

@@ -124,6 +124,26 @@ CE lower_member(CGCtx *c, Expr *e) {
         }
         return r;
     }
+    if (L && L->kind == LB_MENU_SELF) {
+        const char *wv = c->widget_var ? c->widget_var : "w";
+        CE r = { .type = T_UNK };
+        if (flen == 5 && memcmp(fld, "query", 5) == 0) {
+            snprintf(r.text, sizeof r.text, "%s->s.menu.query", wv);
+            r.type = T_STR;
+        } else if (flen == 6 && memcmp(fld, "prompt", 6) == 0) {
+            snprintf(r.text, sizeof r.text,
+                     "(%s->s.menu.prompt[0] ? %s->s.menu.prompt : %s)",
+                     wv, wv, L->c_expr);
+            r.type = T_STR;
+        } else if (flen == 5 && memcmp(fld, "count", 5) == 0) {
+            snprintf(r.text, sizeof r.text, "%s->s.menu.n_filtered", wv);
+            r.type = T_INT;
+        } else {
+            diag_error(e->loc, "codegen: menu has no field '%.*s'", (int)flen, fld);
+            c->failed = 1;
+        }
+        return r;
+    }
     if (L && L->kind == LB_MENU_ROW) {
         const char *wv = c->widget_var ? c->widget_var : "w";
         const char *r0 = L->c_expr;
@@ -136,7 +156,8 @@ CE lower_member(CGCtx *c, Expr *e) {
                      "(%s->s.menu.icons ? %s->s.menu.icons[%s->s.menu.filtered[%s]] : 0)",
                      wv, wv, wv, r0);
             r.type = T_PIXMAP;
-            r.pm_size = "w->s.menu.icon_px";
+            /* Reserved even when this row has no icon, so labels stay aligned. */
+            r.pm_size = "(w->s.menu.icons ? w->s.menu.icon_px : 0)";
         } else if (flen == 8 && memcmp(fld, "selected", 8) == 0) {
             snprintf(r.text, sizeof r.text, "(%s == %s->s.menu.sel)", r0, wv);
             r.type = T_BOOL;

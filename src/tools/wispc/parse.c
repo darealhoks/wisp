@@ -649,12 +649,12 @@ static Group *parse_group(P *p) {
     VList props = {0}, members = {0};
     while (!at(p, TK_RBRACE) && !at(p, TK_EOF)) {
         Tok t = cur(p);
-        if (t.kind == TK_KW_WIDGET) {
-            vl_push(&members, parse_widget_or_cell(p, false));
+        if (t.kind == TK_KW_WIDGET || t.kind == TK_KW_CELL) {
+            vl_push(&members, parse_widget_or_cell(p, t.kind == TK_KW_CELL));
         } else if (t.kind == TK_IDENT) {
             vl_push(&props, parse_prop(p));
         } else {
-            diag_error(t.loc, "expected group property or widget");
+            diag_error(t.loc, "expected group property, widget or cell");
             lex_next(&p->L); continue;
         }
     }

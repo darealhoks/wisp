@@ -199,6 +199,9 @@ static void walk_expr(S *s, Expr *e) {
             "bar","pill","circle","disc","knob",   /* slider thumb_shape */
             NULL
         };
+        /* `for row in rows` — a menu's visible filtered rows; the row source
+         * is the surface's own state, not a declared source. */
+        if (L == 4 && memcmp(n, "rows", 4) == 0) return;
         for (int i = 0; ENUMS[i]; i++)
             if (strlen(ENUMS[i]) == L && memcmp(ENUMS[i], n, L) == 0) return;
         diag_error(e->loc, "undefined identifier '%.*s'", (int)L, n);
@@ -213,6 +216,8 @@ static void walk_expr(S *s, Expr *e) {
         /* Built-in `anim.emerged_h` / `anim.emerged_w`: runtime body-emerged
          * extent along the slide axis (lowered in codegen_expr.c). */
         if (bL == 4 && memcmp(bn, "anim", 4) == 0) return;
+        /* `menu.query` / `.prompt` / `.count` inside a menu's body. */
+        if (bL == 4 && memcmp(bn, "menu", 4) == 0) return;
         Decl *d = find_decl_in(s->s.src, s->s.nsrc, bn, bL);
         if (d) {
             /* Validate field against source schema. */
