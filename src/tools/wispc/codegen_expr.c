@@ -124,6 +124,31 @@ CE lower_member(CGCtx *c, Expr *e) {
         }
         return r;
     }
+    if (L && L->kind == LB_MENU_ROW) {
+        const char *wv = c->widget_var ? c->widget_var : "w";
+        const char *r0 = L->c_expr;
+        CE r = { .type = T_UNK };
+        if (flen == 5 && memcmp(fld, "label", 5) == 0) {
+            snprintf(r.text, sizeof r.text, "%s->s.menu.items[%s->s.menu.filtered[%s]]", wv, wv, r0);
+            r.type = T_STR;
+        } else if (flen == 4 && memcmp(fld, "icon", 4) == 0) {
+            snprintf(r.text, sizeof r.text,
+                     "(%s->s.menu.icons ? %s->s.menu.icons[%s->s.menu.filtered[%s]] : 0)",
+                     wv, wv, wv, r0);
+            r.type = T_PIXMAP;
+            r.pm_size = "w->s.menu.icon_px";
+        } else if (flen == 8 && memcmp(fld, "selected", 8) == 0) {
+            snprintf(r.text, sizeof r.text, "(%s == %s->s.menu.sel)", r0, wv);
+            r.type = T_BOOL;
+        } else if (flen == 5 && memcmp(fld, "index", 5) == 0) {
+            snprintf(r.text, sizeof r.text, "(%s)", r0);
+            r.type = T_INT;
+        } else {
+            diag_error(e->loc, "codegen: menu row has no field '%.*s'", (int)flen, fld);
+            c->failed = 1;
+        }
+        return r;
+    }
     if (L && L->kind == LB_TAG_IDX) {
         SrcInst *si = find_inst(c->srcs, c->nsrc, L->src_name, strlen(L->src_name));
         const char *wv = c->widget_var ? c->widget_var : "w";

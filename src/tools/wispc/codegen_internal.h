@@ -106,6 +106,8 @@ typedef enum {
     LB_TAG_IDX,
     LB_CLICK_PARAM,
     LB_DBUS_HIST_IT,
+    /* menu row: c_expr indexes s.menu.filtered[] */
+    LB_MENU_ROW,
     /* $-name → C-expression binding, used inside a spawned_by template's
      * generated render to resolve `$summary`/`$icon`/`$pct`/... to the
      * current slab's field (e.g. `w->s.osd.items[__sl].summary`). Pushed by
@@ -149,6 +151,9 @@ const char *op_C(Op o);
 
 /* ---------- codegen_items.c ---------- */
 
+/* Rows a menu can have on screen at once; sizes the per-row st[]/anim slots. */
+#define MENU_ROWS_CAP 32
+
 typedef struct {
     Widget *w;
     bool   is_for_cell;
@@ -157,6 +162,11 @@ typedef struct {
     const char *for_src;
     bool   is_runtime_for_cell;
     const char *runtime_for_src;
+    /* C expressions: loop bound, and the row index the loop var binds to.
+     * A dbus history walks its ring; a menu walks the visible filtered rows. */
+    const char *runtime_for_count;
+    const char *runtime_for_iter;
+    LBKind runtime_for_kind;
     int    runtime_for_cap;
     int    st_base;
     int    slider_idx;

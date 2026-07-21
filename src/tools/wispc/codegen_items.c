@@ -57,6 +57,11 @@ int collect_bar_items(SBody *body, int nbody, BarItem *out, int max,
             ForBlock *f = b->forb;
             /* iter must be IDENT.list (tags) or IDENT.history (dbus_signal). */
             const char *tags_src = NULL, *dbus_src = NULL;
+            /* `for row in rows` — a menu's visible filtered rows. Not a
+             * declared source: the rows live in the surface's own state. */
+            int menu_rows = f->iter && f->iter->kind == EX_IDENT &&
+                            f->iter->ident.n == 4 &&
+                            memcmp(f->iter->ident.s, "rows", 4) == 0;
             if (f->iter && f->iter->kind == EX_MEMBER &&
                 f->iter->member.base->kind == EX_IDENT) {
                 SrcInst *si = find_inst(ctx->srcs, ctx->nsrc,
@@ -71,15 +76,28 @@ int collect_bar_items(SBody *body, int nbody, BarItem *out, int max,
                          si->drv->drv == DRV_DBUS)
                     dbus_src = sname(si->decl->name, si->decl->nlen);
             }
-            if (!tags_src && !dbus_src) {
-                diag_error(f->loc, "codegen: for-iter must be <tags-src>.list or <dbus_signal-src>.history");
+            if (!tags_src && !dbus_src && !menu_rows) {
+                diag_error(f->loc, "codegen: for-iter must be `rows`, <tags-src>.list or <dbus_signal-src>.history");
                 *err = 1; return n;
             }
             if (f->ncells != 1) {
                 diag_error(f->loc, "codegen: for-block must contain exactly one cell { … }");
                 *err = 1; return n;
             }
-            if (tags_src) {
+            if (menu_rows) {
+                if (n >= max) { *err = 1; return n; }
+                out[n] = (BarItem){0}; out[n].slider_idx = -1; out[n].group_id = -1;
+                out[n].w = f->cells[0];
+                out[n].is_runtime_for_cell = true;
+                out[n].runtime_for_count =
+                    "((w->s.menu.n_filtered - w->s.menu.view_top) < MENU_ROWS_CAP"
+                    " ? (w->s.menu.n_filtered - w->s.menu.view_top) : MENU_ROWS_CAP)";
+                out[n].runtime_for_iter = "(w->s.menu.view_top + it)";
+                out[n].runtime_for_kind = LB_MENU_ROW;
+                out[n].runtime_for_cap = MENU_ROWS_CAP;
+                out[n].for_var = f->var; out[n].for_var_n = f->vlen;
+                n++;
+            } else if (tags_src) {
                 char *src_dup = strdup(tags_src);
                 for (int k = 0; k < 9 /* MAX_TAGS */; k++) {
                     if (n >= max) { *err = 1; return n; }
@@ -96,6 +114,13 @@ int collect_bar_items(SBody *body, int nbody, BarItem *out, int max,
                 out[n].w = f->cells[0];
                 out[n].is_runtime_for_cell = true;
                 out[n].runtime_for_src = src_dup;
+                {
+                    char *cnt = malloc(strlen(src_dup) + 24);
+                    sprintf(cnt, "src_%s_hist_n", src_dup);
+                    out[n].runtime_for_count = cnt;
+                }
+                out[n].runtime_for_iter = "it";
+                out[n].runtime_for_kind = LB_DBUS_HIST_IT;
                 out[n].runtime_for_cap = 8;  /* matches SRC_<NM>_HIST_CAP */
                 out[n].for_var = f->var; out[n].for_var_n = f->vlen;
                 n++;
@@ -178,7 +203,8 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
     const char *indent = "        ";
     if (it->is_runtime_for_cell) {
         snprintf(idx_expr, sizeof idx_expr, "(%d + it)", it->st_base);
-        push_local(ctx, it->for_var, it->for_var_n, LB_DBUS_HIST_IT, "it", it->runtime_for_src);
+        push_local(ctx, it->for_var, it->for_var_n, it->runtime_for_kind,
+                   it->runtime_for_iter, it->runtime_for_src);
     } else {
         snprintf(idx_expr, sizeof idx_expr, "%d", it->st_base);
         if (it->is_for_cell) {
@@ -188,8 +214,8 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
     }
 
     if (it->is_runtime_for_cell) {
-        fprintf(o, "    for (int it = 0; it < src_%s_hist_n; it++) {\n",
-                it->runtime_for_src);
+        fprintf(o, "    for (int it = 0; it < %s; it++) {\n",
+                it->runtime_for_count);
     } else {
         fputs("    {\n", o);
     }
@@ -499,8 +525,8 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
     int kind;
     if (it->is_runtime_for_cell) {
         snprintf(idx_expr, sizeof idx_expr, "(%d + it)", it->st_base);
-        fprintf(o, "    for (int it = 0; it < src_%s_hist_n; it++) {\n",
-                it->runtime_for_src);
+        fprintf(o, "    for (int it = 0; it < %s; it++) {\n",
+                it->runtime_for_count);
         kind = 2;
     } else {
         snprintf(idx_expr, sizeof idx_expr, "%d", it->st_base);
@@ -979,7 +1005,7 @@ int emit_surface_click_dispatch(FILE *o, BarItem *items, int nitems,
             push_local(ctx, items[it].for_var, items[it].for_var_n, LB_TAG_IDX, "arg", items[it].for_src);
         } else if (items[it].is_runtime_for_cell) {
             push_local(ctx, items[it].for_var, items[it].for_var_n,
-                       LB_DBUS_HIST_IT, "arg", items[it].runtime_for_src);
+                       items[it].runtime_for_kind, "arg", items[it].runtime_for_src);
         }
         if (clk->click.param && clk->click.plen) {
             push_local(ctx, clk->click.param, clk->click.plen, LB_CLICK_PARAM, "((const char*)0)", NULL);
