@@ -25,7 +25,7 @@ Idle costs zero ticks per second, by construction rather than by tuning:
 nothing polls, animations run only while a tween is active, the bar skips
 redraws by hashing its contents, and hidden surfaces release their SHM pools.
 The config this repo runs (`configs/bee.wisp`, baked backend) sits at about
-2.9 MB RSS idle with a 261 KB stripped binary. Your numbers depend on what you declared and which font
+2.9 MB RSS idle with a 167 KB stripped binary. Your numbers depend on what you declared and which font
 backend you picked.
 
 ## Docs
