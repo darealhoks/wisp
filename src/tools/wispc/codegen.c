@@ -382,6 +382,7 @@ static void emit_overrides(FILE *o, Unit *u, CGCtx *ctx) {
     static const OvMap wallmap[] = {
         {"path",       "WALL_PATH",        2},
         {"bg",         "WALL_BG",          1},
+        {"fade_ms",    "WALL_FADE_MS",     0},
     };
     emit_block_overrides(o, find_block(u, D_WALLPAPER), "wallpaper", wallmap,
                          (int)(sizeof wallmap / sizeof wallmap[0]), ctx);

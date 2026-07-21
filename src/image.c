@@ -64,6 +64,21 @@ uint8_t *image_load(const char *path, int *w, int *h) {
 
 void image_free(uint8_t *px) { stbi_image_free(px); }
 
+/* Is `path` a readable PNG? (signature only — stb is built STBI_ONLY_PNG, so
+ * anything else fails the real decode later; this makes `wispctl wall` err
+ * synchronously instead of "ok" followed by a silent no-op). */
+int image_is_png(const char *path) {
+    static const uint8_t sig[8] = {0x89,'P','N','G','\r','\n',0x1a,'\n'};
+    char *real = expand_home(path);
+    int fd = open(real, O_RDONLY | O_CLOEXEC);
+    free(real);
+    if (fd < 0) return 0;
+    uint8_t hdr[8];
+    int ok = read(fd, hdr, 8) == 8 && !memcmp(hdr, sig, 8);
+    close(fd);
+    return ok;
+}
+
 int image_mtime(const char *path, int64_t *mtime) {
     char *real = expand_home(path);
     struct stat st;

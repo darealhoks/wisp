@@ -220,6 +220,10 @@ void anim_tick(int64_t now) {
             int idx = (int)(a->owner - widgets);
             if (idx >= 0 && idx < MAX_WIDGETS && !repainted[idx]) {
                 repainted[idx] = 1;
+#ifdef WISP_HAS_WALL
+                if (a->owner->kind == W_WALL) wall_fade_frame(a->owner);
+                else
+#endif
                 bar_render(a->owner);
             }
         }

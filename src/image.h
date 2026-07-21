@@ -12,6 +12,10 @@
 uint8_t *image_load(const char *path, int *w, int *h);
 void     image_free(uint8_t *px);
 
+/* Non-zero if `path` starts with the PNG signature (the only format the
+ * vendored stb decodes) — cheap synchronous validity check. */
+int      image_is_png(const char *path);
+
 /* Last-modified time of `path` (leading "~/" expanded), seconds since epoch,
  * for cache-invalidation keys. Returns 0 on success, -1 if the file is gone. */
 int      image_mtime(const char *path, int64_t *mtime);

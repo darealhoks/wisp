@@ -291,6 +291,10 @@ struct Widget {
         } lock;
         struct {
             int painted_w, painted_h;  /* last decoded+blitted size; 0 = never */
+            /* crossfade (wispctl wall): heap frames blended per anim tick */
+            double    fade;                 /* 0..1, anim target */
+            uint32_t *fade_from, *fade_to;  /* pw*ph ARGB; NULL = no fade */
+            int       fade_w, fade_h;       /* physical dims at fade start */
         } wall;
     } s;
 };
@@ -564,6 +568,9 @@ void     osd_on_click(Widget *w, int x, int y);
 
 void wall_create_on(Output *o);
 void wall_render(Widget *w);
+int  wall_set(const char *path);   /* runtime switch + crossfade; -1 = no file */
+void wall_fade_frame(Widget *w);   /* anim-tick blend (anim.c owner hook) */
+void wall_fade_cancel(Widget *w);
 
 /* ============================================================ */
 /* Gamma / night mode (gamma.c)                                  */

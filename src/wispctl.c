@@ -132,6 +132,8 @@ static const char USAGE[] =
 "                            omitted = the last one used\n"
 "  quit                      stop the daemon\n"
 "  hide on|off|toggle|status hide surfaces that gate on ui_hidden()\n"
+"  wall <path>               switch the wallpaper (png only, crossfade); lasts until\n"
+"                            reload — put it in the .wisp to persist\n"
 "  tag <n> [output]          switch to tag n (1-based)\n"
 "\n"
 "bar\n"
@@ -189,6 +191,13 @@ int main(int argc, char **argv) {
         perror("wispctl: exec wisp-lock");
         return 1;
     }
+    /* The daemon resolves paths against ITS cwd; absolutize a relative one.
+     * (static: gcc flags a stack buffer stored into argv as dangling.) */
+    static char rp[PATH_MAX];
+    if (argc >= 3 && !strcmp(argv[1], "wall")
+        && argv[2][0] != '/' && argv[2][0] != '~' && realpath(argv[2], rp))
+        argv[2] = rp;
+
     char msg[16384];
     int n = 0;
     for (int i = 1; i < argc; i++) {

@@ -81,6 +81,9 @@ void widget_destroy(Widget *w) {
      * links no anim.o. */
     extern void anim_cancel_owner(Widget *w) __attribute__((weak));
     if (anim_cancel_owner) anim_cancel_owner(w);
+#ifdef WISP_HAS_WALL
+    if (w->kind == W_WALL) wall_fade_cancel(w);   /* free heap fade frames */
+#endif
     widget_free_pool(w);
     region_destroy(w->input_region_id);
     w->input_region_id = 0;

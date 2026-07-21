@@ -156,6 +156,10 @@
 #ifndef WALL_BG
 #define WALL_BG   0xff0f1219u
 #endif
+/* Crossfade length for `wispctl wall <path>` (ms). */
+#ifndef WALL_FADE_MS
+#define WALL_FADE_MS 300
+#endif
 
 /* ---------- OSD / notifications (mako + dwl-osd replacement) ----------
  * Top-center stack. Each slab fixed-size, rendered into one tall surface;

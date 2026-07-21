@@ -352,6 +352,16 @@ static int dispatch(Client *c, char *cmd) {
         return 0;
     }
 #endif
+#ifdef WISP_HAS_WALL
+    /* wall <path> — switch the wallpaper at runtime with a crossfade. Path is
+     * resolved by the daemon ("~/" ok); a missing file keeps the current one. */
+    if (!strcmp(op, "wall")) {
+        if (argc < 2 || !argv[1][0]) goto err;
+        if (wall_set(argv[1]) < 0) goto err;
+        (void)!write(c->fd, "ok\n", 3);
+        return 0;
+    }
+#endif
     /* hide on|off|toggle|status — surfaces whose .wisp gates
      * `visible = !ui_hidden()` are destroyed/recreated (exclusive zones
      * release, so windows reclaim the space). ponytail: global, not
