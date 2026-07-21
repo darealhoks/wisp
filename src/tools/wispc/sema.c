@@ -504,6 +504,9 @@ SemaResult *sema_check(Arena *a, Unit *u) {
             break;
         case D_SURFACE:
         case D_COMPOUND:
+            /* A menu carries a widget body but stays out of the surface
+             * pipeline: menu.c owns its lifecycle, not surface_create. */
+            if (d->is_menu) { s.r->has_menu = 1; break; }
             if (find_decl_in(s.s.sur, s.s.nsur, d->name, d->nlen))
                 diag_error(d->loc, "duplicate surface '%s'", d->name);
             s.s.sur[s.s.nsur++] = d;
@@ -519,7 +522,6 @@ SemaResult *sema_check(Arena *a, Unit *u) {
         case D_GAMMA:     if (s.s.gamma) diag_error(d->loc, "duplicate gamma block");     s.s.gamma = d; s.r->has_gamma = 1;    break;
         case D_WALLPAPER: if (s.s.wall)  diag_error(d->loc, "duplicate wallpaper block"); s.s.wall = d;  s.r->has_wallpaper = 1; break;
         case D_MEDIA:     s.r->has_media = 1; break;
-        case D_MENU:      s.r->has_menu = 1; break;
         case D_STYLE:     break;   /* stripped by style_apply */
         }
     }

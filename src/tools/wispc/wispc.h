@@ -210,7 +210,7 @@ struct Region {
 
 typedef enum {
     D_SOURCE, D_SURFACE, D_CONST, D_MUT, D_LOCK, D_GAMMA, D_WALLPAPER,
-    D_MEDIA, D_COMPOUND, D_STYLE, D_MENU,
+    D_MEDIA, D_COMPOUND, D_STYLE,
 } DKind;
 
 /* One row of a user-declared `menu NAME { item { … } }` block. */
@@ -242,13 +242,16 @@ struct Decl {
     DKind kind;
     Loc loc;
     const char *name; size_t nlen;
+    /* `menu NAME {}` is a D_SURFACE that also carries a static item table.
+     * Outside the union: a menu has both a widget body and its rows. */
+    bool is_menu; int memoji;
+    MenuItem *mitems; int nmitems;
     union {
         struct { Expr *call; } source;          /* RHS is a call expr */
         struct { SBody *items; int n; } surface;
         struct { Expr *val; } konst;            /* const/mut share */
         struct { Prop **props; int n; } block;  /* lock/gamma/wallpaper */
         StyleRule *style;
-        struct { MenuItem *items; int n; int emoji; } menu;
     };
 };
 

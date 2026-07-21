@@ -293,14 +293,14 @@ static void emit_menus(FILE *o, Unit *u) {
     fputs("#ifndef WISP_GEN_MENUS_H\n#define WISP_GEN_MENUS_H\n\n", o);
     int any_emoji = 0;
     for (int i = 0; i < u->n; i++)
-        if (u->decls[i]->kind == D_MENU && u->decls[i]->menu.emoji) any_emoji = 1;
+        if (u->decls[i]->is_menu && u->decls[i]->memoji) any_emoji = 1;
     if (any_emoji) fputs("#include \"emoji_data.h\"\n#define WISP_MENU_EMOJI 1\n\n", o);
     for (int i = 0; i < u->n; i++) {
         Decl *d = u->decls[i];
-        if (d->kind != D_MENU || d->menu.n == 0) continue;
+        if (!d->is_menu || d->nmitems == 0) continue;
         fprintf(o, "static const WispMenuEntry wisp_menu_%s_e[] = {\n", d->name);
-        for (int j = 0; j < d->menu.n; j++) {
-            MenuItem *it = &d->menu.items[j];
+        for (int j = 0; j < d->nmitems; j++) {
+            MenuItem *it = &d->mitems[j];
             fputs("    { \"", o);
             /* item text: "<icon>  <label>" (icon optional) */
             if (it->icon) { emit_utf8(o, it->icon); fputs("  ", o); }
@@ -312,12 +312,12 @@ static void emit_menus(FILE *o, Unit *u) {
     fputs("\nstatic const WispMenu wisp_menus[] = {\n", o);
     for (int i = 0; i < u->n; i++) {
         Decl *d = u->decls[i];
-        if (d->kind != D_MENU) continue;
-        if (d->menu.n)
+        if (!d->is_menu) continue;
+        if (d->nmitems)
             fprintf(o, "    { \"%s\", wisp_menu_%s_e, %d, %d },\n",
-                    d->name, d->name, d->menu.n, d->menu.emoji);
+                    d->name, d->name, d->nmitems, d->memoji);
         else
-            fprintf(o, "    { \"%s\", 0, 0, %d },\n", d->name, d->menu.emoji);
+            fprintf(o, "    { \"%s\", 0, 0, %d },\n", d->name, d->memoji);
     }
     fputs("    { 0, 0, 0, 0 },\n};\n\n#endif\n", o);
 }

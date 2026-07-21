@@ -162,6 +162,8 @@ void dump_unit(FILE *o, Unit *u) {
                     break;
                 }
             }
+            if (d->is_menu)
+                fprintf(o, "  // %d items%s\n", d->nmitems, d->memoji ? " +emoji" : "");
             fputs("}\n", o);
             break;
         case D_COMPOUND:
@@ -173,8 +175,6 @@ void dump_unit(FILE *o, Unit *u) {
         case D_GAMMA:  fputs("gamma {\n", o);     for (int j=0;j<d->block.n;j++) dump_prop(o, d->block.props[j], 2); fputs("}\n", o); break;
         case D_WALLPAPER:fputs("wallpaper {\n",o);for (int j=0;j<d->block.n;j++) dump_prop(o, d->block.props[j], 2); fputs("}\n", o); break;
         case D_MEDIA:  fputs("media {\n", o);     for (int j=0;j<d->block.n;j++) dump_prop(o, d->block.props[j], 2); fputs("}\n", o); break;
-        case D_MENU:   fprintf(o, "menu %s { %d items%s }\n", d->name, d->menu.n,
-                               d->menu.emoji ? " +emoji" : ""); break;
         default: break;
         }
     }

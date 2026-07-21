@@ -670,18 +670,65 @@ static Group *parse_group(P *p) {
     return g;
 }
 
-static Decl *parse_surface_or_compound(P *p, DKind dk) {
+/* `item { icon = 0xf011; label = "…"; exec = "…"; }` — sugar inside a menu
+ * decl. Lowers to the static string table in gen_menus.h, not to widgets. */
+static void parse_menu_item(P *p, VList *rows) {
+    Tok kw = cur(p); lex_next(&p->L);
+    expect(p, TK_LBRACE, "'{' after item");
+    MenuItem *it = NEW(p, MenuItem);
+    *it = (MenuItem){0};
+    while (!at(p, TK_RBRACE) && !at(p, TK_EOF)) {
+        Tok k = cur(p);
+        /* `exec` is a keyword token elsewhere in the grammar. */
+        if (k.kind != TK_IDENT && k.kind != TK_KW_EXEC) { diag_error(k.loc, "expected item property"); lex_next(&p->L); continue; }
+        lex_next(&p->L); expect(p, TK_ASSIGN, "'='");
+        Tok v = cur(p); lex_next(&p->L);
+        if (k.len == 4 && memcmp(k.s, "icon", 4) == 0) {
+            if (v.kind != TK_INT) diag_error(v.loc, "icon takes a codepoint literal");
+            else it->icon = (uint32_t)v.i;
+        } else if (k.len == 5 && memcmp(k.s, "label", 5) == 0) {
+            if (v.kind != TK_STRING) diag_error(v.loc, "label takes a string");
+            else { it->label = arena_strn(p->a, v.s, v.len); it->llen = v.len; }
+        } else if (k.len == 4 && memcmp(k.s, "exec", 4) == 0) {
+            if (v.kind != TK_STRING) diag_error(v.loc, "exec takes a string");
+            else { it->exec = arena_strn(p->a, v.s, v.len); it->elen = v.len; }
+        } else {
+            diag_error(k.loc, "unknown item property");
+        }
+        eat(p, TK_SEMI);
+    }
+    expect(p, TK_RBRACE, "'}'");
+    if (!it->label || !it->exec) diag_error(kw.loc, "item needs label and exec");
+    vl_push(rows, it);
+}
+
+static Decl *parse_surface_or_compound(P *p, DKind dk, bool menu_decl) {
     Tok kw = cur(p); lex_next(&p->L);
     Decl *d = NEW(p, Decl);
     d->kind = dk; d->loc = kw.loc;
+    d->is_menu = menu_decl;
     Tok n = cur(p);
     if (n.kind != TK_IDENT) diag_error(n.loc, "expected surface name");
     else { lex_next(&p->L); d->name = arena_strn(p->a, n.s, n.len); d->nlen = n.len; }
     expect(p, TK_LBRACE, "'{'");
-    VList items = {0};
+    VList items = {0}, rows = {0};
     while (!at(p, TK_RBRACE) && !at(p, TK_EOF)) {
         SBody *b = NEW(p, SBody);
         Tok t = cur(p);
+        if (menu_decl && t.kind == TK_IDENT && t.len == 4 && memcmp(t.s, "item", 4) == 0
+            && lex_peek(&p->L).kind == TK_LBRACE) {
+            parse_menu_item(p, &rows);
+            continue;
+        }
+        if (menu_decl && t.kind == TK_IDENT && t.len == 6 && memcmp(t.s, "preset", 6) == 0) {
+            lex_next(&p->L); expect(p, TK_ASSIGN, "'='");
+            Tok v = cur(p);
+            if (v.kind != TK_IDENT || v.len != 5 || memcmp(v.s, "emoji", 5) != 0)
+                diag_error(v.loc, "only 'emoji' preset exists");
+            else d->memoji = 1;
+            lex_next(&p->L); eat(p, TK_SEMI);
+            continue;
+        }
         if (t.kind == TK_KW_WIDGET) {
             b->kind = SB_WIDGET;
             b->widget = parse_widget_or_cell(p, false);
@@ -713,6 +760,10 @@ static Decl *parse_surface_or_compound(P *p, DKind dk) {
     d->surface.items = NEW_ARR(p, SBody, nn);
     for (int i = 0; i < nn; i++) d->surface.items[i] = *arr[i];
     d->surface.n = nn;
+    int nr; MenuItem **ra = (MenuItem**)vl_freeze(p, &rows, &nr);
+    d->mitems = NEW_ARR(p, MenuItem, nr ? nr : 1);
+    for (int i = 0; i < nr; i++) d->mitems[i] = *ra[i];
+    d->nmitems = nr;
     return d;
 }
 
@@ -734,71 +785,6 @@ static Decl *parse_block_decl(P *p, DKind dk, const char *name) {
     d->block.props = NEW_ARR(p, Prop*, n);
     for (int i = 0; i < n; i++) d->block.props[i] = arr[i];
     d->block.n = n;
-    return d;
-}
-
-/* ---------- user menus ----------
- * `menu NAME { item { icon = 0xf011; label = "…"; exec = "…"; } … }`, or
- * `menu NAME { preset = emoji; }`. Not a keyword: `menu` stays usable as an
- * ident (`spawned_by = menu`, `#menu {}`), so the decl is recognised by the
- * ident + ident + '{' shape at top level. */
-static Decl *parse_menu(P *p) {
-    Tok kw = cur(p); lex_next(&p->L);
-    Decl *d = NEW(p, Decl);
-    d->kind = D_MENU; d->loc = kw.loc;
-    Tok nm = cur(p); lex_next(&p->L);
-    d->name = arena_strn(p->a, nm.s, nm.len); d->nlen = nm.len;
-    d->menu.emoji = 0;
-    expect(p, TK_LBRACE, "'{'");
-    VList items = {0};
-    while (!at(p, TK_RBRACE) && !at(p, TK_EOF)) {
-        Tok t = cur(p);
-        if (t.kind != TK_IDENT) { diag_error(t.loc, "expected 'item' or 'preset'"); lex_next(&p->L); continue; }
-        if (t.len == 6 && memcmp(t.s, "preset", 6) == 0) {
-            lex_next(&p->L); expect(p, TK_ASSIGN, "'='");
-            Tok v = cur(p);
-            if (v.kind != TK_IDENT || v.len != 5 || memcmp(v.s, "emoji", 5) != 0)
-                diag_error(v.loc, "only 'emoji' preset exists");
-            else d->menu.emoji = 1;
-            lex_next(&p->L); eat(p, TK_SEMI);
-            continue;
-        }
-        if (t.len != 4 || memcmp(t.s, "item", 4) != 0) {
-            diag_error(t.loc, "expected 'item' or 'preset'"); lex_next(&p->L); continue;
-        }
-        lex_next(&p->L);
-        expect(p, TK_LBRACE, "'{' after item");
-        MenuItem *it = NEW(p, MenuItem);
-        *it = (MenuItem){0};
-        while (!at(p, TK_RBRACE) && !at(p, TK_EOF)) {
-            Tok k = cur(p);
-            /* `exec` is a keyword token elsewhere in the grammar. */
-            if (k.kind != TK_IDENT && k.kind != TK_KW_EXEC) { diag_error(k.loc, "expected item property"); lex_next(&p->L); continue; }
-            lex_next(&p->L); expect(p, TK_ASSIGN, "'='");
-            Tok v = cur(p); lex_next(&p->L);
-            if (k.len == 4 && memcmp(k.s, "icon", 4) == 0) {
-                if (v.kind != TK_INT) diag_error(v.loc, "icon takes a codepoint literal");
-                else it->icon = (uint32_t)v.i;
-            } else if (k.len == 5 && memcmp(k.s, "label", 5) == 0) {
-                if (v.kind != TK_STRING) diag_error(v.loc, "label takes a string");
-                else { it->label = arena_strn(p->a, v.s, v.len); it->llen = v.len; }
-            } else if (k.len == 4 && memcmp(k.s, "exec", 4) == 0) {
-                if (v.kind != TK_STRING) diag_error(v.loc, "exec takes a string");
-                else { it->exec = arena_strn(p->a, v.s, v.len); it->elen = v.len; }
-            } else {
-                diag_error(k.loc, "unknown item property");
-            }
-            eat(p, TK_SEMI);
-        }
-        expect(p, TK_RBRACE, "'}'");
-        if (!it->label || !it->exec) diag_error(t.loc, "item needs label and exec");
-        vl_push(&items, it);
-    }
-    expect(p, TK_RBRACE, "'}'");
-    int n; MenuItem **arr = (MenuItem**)vl_freeze(p, &items, &n);
-    d->menu.items = NEW_ARR(p, MenuItem, n ? n : 1);
-    for (int i = 0; i < n; i++) d->menu.items[i] = *arr[i];
-    d->menu.n = n;
     return d;
 }
 
@@ -908,15 +894,15 @@ Unit *parse_file(Arena *a, const char *file, const char *src) {
          * style rule on every surface. Same tokens can't mean both. */
         case TK_KW_SURFACE:
             d = (lex_peek(&p.L).kind == TK_IDENT)
-                ? parse_surface_or_compound(&p, D_SURFACE) : parse_style_rule(&p);
+                ? parse_surface_or_compound(&p, D_SURFACE, false) : parse_style_rule(&p);
             break;
         case TK_KW_WIDGET: case TK_KW_GROUP: case TK_KW_CELL: case TK_KW_REGION:
         case TK_IDENT: case TK_HASH: case TK_DOT:
             d = (t.kind == TK_IDENT && t.len == 4 && memcmp(t.s, "menu", 4) == 0 &&
                  lex_peek(&p.L).kind == TK_IDENT)
-                ? parse_menu(&p) : parse_style_rule(&p);
+                ? parse_surface_or_compound(&p, D_SURFACE, true) : parse_style_rule(&p);
             break;
-        case TK_KW_COMPOUND:  d = parse_surface_or_compound(&p, D_COMPOUND); break;
+        case TK_KW_COMPOUND:  d = parse_surface_or_compound(&p, D_COMPOUND, false); break;
         case TK_KW_CONST:     d = parse_const_or_mut(&p, D_CONST); break;
         case TK_KW_MUT:       d = parse_const_or_mut(&p, D_MUT); break;
         case TK_KW_LOCK:      d = parse_block_decl(&p, D_LOCK,      "lock"); break;
