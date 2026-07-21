@@ -27,6 +27,8 @@ static int emit_outputs(FILE *o, Unit *u, SemaResult *r) {
         Decl *d = u->decls[i];
         if (d->kind != D_SURFACE && d->kind != D_COMPOUND) continue;
         if (d->kind == D_SURFACE && surface_prop(d, "spawned_by")) continue;
+        /* menu.c owns a menu's lifecycle: no auto-create on output add. */
+        if (d->is_menu) continue;
         fprintf(o, "extern void %.*s_create_on(Output *);\n", (int)d->nlen, d->name);
         fprintf(o, "extern int  %.*s_is_visible(void);\n", (int)d->nlen, d->name);
     }
@@ -47,6 +49,8 @@ static int emit_outputs(FILE *o, Unit *u, SemaResult *r) {
         Decl *d = u->decls[i];
         if (d->kind != D_SURFACE && d->kind != D_COMPOUND) continue;
         if (d->kind == D_SURFACE && surface_prop(d, "spawned_by")) continue;
+        /* menu.c owns a menu's lifecycle: no auto-create on output add. */
+        if (d->is_menu) continue;
         if (surface_prop(d, "visible"))
             fprintf(o, "    if (%.*s_is_visible()) %.*s_create_on(o);\n",
                     (int)d->nlen, d->name, (int)d->nlen, d->name);
