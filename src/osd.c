@@ -49,8 +49,10 @@
 #ifndef OSD_PILL_RADIUS
 #define OSD_PILL_RADIUS OSD_RADIUS
 #endif
-/* Third stack layout: floating top-center pill, OSD_TOP_MARGIN px below the
- * bar's exclusive zone — no fillets, no bar cutout (osd_float.c). */
+/* Floating top-center stack, OSD_TOP_MARGIN px below the bar's exclusive zone.
+ * Like the bottom-right anchor it is fully declared now — the margin is what
+ * lifts the chain off every screen edge, so nothing is flush and the generated
+ * renderer rounds/outlines all four sides. Only selects the render path. */
 #define OSD_FLOAT (!OSD_ANCHOR_BR && OSD_TOP_MARGIN > 0)
 
 /* Vertical padding inside a slab (top + bottom) around the text block. */
@@ -118,22 +120,6 @@ static int prefix_fitting(const Font *f, const char *s, int budget) {
         n += k; w += gw;
     }
     return n;
-}
-
-/* Draw `s` at (x,y); if wider than max_w, truncate and append '…'. */
-static void draw_elided(uint32_t *px, int sw, int sh, int x, int y,
-                        const Font *f, const char *s, int max_w, uint32_t fg) {
-    if (text_width(f, s) <= max_w) { draw_text(px, sw, sh, x, y, f, s, fg); return; }
-    int ell_w = text_width(f, "\xe2\x80\xa6");
-    int budget = max_w - ell_w;
-    if (budget < 0) budget = 0;
-    int n = prefix_fitting(f, s, budget);
-    char buf[OSD_BODY_MAX + 8];
-    if (n > (int)sizeof buf - 4) n = sizeof buf - 4;
-    memcpy(buf, s, n);
-    memcpy(buf + n, "\xe2\x80\xa6", 3);
-    buf[n + 3] = 0;
-    draw_text(px, sw, sh, x, y, f, buf, fg);
 }
 
 /* Word-wrap `s` into at most `max_lines` lines, each <= max_w pixels.
@@ -346,315 +332,126 @@ static double slab_anim_p(const Osd *o, int64_t now) {
     return 1.0;
 }
 
-#if !OSD_ANCHOR_BR && !OSD_FLOAT
-static void osd_render_top(Widget *w) {
-    if (!w->configured) return;
-    int has_items = w->s.osd.items[0].active;
-    if (!has_items && !w->s.osd.has_pixels) return;
-    if (!has_items) { osd_attach_empty(w); return; }
+/* Pass-1 state, shared by every layout backend and by the generated slab
+ * renderer via osd_slab_geom(). Valid only for the widget most recently passed
+ * to osd_slab_layout() — there is one stack widget at a time. */
+static char   osd_wrapped[MAX_OSDS][OSD_MAX_BODY_LINES][OSD_BODY_MAX];
+static int    osd_nbody[MAX_OSDS];
+static int    osd_item_y[MAX_OSDS];
+static int    osd_visible_h[MAX_OSDS];
+static double osd_anim_p[MAX_OSDS];
 
+/* Wrap bodies, compute per-slab settled height, tween progress and Y. item_y
+ * uses the *animated* visible height of the slabs above, so closing slabs
+ * collapse smoothly (slabs below shift up) and spawning slabs push the stack
+ * down as they emerge. */
+int osd_slab_layout(Widget *w) {
     const Font *f = &font_small;
-
     int64_t now = now_ms();
-
-    /* Pass 1: wrap bodies, compute per-slab full height, animation progress,
-     * and Y position. item_y uses the *animated* visible height of slabs above
-     * so closing slabs collapse smoothly (slabs below shift up) and spawning
-     * slabs push the stack down as they emerge. */
-    static char wrapped[MAX_OSDS][OSD_MAX_BODY_LINES][OSD_BODY_MAX];
-    int nbody[MAX_OSDS]    = {0};
-    int item_y[MAX_OSDS]   = {0};
-    int visible_h[MAX_OSDS] = {0};
-    double anim_p_arr[MAX_OSDS] = {0};
     int total = 0, n_active = 0;
     for (int i = 0; i < MAX_OSDS; i++) {
         Osd *o = &w->s.osd.items[i];
+        osd_nbody[i] = 0;
         if (!o->active) break;
         int tx = slab_text_x(o);
         int body_w = OSD_W - OSD_PAD_X - tx;
         if (body_w < 0) body_w = 0;
         if (o->body[0])
-            nbody[i] = wrap_body(f, o->body, body_w, OSD_MAX_BODY_LINES, wrapped[i]);
-        o->h = slab_height_for(nbody[i], o->progress >= 0);
+            osd_nbody[i] = wrap_body(f, o->body, body_w, OSD_MAX_BODY_LINES, osd_wrapped[i]);
+        o->h = slab_height_for(osd_nbody[i], o->progress >= 0);
 
-        double anim_p = slab_anim_p(o, now);
-        anim_p_arr[i] = anim_p;
-        int vh = (int)((double)o->h * anim_p);
+        osd_anim_p[i] = slab_anim_p(o, now);
+        int vh = (int)((double)o->h * osd_anim_p[i]);
         if (vh < 0) vh = 0;
         if (vh > o->h) vh = o->h;
-        visible_h[i] = vh;
+        osd_visible_h[i] = vh;
 
-        if (n_active > 0 && visible_h[i-1] > 0) total += OSD_GAP;
-        item_y[i] = total;
+        if (n_active > 0 && osd_visible_h[i-1] > 0) total += OSD_GAP;
+        osd_item_y[i] = total;
         total += vh;
         n_active++;
     }
-
-    /* Per-item heights are now known — input region must be set from them,
-     * not from the stale values that existed when osd_post called us. */
-    update_input_region(w);
-    (void)total;
-
-    /* Sync bar cutout to slab[0]'s emerging body. Cutout height tracks vh so
-     * the bar's transparent rect grows from 0 → BAR_HEIGHT as the slab slides
-     * in, and shrinks back as it slides out — no wallpaper bleed-through. */
+#if !OSD_ANCHOR_BR && !OSD_FLOAT
+    /* Sync bar cutout to slab[0]'s emerging body: the bar's transparent rect
+     * grows 0 → BAR_HEIGHT with vh, so the translucent slab blends with
+     * wallpaper only, never double-blended over the bar. Republish when the
+     * scope (output) changed too — a migration can settle slab[0] at the same
+     * height, leaving the hole on the old output's bar. */
     int new_cut_h = 0;
     if (n_active > 0)
-        new_cut_h = visible_h[0] < BAR_HEIGHT ? visible_h[0] : BAR_HEIGHT;
-    /* Republish when the scope (output) changed too, not just the height — a
-     * migration can settle slab[0] so new_cut_h == osd_bar_cutout_h, leaving
-     * the cutout scoped to the old output (hole on the wrong bar). */
+        new_cut_h = osd_visible_h[0] < BAR_HEIGHT ? osd_visible_h[0] : BAR_HEIGHT;
     if (new_cut_h != osd_bar_cutout_h || osd_cutout_scope != w->output) {
         osd_bar_cutout_h = new_cut_h;
         osd_publish_bar_cutout(w->output);
         extern void bar_redraw_all(void);
         bar_redraw_all();
     }
-
-    /* Two slots: when the compositor is still holding the just-attached
-     * buffer (e.g. click-dismiss right after a post), having a free slot
-     * lets us re-render and clear without waiting on buffer.release. */
-    widget_ensure_pool(w, 2);
-    BufSlot *s = widget_free_slot(w);
-    if (!s) return;
-    int W = w->w, H = w->h;
-    memset(s->px, 0, (size_t)W * H * 4);
-
-    int body_x = OSD_SIDE_PAD;
-    /* Stack origin at screen y=0: slab[0] starts at the top of the screen,
-     * overlapping the bar's reserved strip. The bar's pixels behind get
-     * punched out via the cutout registry so OSD's translucent bg blends
-     * with wallpaper only, not double-blended over the bar. */
-    int body_top = 0;
-    /* Seed first_bg up-front from slab[0]'s style. The render loop skips
-     * vh<=0 slabs via `continue`, so a closing slab[0] at vh=0 would otherwise
-     * leave first_bg at its zero default and the fillets would draw with
-     * alpha=0 (invisible) for one frame — visible as a fillet flicker between
-     * a closing slab and the next one taking over. */
-    uint32_t first_bg;
-    {
-        Osd *o0 = &w->s.osd.items[0];
-        first_bg = o0->muted == 2 ? OSD_BG_WARN : OSD_BG;
-    }
-
-    for (int i = 0; i < n_active; i++) {
-        Osd *o = &w->s.osd.items[i];
-        int y  = body_top + item_y[i];
-        int sh = o->h;
-        int vh = visible_h[i];
-        if (vh <= 0) continue;
-        /* style: 0/1=default panel (mute signaled by progress-bar color for
-         * volume, by icon swap for mic), 2=warn yellow (low bat). */
-        uint32_t bg = o->muted == 2 ? OSD_BG_WARN : OSD_BG;
-        uint32_t fg = o->muted == 2 ? OSD_FG_WARN : OSD_FG;
-        uint32_t pfg = o->muted == 2 ? OSD_PROG_FG_WARN
-                     : o->muted == 1 ? OSD_PROG_FG_MUTE : OSD_PROG_FG;
-
-        /* Single body emerging from the bar: square top on the first slab
-         * (visually butts into the bar), rounded bottom on the last slab,
-         * square interior corners so consecutive slabs read continuous. */
-        int is_last = (i == n_active - 1);
-        int r_bl = is_last ? OSD_RADIUS : 0;
-        int r_br = is_last ? OSD_RADIUS : 0;
-        /* Body draw — split at the bar/desktop junction so the rounded BL/BR
-         * corners only paint past the bar. While the slab is still climbing
-         * down through the bar zone (y..y+vh inside [0, BAR_HEIGHT]), the
-         * round-over would carve transparent quarter-discs into the body — and
-         * since the bar cutout has already nulled those rows, the carve shows
-         * wallpaper through the bar ("hole" the user reported). Paint the
-         * bar-zone portion as a plain square rect; only the part past
-         * BAR_HEIGHT carries the rounded bottom. The corner radius grows
-         * naturally as the past-bar strip exceeds 2·r (fill_rect_rounded
-         * clamps r to half the rect's smaller dim), so the round-over fades
-         * in at the exact moment the body emerges. */
-        if (y + vh <= BAR_HEIGHT) {
-            fill_rect(s->px, W, H, body_x, y, OSD_W, vh, bg);
-        } else if (y >= BAR_HEIGHT) {
-            fill_rect_rounded(s->px, W, H, body_x, y, OSD_W, vh, 0, 0, r_br, r_bl, bg);
-        } else {
-            int bar_part = BAR_HEIGHT - y;
-            fill_rect(s->px, W, H, body_x, y, OSD_W, bar_part, bg);
-            fill_rect_rounded(s->px, W, H, body_x, BAR_HEIGHT, OSD_W,
-                              vh - bar_part, 0, 0, r_br, r_bl, bg);
-        }
-        /* Thin dark separator between consecutive slabs — 80% width, centered.
-         * Only drawn when both adjacent slabs are fully settled, so it never
-         * flashes as a 1-px line during the reflow gap between a closing slab
-         * and the next one taking its place. */
-        if (i > 0 && anim_p_arr[i] >= 1.0 && anim_p_arr[i-1] >= 1.0) {
-            int sep_w = OSD_W * OSD_SEPARATOR_FRAC / 100;
-            int sep_x = body_x + (OSD_W - sep_w) / 2;
-            fill_rect(s->px, W, H, sep_x, y, sep_w, 1, OSD_SEPARATOR);
-        }
-
-        char pct_buf[16] = "";
-        int pct_w = 0;
-        if (o->progress >= 0) {
-            snprintf(pct_buf, sizeof pct_buf, "%d%%", o->progress);
-            pct_w = text_width(f, pct_buf);
-        }
-
-        int tx = body_x + slab_text_x(o);
-        int prog_band = (o->progress >= 0) ? OSD_PROG_H + 8 : 0;
-        /* Translate content by (vh - sh) so it slides WITH the body, mirroring
-         * the HUD's __oy offset. At rest (vh == sh) the offset is 0 and content
-         * sits at its final centered position; mid-slide content lives above
-         * the body and gets clipped by the tail-clear, producing a unified
-         * slab-and-content slide instead of a body-only slide with text
-         * popping in. Gated to slab[0] only: for i>0 a sliding content offset
-         * would draw into the slab above's opaque body (no clip support), so
-         * lower slabs keep static content during their (brief) tween. */
-        int slide_off = (i == 0) ? (vh - sh) : 0;
-        int content_top = y + slide_off;
-        int content_h   = sh - prog_band;
-        int body_w = OSD_W - OSD_PAD_X - slab_text_x(o);
-        if (body_w < 0) body_w = 0;
-
-        if (o->icon_cp) {
-            const Glyph *g = font_find(&font_large, o->icon_cp);
-            if (g) {
-                int gy = content_top + (content_h - g->h) / 2 + g->by;
-                draw_glyph(s->px, W, H, body_x + OSD_PAD_X - g->bx, gy, &font_large, g, fg);
-            }
-        }
-
-        if (nbody[i] > 0) {
-            int total_lines = 1 + nbody[i];
-            int ty = content_top + (content_h - total_lines * f->line_h) / 2;
-            draw_elided(s->px, W, H, tx, ty, f, o->summary, body_w, fg);
-            for (int li = 0; li < nbody[i]; li++)
-                draw_text(s->px, W, H, tx, ty + (li + 1) * f->line_h, f, wrapped[i][li], fg);
-        } else {
-            int ty = content_top + (content_h - f->line_h) / 2;
-            int sum_w = body_w - (pct_w ? pct_w + OSD_ICON_GAP : 0);
-            if (sum_w < 0) sum_w = 0;
-            draw_elided(s->px, W, H, tx, ty, f, o->summary, sum_w, fg);
-            if (pct_w) {
-                int px_ = body_x + OSD_W - OSD_PAD_X - pct_w;
-                draw_text(s->px, W, H, px_, ty, f, pct_buf, fg);
-            }
-        }
-
-        /* Progress bar rides the same slide_off so its bottom edge stays
-         * anchored to the slab's emerging bottom (y + vh - 2 - ...). */
-        if (o->progress >= 0) {
-            int by = y + sh - 2 - OSD_PROG_H - 4 + slide_off;
-            int bx = body_x + OSD_PAD_X;
-            int bw = OSD_W - 2 * OSD_PAD_X;
-            int pr = OSD_PROG_H / 2;
-            fill_rounded_clipped(s->px, W, H, bx, by, bw, OSD_PROG_H,
-                                 pr, pr, pr, pr, bx, by, bw, OSD_PROG_H,
-                                 pr, pr, pr, pr, OSD_PROG_TRACK_BG);
-            int pmax = o->progress > 100 ? o->progress : 100;
-            int pw = bw * o->progress / pmax;
-            if (pw > bw) pw = bw;
-            if (pw > 0)
-                fill_rounded_clipped(s->px, W, H, bx, by, pw, OSD_PROG_H,
-                                     pr, pr, pr, pr, bx, by, bw, OSD_PROG_H,
-                                     pr, pr, pr, pr, pfg);
-        }
-
-        /* Body's bottom rows beyond the animated visible_h must be cleared so
-         * the body's footprint tracks the tween. (Bg was painted full-height
-         * above for simpler rounded-corner math.) */
-        if (vh < sh) {
-            int x0 = body_x, x1 = body_x + OSD_W;
-            int y0 = y + vh, y1 = y + sh;
-            if (y1 > H) y1 = H;
-            for (int yy = y0; yy < y1; yy++) {
-                uint32_t *row = s->px + yy * W;
-                for (int xx = x0; xx < x1; xx++) row[xx] = 0;
-            }
-        }
-    }
-
-    /* Armpit fillets at the bar/desktop junction (y=BAR_HEIGHT), pixel-tracking
-     * the body's emerged-past-bar extent. Two regimes, branched on whether
-     * the leading slab is closing:
-     *
-     *   spawn / steady:   r = OSD_FILLET_R * emerged / (sh[0] - BAR_HEIGHT)
-     *                     (capped at OSD_FILLET_R)
-     *   closing:          r = min(OSD_FILLET_R, emerged)
-     *
-     * The proportional ramp during spawn makes the arc transition from a
-     * straight line to the full curve across the whole reveal (mirrors the
-     * codegen HUD/side_menu formula). The plain min() during close holds the
-     * arc at full R while the chain still has more than R pixels past the bar
-     * — so when slab[0] is sliding away with slab[1] full underneath, the
-     * fillet doesn't shrink and snap back to R as slab[0] vanishes. Only the
-     * final close (chain truly draining below R) ramps the arc back down to 0.
-     *
-     * `emerged` = max(0, contiguous_visible_h - BAR_HEIGHT). Contiguous-only
-     * (gap breaks the chain) so a closing slab[0] hands off cleanly to slab[1]
-     * sliding up. */
-    if (n_active > 0 && OSD_FILLET_R > 0) {
-        /* Find the chain leader — the first slab with visible_h > 0. Skipping
-         * leading empties closes the one-frame gap where slab[0]'s close
-         * animation has driven its vh to 0 but the array hasn't been compacted
-         * yet: without the skip, the chain breaks at empty slab[0] and `back`
-         * collapses to 0 for a frame, then jumps back to R as slab[1] takes
-         * over as items[0]. That snap is the residual twitch. */
-        int back = 0, leader_idx = -1;
-        for (int i = 0; i < n_active; i++) {
-            if (visible_h[i] <= 0) {
-                if (leader_idx >= 0) break;
-                continue;
-            }
-            if (leader_idx < 0) leader_idx = i;
-            back += visible_h[i];
-            if (i + 1 < n_active && OSD_GAP > 0) break;
-        }
-        if (leader_idx >= 0) {
-            int emerged_past_bar = back - BAR_HEIGHT;
-            if (emerged_past_bar < 0) emerged_past_bar = 0;
-            Osd *leader = &w->s.osd.items[leader_idx];
-            int fr;
-            if (leader->closing_at_ms > 0) {
-                fr = emerged_past_bar < OSD_FILLET_R ? emerged_past_bar : OSD_FILLET_R;
-            } else {
-                int body_dim = leader->h - BAR_HEIGHT;
-                if (body_dim < 1) body_dim = 1;
-                fr = OSD_FILLET_R * emerged_past_bar / body_dim;
-                if (fr > OSD_FILLET_R) fr = OSD_FILLET_R;
-            }
-            if (fr > 0) {
-                fill_corner_fillet(s->px, W, H, body_x,          OSD_TOP_INSET, fr, 0, first_bg);
-                fill_corner_fillet(s->px, W, H, body_x + OSD_W,  OSD_TOP_INSET, fr, 1, first_bg);
-            }
-        }
-    }
-    w->s.osd.has_pixels = 1;
-    /* Request a frame callback only while we still have animation work to do.
-     * Compositor-paced ticks keep CPU near zero at rest while still driving
-     * the slide-in / slide-out tweens at the display's natural cadence. */
-    int anim_pending = 0;
-    for (int i = 0; i < n_active; i++) {
-        Osd *o = &w->s.osd.items[i];
-        if (o->closing_at_ms > 0 && now < o->closing_at_ms + OSD_SLIDE_MS) { anim_pending = 1; break; }
-        if (o->closing_at_ms == 0 && o->spawn_ms > 0 && now < o->spawn_ms + OSD_SLIDE_MS) { anim_pending = 1; break; }
-    }
-    widget_attach(w, s, anim_pending);
+#endif
+    return n_active;
 }
-#endif /* !OSD_ANCHOR_BR && !OSD_FLOAT */
 
-/* Floating top-center stack renderer (file-size rule); same TU. */
-#include "osd_float.c"
+int osd_bar_split(void) {
+#if !OSD_ANCHOR_BR && !OSD_FLOAT
+    return BAR_HEIGHT;
+#else
+    return 0;
+#endif
+}
 
-/* Bottom-right stack renderer lives in its own file (file-size rule); same
- * TU — osd.c itself is #included by gen_spawn.c. */
-#include "osd_br.c"
+/* Both exist so the generated renderer never re-derives time or input state:
+ * it draws, and asks the runtime for the rest. */
+/* The wrapped body as one "\n"-joined string, so the DSL's body_lines text
+ * renderer draws the same lines osd_slab_layout measured. Rebuilt per call —
+ * only two widgets ever ask, and only while a slab is on screen.
+ * ponytail: wrap width is still osd_slab_layout's OSD_W-derived column, not
+ * the declaring widget's; thread the widget width in if a preset diverges. */
+const char *osd_slab_body(int i) {
+    static char joined[OSD_MAX_BODY_LINES * OSD_BODY_MAX];
+    int n = 0;
+    for (int li = 0; li < osd_nbody[i]; li++) {
+        if (n && n < (int)sizeof joined - 1) joined[n++] = '\n';
+        int k = (int)strlen(osd_wrapped[i][li]);
+        if (k > (int)sizeof joined - 1 - n) k = (int)sizeof joined - 1 - n;
+        memcpy(joined + n, osd_wrapped[i][li], k);
+        n += k;
+    }
+    joined[n] = 0;
+    return joined;
+}
+int osd_slab_nbody(int i) { return osd_nbody[i]; }
+
+void osd_stack_input_region(Widget *w) { update_input_region(w); }
+void osd_stack_attach_empty(Widget *w) { osd_attach_empty(w); }
+
+int osd_slab_anim_pending(Widget *w) {
+    int64_t now = now_ms();
+    for (int i = 0; i < MAX_OSDS; i++) {
+        Osd *o = &w->s.osd.items[i];
+        if (!o->active) break;
+        if (o->closing_at_ms > 0 && now < o->closing_at_ms + OSD_SLIDE_MS) return 1;
+        if (o->closing_at_ms == 0 && o->spawn_ms > 0 && now < o->spawn_ms + OSD_SLIDE_MS) return 1;
+    }
+    return 0;
+}
+
+void osd_slab_geom(Widget *w, int i, OsdSlabGeom *g) {
+    g->y  = osd_item_y[i];
+    g->vh = osd_visible_h[i];
+    g->sh = w->s.osd.items[i].h;
+    g->settled = osd_anim_p[i] >= 1.0;
+    g->closing = w->s.osd.items[i].closing_at_ms > 0;
+}
+
 
 void osd_render(Widget *w) {
 #if OSD_PILL_W > 0
     if (w->s.osd.is_pill) { osd_pill_render(w); return; }
 #endif
-#if OSD_ANCHOR_BR
-    osd_render_br(w);
-#elif OSD_FLOAT
-    osd_render_float(w);
-#else
-    osd_render_top(w);
-#endif
+    /* Every stack layout is a declaration now — anchor + margin pick the
+     * shape. osd.c keeps only what the DSL can't say: the ring, the tweens,
+     * the bar cutout, and the junction split the renderer asks for. */
+    extern void render_osd(Widget *w);
+    render_osd(w);
 }
 
 /* Create an OSD widget anchored to `o`. Layer-surface output is fixed at

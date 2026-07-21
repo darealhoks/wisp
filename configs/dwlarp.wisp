@@ -210,11 +210,22 @@ surface osd {
   timeout_low = 3000; timeout_normal = 5000; timeout = 1200;
   bg = #ff0f1219; fg = FG; border = #00000000;
   prog_fg = #ff84a7b3; prog_track = #ff1c2733;
+  /* margin 0 → flush under the bar: only the bottom corners round, and the
+     fillets claw up into the bar row at the junction. */
+  radius = 10; fillet_r = 18;
+  separator = #ff1c2733; separator_frac = 80;
   dismiss_on_click = true; focus_follow = true; dbus_close = true;
 
   widget icon  { align = left;   width = 40; icon = $icon; }
-  widget title { align = left;   text = $summary;          pad = 12; y_offset = -34; }
-  widget pct   { align = right;  text = "{$pct}%";         pad = 12; y_offset = -34; }
+  widget title { align = left;  text = $nbody > 0 ? "{$summary}\n{$body}" : $summary;
+                 body_lines = 1 + $nbody; elide;
+                 pad = 12; y_offset = $progress >= 0 ? -9 : 0; }
+  widget pct   { align = right;  text = "{$pct}%";         pad = 12;
+                 y_offset = $progress >= 0 ? -9 : 0;
+                 visible = $progress >= 0; }
+  widget prog  { slider; align = left; width = 312; height = 10;
+                 visible = $progress >= 0; value = $progress; value_max = 100;
+                 track_bg = #ff1c2733; track_fg = #ff84a7b3; track_radius = 5; }
 }
 
 #osd widget { fg = FG; pad = 0; }

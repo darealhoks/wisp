@@ -35,7 +35,12 @@ void cgctx_flush_prelude(CGCtx *c, FILE *out, const char *indent) {
 
 void push_local(CGCtx *c, const char *name, size_t n, LBKind k,
                        const char *expr, const char *src_name) {
-    if (c->nlocals >= 8) return;
+    /* Silent truncation here loses a $-binding and only shows up as a bogus
+     * "no binding" error at the use site — fail loudly instead. */
+    if (c->nlocals >= (int)(sizeof c->locals / sizeof c->locals[0])) {
+        fprintf(stderr, "wispc: too many locals in scope (pushing '%.*s')\n", (int)n, name);
+        exit(1);
+    }
     c->locals[c->nlocals++] = (Local){ name, n, k, expr, src_name };
 }
 void pop_local(CGCtx *c) { if (c->nlocals > 0) c->nlocals--; }
@@ -388,31 +393,27 @@ CE lower(CGCtx *c, Expr *e) {
         /* Build a snprintf into a static char buf in the prelude. */
         cgctx_open_prelude(c);
         int seq = c->buf_seq++;
-        /* Compute generous bufsize: 16 + 32 per expr part + literal len. */
-        size_t litlen = 0; int nexpr = 0;
-        for (int i = 0; i < e->interp.nparts; i++) {
-            if (e->interp.parts[i].is_expr) nexpr++;
-            else litlen += e->interp.parts[i].llen;
-        }
-        int bufsize = (int)(litlen + nexpr * 32 + 16);
-        if (bufsize < 64) bufsize = 64;
-        if (bufsize > 512) bufsize = 512;
-        fprintf(c->prelude, "static char ibuf%d[%d]; ", seq, bufsize);
-        /* Format string */
-        fprintf(c->prelude, "snprintf(ibuf%d, %d, \"", seq, bufsize);
-        /* args collected after */
+        /* Format string is built into `fmt` first, not straight into the
+         * prelude: the buffer must be sized from the *lowered* part types (a
+         * %s can be a 256-char notification body, a %d never exceeds 11), and
+         * lowering a nested interp writes its own decl to the prelude — mid
+         * fprintf that would land inside our format string literal. */
+        char fmt[1024]; size_t fn = 0;
+        size_t budget = 16;
+        #define FMTC(ch) do { if (fn < sizeof fmt - 1) fmt[fn++] = (ch); } while (0)
+        #define FMTS(s)  do { for (const char *_p = (s); *_p; _p++) FMTC(*_p); } while (0)
         CE args[16]; int nargs = 0;
         for (int i = 0; i < e->interp.nparts; i++) {
             InterpPart *p = &e->interp.parts[i];
             if (!p->is_expr) {
-                /* escape literal */
+                budget += p->llen;
                 for (size_t k = 0; k < p->llen; k++) {
                     unsigned char ch = (unsigned char)p->lit[k];
-                    if (ch == '%') { fputc('%', c->prelude); fputc('%', c->prelude); }
-                    else if (ch == '\\' || ch == '"') { fputc('\\', c->prelude); fputc(ch, c->prelude); }
-                    else if (ch == '\n') fputs("\\n", c->prelude);
-                    else if (ch < 32) fprintf(c->prelude, "\\x%02x", ch);
-                    else fputc(ch, c->prelude);
+                    if (ch == '%') { FMTC('%'); FMTC('%'); }
+                    else if (ch == '\\' || ch == '"') { FMTC('\\'); FMTC(ch); }
+                    else if (ch == '\n') FMTS("\\n");
+                    else if (ch < 32) { char t[8]; snprintf(t, sizeof t, "\\x%02x", ch); FMTS(t); }
+                    else FMTC(ch);
                 }
                 continue;
             }
@@ -420,13 +421,22 @@ CE lower(CGCtx *c, Expr *e) {
             if (nargs >= 16) { diag_error(e->loc, "codegen: too many interp args"); c->failed = 1; break; }
             args[nargs++] = ce;
             switch (ce.type) {
-            case T_INT: case T_BOOL: fputs("%d", c->prelude); break;
-            case T_FLOAT:            fputs("%g", c->prelude); break;
-            case T_COLOR:            fputs("#%08x", c->prelude); break;
-            case T_STR: default:     fputs("%s", c->prelude); break;
+            case T_INT: case T_BOOL: FMTS("%d");    budget += 12;  break;
+            case T_FLOAT:            FMTS("%g");    budget += 24;  break;
+            case T_COLOR:            FMTS("#%08x"); budget += 10;  break;
+            /* A string part is the only unbounded one — an OSD body wraps to
+             * OSD_MAX_BODY_LINES × OSD_BODY_MAX. Budget for a real one. */
+            case T_STR: default:     FMTS("%s");    budget += 288; break;
             }
         }
-        fputs("\"", c->prelude);
+        fmt[fn] = 0;
+        #undef FMTC
+        #undef FMTS
+        int bufsize = (int)budget;
+        if (bufsize < 64) bufsize = 64;
+        if (bufsize > 2048) bufsize = 2048;
+        fprintf(c->prelude, "static char ibuf%d[%d]; ", seq, bufsize);
+        fprintf(c->prelude, "snprintf(ibuf%d, %d, \"%s\"", seq, bufsize, fmt);
         for (int i = 0; i < nargs; i++) {
             fputs(", ", c->prelude);
             if (args[i].type == T_INT || args[i].type == T_BOOL)

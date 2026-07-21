@@ -431,6 +431,28 @@ void fill_rounded_clipped(uint32_t *px, int sw, int sh,
     }
 }
 
+/* The rect, but the round-over only applies to the part below `split`. A slab
+ * sliding down through a bar's strip must stay square there: the bar cutout
+ * has already nulled those rows, so a quarter-disc carved into them shows
+ * wallpaper straight through the bar. The radius grows on its own as the
+ * past-split strip exceeds 2r (fill_rect_rounded clamps r to half the smaller
+ * dim), so the corner fades in exactly as the body emerges. */
+void fill_rect_rounded_split(uint32_t *px, int sw, int sh,
+                             int x, int y, int w, int h,
+                             int r_tl, int r_tr, int r_br, int r_bl,
+                             int split, uint32_t c) {
+    if (w <= 0 || h <= 0) return;
+    if (y >= split) {
+        fill_rect_rounded(px, sw, sh, x, y, w, h, r_tl, r_tr, r_br, r_bl, c);
+    } else if (y + h <= split) {
+        fill_rect_rounded(px, sw, sh, x, y, w, h, r_tl, r_tr, 0, 0, c);
+    } else {
+        fill_rect_rounded(px, sw, sh, x, y, w, split - y, r_tl, r_tr, 0, 0, c);
+        fill_rect_rounded(px, sw, sh, x, split, w, h - (split - y),
+                          0, 0, r_br, r_bl, c);
+    }
+}
+
 void fill_rect_rounded_border(uint32_t *px, int sw, int sh,
                               int x, int y, int w, int h,
                               int r_tl, int r_tr, int r_br, int r_bl,
@@ -927,5 +949,30 @@ void draw_text(uint32_t *px, int sw, int sh, int x, int y,
             pen_x += SC(f->px_size / 2);
         }
     }
+}
+
+void draw_text_elided(uint32_t *px, int sw, int sh, int x, int y,
+                      const Font *f, const char *s, int max_w, uint32_t fg) {
+    if (max_w <= 0) return;
+    if (text_width(f, s) <= max_w) { draw_text(px, sw, sh, x, y, f, s, fg); return; }
+    int budget = max_w - text_width(f, "\xe2\x80\xa6");
+    if (budget < 0) budget = 0;
+    /* Cut on a codepoint boundary — a split UTF-8 sequence would render as
+     * replacement junk. */
+    int n = 0, wpx = 0;
+    while (s[n]) {
+        uint32_t cp; int k = utf8_decode(s + n, &cp);
+        if (!k) break;
+        const Glyph *g = font_find(f, cp);
+        int gw = g ? g->adv : f->px_size / 2;
+        if (wpx + gw > budget) break;
+        n += k; wpx += gw;
+    }
+    char buf[288];
+    if (n > (int)sizeof buf - 4) n = (int)sizeof buf - 4;
+    memcpy(buf, s, n);
+    memcpy(buf + n, "\xe2\x80\xa6", 3);
+    buf[n + 3] = 0;
+    draw_text(px, sw, sh, x, y, f, buf, fg);
 }
 

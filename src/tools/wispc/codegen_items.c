@@ -137,7 +137,18 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
         } else {
             fprintf(o, "%sint tw = %s;\n", indent, vertical ? "w->h" : "w->w");
         }
-        fprintf(o, "%sst[%d].vis = 1;\n", indent, it->st_base);
+        /* `visible` gates a slider the same way it gates a text item — an OSD
+         * slab without progress must not leave an empty track behind. */
+        Expr *vise = widget_prop(wd, "visible");
+        if (vise) {
+            CE v = lower(ctx, vise);
+            cgctx_flush_prelude(ctx, o, indent);
+            fprintf(o, "%sint vis = !!(%s);\n", indent, v.text);
+        } else {
+            fprintf(o, "%sint vis = 1;\n", indent);
+        }
+        fprintf(o, "%sif (!vis) tw = 0;\n", indent);
+        fprintf(o, "%sst[%d].vis = vis;\n", indent, it->st_base);
         fprintf(o, "%sst[%d].tw  = tw;\n", indent, it->st_base);
         fprintf(o, "%sst[%d].h   = 0;\n", indent, it->st_base);
         fprintf(o, "%sst[%d].pad = %d;\n", indent, it->st_base, pad);
@@ -156,7 +167,7 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
     Expr *vise  = widget_prop(wd, "visible");
     Expr *widthe= widget_prop(wd, vertical ? "height" : "width");
     int   padE  = eval_int(widget_prop(wd, "pad"), 0);
-    int   blines= eval_int(widget_prop(wd, "body_lines"), 1);
+    Expr *bline = widget_prop(wd, "body_lines");
     int   pad_xm= eval_int(widget_prop(wd, "pad_x"), 0);
     Align al    = eval_align(widget_prop(wd, "align"));
 
@@ -256,12 +267,20 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
         fprintf(o, "%s#endif\n", indent);
     }
 
+    /* body_lines lowers as an expression, not a constant: an OSD slab's line
+     * count is per-slab ($nbody), and a static max would center a one-line
+     * notification as if it were the tallest one. */
+    if (bline) { CE cb = lower(ctx, bline); cb = coerce_to_int(ctx, cb);
+                 cgctx_flush_prelude(ctx, o, indent);
+                 fprintf(o, "%sint __bl = %s; if (__bl < 1) __bl = 1;\n", indent, cb.text); }
+    else fprintf(o, "%sint __bl = 1;\n", indent);
+
     if (widthe) {
         CE wd_ce = lower(ctx, widthe); wd_ce = coerce_to_int(ctx, wd_ce);
         cgctx_flush_prelude(ctx, o, indent);
         fprintf(o, "%sint tw = %s;\n", indent, wd_ce.text);
     } else if (vertical) {
-        fprintf(o, "%sint tw = f->line_h * %d;\n", indent, blines);
+        fprintf(o, "%sint tw = f->line_h * __bl;\n", indent);
     } else {
         fprintf(o, "%sint tw = 0;\n", indent);
         fprintf(o, "%sif (cp)  tw += cp_width(f, cp);\n", indent);
@@ -282,7 +301,7 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
         if (pad_xm > 0) fprintf(o, "%stw += %d;\n", indent, 2 * pad_xm);
     }
     /* h: multi-line slab height when body_lines > 1. Default 0 → use tw advance. */
-    fprintf(o, "%sint __h = %d > 1 ? (%d * f->line_h) : 0;\n", indent, blines, blines);
+    fprintf(o, "%sint __h = __bl > 1 ? (__bl * f->line_h) : 0;\n", indent);
 
     /* press_bg: optional widget prop. Renders in place of bg while this st
      * index is the surface's __pressed_st (pointer pressed-and-still-over). */
@@ -324,7 +343,7 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
                } else fprintf(o, "%sst[%s].ch = %s;\n", indent, idx_expr, cc.text); }
     fprintf(o, "%sst[%s].pad = %d;\n", indent, idx_expr, padE);
     fprintf(o, "%sst[%s].align = %d;\n", indent, idx_expr, (int)al);
-    fprintf(o, "%sst[%s].body_lines = %d;\n", indent, idx_expr, blines);
+    fprintf(o, "%sst[%s].body_lines = __bl;\n", indent, idx_expr);
     if (al == ALIGN_CENTER) {
         fprintf(o, "%sif (vis) { center_total += (__h > 0 ? __h : tw) + %d; __center_trail_pad = %d; }\n", indent, padE, padE);
     }
@@ -369,7 +388,7 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
         CE c_thc = color_ce(ctx, widget_prop(wd, "thumb_color"),  "0u");
         CE c_thb = color_ce(ctx, widget_prop(wd, "thumb_border"), "0u");
         CE c_shc = color_ce(ctx, widget_prop(wd, "shadow"),       "0u");
-        fprintf(o, "    {\n");
+        fprintf(o, "    if (st[%d].vis) {\n", it->st_base);
         fprintf(o, "%sint tw = st[%d].tw, pad = st[%d].pad;\n", indent, it->st_base, it->st_base);
         fprintf(o, "%sint pos;\n", indent);
         fprintf(o, "%sswitch (st[%d].align) {\n", indent, it->st_base);
@@ -395,7 +414,21 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
                 fprintf(o, "%sint rx = pos, ry = __reg_y, rw = tw, rh = __reg_h;\n", indent);
         }
         cgctx_flush_prelude(ctx, o, indent);
-        fprintf(o, "%sdouble __val = (double)(mut_%s);\n", indent, vmut[0] ? vmut : "0");
+        /* `value` is any expression in 0..value_max — a mut (0..1, the default
+         * max) or a $-binding like an OSD slab's 0..100 progress. */
+        double vmax = eval_double(widget_prop(wd, "value_max"), 1.0);
+        if (vmax <= 0) vmax = 1.0;
+        char vexpr[256];
+        if (vmut[0]) {
+            snprintf(vexpr, sizeof vexpr, "mut_%s", vmut);
+        } else if (ve) {
+            CE v = coerce_to_int(ctx, lower(ctx, ve));
+            snprintf(vexpr, sizeof vexpr, "%s", v.text);
+            cgctx_flush_prelude(ctx, o, indent);
+        } else {
+            snprintf(vexpr, sizeof vexpr, "0");
+        }
+        fprintf(o, "%sdouble __val = (double)(%s) / %f;\n", indent, vexpr, vmax);
         fprintf(o, "%sdraw_slider(sl->px, w->w, w->h, rx, ry, rw, rh, %d, __val, (uint32_t)(%s), (uint32_t)(%s),\n",
                 indent, sl_vert, c_tbg.text, c_tfg.text);
         fprintf(o, "%s    &(SliderStyle){ .thumb_size=%d, .thumb_shape=%d, .thumb_radius=%d,"
@@ -542,7 +575,9 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
         /* y_offset shifts the cell vertically post-centering. Useful for cells
          * that should overlap a sibling (e.g. HUD buttons sitting halfway on
          * the bar — negative offset pulls them up out of the centered slot). */
-        int y_off = eval_int(widget_prop(wd, "y_offset"), 0);
+        /* Lowers as an expression: an OSD slab's text block shifts by whether
+         * that slab has a progress band, which no constant can express. */
+        Expr *yoffe = widget_prop(wd, "y_offset");
         int x_off = eval_int(widget_prop(wd, "x_offset"), 0);
         int pad_x = eval_int(widget_prop(wd, "pad_x"), 0);
         int pad_y = eval_int(widget_prop(wd, "pad_y"), 0);
@@ -552,14 +587,18 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
         int shblur = eval_int(widget_prop(wd, "shadow_blur"), 0);
         int shspread = eval_int(widget_prop(wd, "shadow_spread"), 0);
         fprintf(o, "%s    int x = pos + %d;\n", indent, x_off);
+        if (yoffe) { CE cy = lower(ctx, yoffe); cy = coerce_to_int(ctx, cy);
+                     cgctx_flush_prelude(ctx, o, indent);
+                     fprintf(o, "%s    int __yoff = %s;\n", indent, cy.text); }
+        else fprintf(o, "%s    int __yoff = 0;\n", indent);
         if (heighte) {
             /* Cross-axis height computed in the measure pass (st.ch), so a
              * `tag.active ? 34 : 30` sizes per-item; centered in the region. */
             fprintf(o, "%s    int __ch = st[%s].ch;\n", indent, idx_expr);
-            fprintf(o, "%s    int __by = __reg_y + (__reg_h - __ch) / 2 + %d;\n", indent, y_off);
+            fprintf(o, "%s    int __by = __reg_y + (__reg_h - __ch) / 2 + __yoff;\n", indent);
             fprintf(o, "%s    int __bh = __ch;\n", indent);
         } else {
-            fprintf(o, "%s    int __by = __reg_y + %d;  /* slab y origin */\n", indent, y_off);
+            fprintf(o, "%s    int __by = __reg_y + __yoff;  /* slab y origin */\n", indent);
             fprintf(o, "%s    int __bh = __h > 0 ? __h : __reg_h;\n", indent);
         }
         /* Slab x/width: explicit `width` or inner `pad_x` span the full cell;
@@ -606,10 +645,13 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
         /* Fixed-height widget: vertically center the glyph row inside the cell.
          * Free-height widget keeps the surface-row baseline (`y`). pad_y nudges
          * the content row down inside the slab. */
+        /* Center the whole line BLOCK, not one line: a multi-line widget
+         * (body_lines > 1) otherwise hangs half its text below the cell. */
         if (heighte)
-            fprintf(o, "%s    int __ty = __by + (__bh - f->line_h) / 2 + %d;\n", indent, pad_y);
+            fprintf(o, "%s    int __ty = __by + (__bh - f->line_h * body_lines) / 2 + %d;\n", indent, pad_y);
         else
-            fprintf(o, "%s    int __ty = (__h > 0 ? __by + 2 : y) + %d;\n", indent, pad_y);
+            fprintf(o, "%s    int __ty = (__h > 0 ? __by + (__reg_h - __h) / 2 : y) + %d;\n", indent, pad_y);
+        fprintf(o, "%s    if (__ty < __reg_y) __ty = __reg_y;\n", indent);
         /* Centering: when width is fixed, compute the actual content width and
          * offset x so icon+text sits in the middle of the cell (within pad_x). */
         if (has_fixed_w) {
@@ -630,7 +672,13 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
         fprintf(o, "%s            const char *__nl = __p; while (*__nl && *__nl != '\\n') __nl++;\n", indent);
         fprintf(o, "%s            char __tmp[256]; int __L = (int)(__nl - __p); if (__L > 255) __L = 255;\n", indent);
         fprintf(o, "%s            memcpy(__tmp, __p, __L); __tmp[__L] = 0;\n", indent);
-        fprintf(o, "%s            draw_text(sl->px, w->w, w->h, x, __ty + __ln * f->line_h, f, __tmp, fg);\n", indent);
+        /* `elide` clamps each line to whatever room is left in the region —
+         * without it a long summary just runs off the slab. */
+        if (widget_flag(wd, "elide"))
+            fprintf(o, "%s            draw_text_elided(sl->px, w->w, w->h, x, __ty + __ln * f->line_h, f, __tmp, __reg_x + __reg_w - x - %d, fg);\n",
+                    indent, pad_x > 0 ? pad_x : 0);
+        else
+            fprintf(o, "%s            draw_text(sl->px, w->w, w->h, x, __ty + __ln * f->line_h, f, __tmp, fg);\n", indent);
         fprintf(o, "%s            __ln++; if (!*__nl) break; __p = __nl + 1;\n", indent);
         fprintf(o, "%s        }\n", indent);
         fprintf(o, "%s    }\n", indent);

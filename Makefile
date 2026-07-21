@@ -69,8 +69,10 @@ FONT := $(patsubst FONT=%,%,$(filter FONT=%,$(PERSISTED_TAG)))
 endif
 endif
 
-# Still no selector (fresh build/, no tag) → canonical default.
-WISP ?= configs/dwlarp.wisp
+# Still no selector (fresh build/, no tag) → canonical default. bee is what
+# sync.sh installs, so a tagless tree (post-clean, or after `make check` ran
+# with no prior tag to restore) rebuilds the preset that's actually running.
+WISP ?= configs/bee.wisp
 
 # Build knobs declared in the .wisp itself as `//! key = value` directive
 # comments (plain // comments to wispc, so the compiler never sees them).
@@ -248,7 +250,7 @@ $(BUILD)/gen_outputs.o:  $(GENDIR)/gen_outputs.c  $(HDR) | $(BUILD)
 	$(CC) $(CFLAGS) $(GEN_WNO) -c $< -o $@
 # gen_spawn.c does `#include "osd.c"` to inline the runtime — make the include
 # visible to make's dep graph so edits to osd.c actually trigger a rebuild.
-$(BUILD)/gen_spawn.o:    $(GENDIR)/gen_spawn.c    $(SRCDIR)/osd.c $(SRCDIR)/osd_br.c $(SRCDIR)/osd_float.c $(SRCDIR)/osd_pill.c $(HDR) | $(BUILD)
+$(BUILD)/gen_spawn.o:    $(GENDIR)/gen_spawn.c    $(SRCDIR)/osd.c $(SRCDIR)/osd_pill.c $(HDR) | $(BUILD)
 	$(CC) $(CFLAGS) $(GEN_WNO) -c $< -o $@
 
 $(BUILD)/wispctl: $(SRCDIR)/wispctl.c | $(BUILD)

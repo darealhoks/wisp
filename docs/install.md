@@ -68,7 +68,7 @@ All are optional. A variable given on the make command line beats a directive:
     make FONT_BACKEND=freetype FONT=/usr/share/fonts/foo.ttf
 
 With neither, the build falls back to the last selection recorded in
-`build/.build-tag`, and then to `configs/dwlarp.wisp` with the `baked` backend.
+`build/.build-tag`, and then to `configs/bee.wisp` with the `baked` backend.
 Changing any knob wipes `build/` before compiling, because objects from the
 previous selection are not compatible.
 
@@ -77,8 +77,8 @@ previous selection are not compatible.
 `WISP` selects the `.wisp` file that gets compiled into the daemon. There is no
 runtime config file. Two are real presets:
 
-    configs/dwlarp.wisp   the Makefile default
-    configs/bee.wisp      the config this rice actually runs
+    configs/bee.wisp      the Makefile default, and the config this rice actually runs
+    configs/dwlarp.wisp   a second full preset (dwl-shaped bar)
 
 Your own configs go in `~/.config/wisp/`; `wispctl rebuild <name>` finds them
 there by name (and falls back to the examples in `share/wisp/configs`).

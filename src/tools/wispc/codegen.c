@@ -500,6 +500,12 @@ static void emit_overrides(FILE *o, Unit *u, CGCtx *ctx) {
             Expr *e = surface_prop(osd, map[i].prop);
             if (!e) continue;
             if (map[i].is_color) {
+                /* A `:warn`/`:mute` overlay wraps the base value in a ternary
+                 * no #define can hold. The macro feeds the legacy pill path,
+                 * which wants the base (default-state) color — unwrap the
+                 * overlay's else branch back down to it. */
+                while (e->kind == EX_TERN) e = e->tern.e;
+                if (e->kind != EX_COLOR && e->kind != EX_IDENT) continue;
                 fprintf(o, "#undef %s\n#define %s 0x%08xu\n",
                         map[i].macro, map[i].macro,
                         (unsigned)eval_color_ctx(ctx, e, 0));

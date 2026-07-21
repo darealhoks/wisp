@@ -144,10 +144,13 @@ static int fade_u(double f) {
 void wall_fade_frame(Widget *w) {
     if (!w->s.wall.fade_from || !w->s.wall.fade_to) return;
     if (widget_pw(w) != w->s.wall.fade_w || widget_ph(w) != w->s.wall.fade_h) return;
+    int u = fade_u(w->s.wall.fade);
+    if (u == w->s.wall.fade_u_last) return;   /* quantized step unchanged: skip the full-buffer compose */
     BufSlot *s = widget_free_slot(w);
     if (!s) return;   /* both slots pending release; next tick */
     wall_compose(s->px, w->s.wall.fade_from, w->s.wall.fade_to,
-                 w->s.wall.fade_w, w->s.wall.fade_h, fade_u(w->s.wall.fade));
+                 w->s.wall.fade_w, w->s.wall.fade_h, u);
+    w->s.wall.fade_u_last = u;
     widget_attach(w, s, 1);
 }
 
@@ -226,6 +229,7 @@ static void wall_start_fade(Widget *w, const char *oldpath) {
     w->s.wall.fade_w = pw;
     w->s.wall.fade_h = ph;
     w->s.wall.fade = 0;
+    w->s.wall.fade_u_last = -1;
     widget_ensure_pool(w, 2);
     w->want_pool_free = 0;
     anim_start_num(&w->s.wall.fade, ANIM_T_FLOAT, 0, 1, WALL_FADE_MS,

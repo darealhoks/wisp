@@ -130,6 +130,31 @@ static void scan_string(Lexer *L, Tok *t) {
     size_t len = (size_t)(L->p - start);
     if (*L->p != '"') diag_error(loc, "unterminated string");
     else advance(L, 1);
+
+    /* Decode escapes. The scan above only steps OVER a backslash pair so that
+     * \" can't end the string — without this the backslash and its letter
+     * survive into the output as two literal characters. Decoding shrinks, so
+     * it happens in place inside this literal's own bytes (src is the mutable
+     * read_file buffer, and these bytes belong to no other token). */
+    if (memchr(start, '\\', len)) {
+        char *w = (char *)start;
+        const char *r = start, *end = start + len;
+        while (r < end) {
+            if (*r != '\\' || r + 1 >= end) { *w++ = *r++; continue; }
+            r++;
+            switch (*r) {
+            case 'n':  *w++ = '\n'; r++; break;
+            case 't':  *w++ = '\t'; r++; break;
+            case 'r':  *w++ = '\r'; r++; break;
+            case '0':  *w++ = '\0'; r++; break;
+            case '\\': case '"': case '\'': *w++ = *r++; break;
+            /* Unknown escape keeps both bytes — a Pango-ish "\d" in an exec
+             * string stays what the author typed. */
+            default:   *w++ = '\\'; *w++ = *r++; break;
+            }
+        }
+        len = (size_t)(w - start);
+    }
     t->kind = TK_STRING;
     t->loc  = loc;
     t->s    = start; t->len = len;

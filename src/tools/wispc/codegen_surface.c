@@ -47,11 +47,12 @@ static void emit_hit_snapshot(FILE *o, const char *nm) {
             nm, nm, nm, nm, nm, nm);
 }
 
-/* Foundation slice: emit a skeleton render for a `spawned_by = osd` template.
- * Iterates the OSD slab ring, pushes $-bindings (summary/body/icon/pct/muted)
- * for the current slab, and calls emit_item_measure/emit_item_draw for each
- * declared widget. Output is `render_<nm>_skel(Widget *w)` — unused for now;
- * a later session reroutes osd.c's lifecycle to call it. */
+/* The renderer for a `spawned_by = osd` template: iterates the slab ring,
+ * pushes the per-slab $-bindings (summary/body/icon/pct/muted/...) and runs
+ * each declared widget through emit_item_measure/emit_item_draw. Emitted as
+ * `render_<nm>(Widget *w)`; osd_render() calls it. The runtime owns time
+ * (osd_slab_geom) and the bar junction (osd_bar_split); everything else about
+ * where a pixel lands comes from the declaration. */
 int emit_spawned_osd_skeleton(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     BarItem items[64]; int err = 0;
     int nitems = collect_bar_items(sur->surface.items, sur->surface.n,
@@ -68,45 +69,103 @@ int emit_spawned_osd_skeleton(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
         if (widget_is_slider(items[i].w)) items[i].slider_idx = n_sliders++;
     assign_handler_idx(items, nitems);
 
-    /* Per-skeleton hit table — sized but unused (no click dispatch wired). */
-    fprintf(o, "static int __%s_skel_nhit;\n", nm);
-    fprintf(o, "typedef struct { int x, y, w, h; int kind; int arg; int slider_idx; int st_idx; } %s_skel_Hit;\n", nm);
-    fprintf(o, "static %s_skel_Hit __%s_skel_hits_buf[64];\n", nm, nm);
-    fprintf(o, "static int __%s_skel_pressed_st = -1;\n", nm);
-    fprintf(o, "static Widget *__%s_skel_pressed_w;\n", nm);
+    /* Per-surface hit table — sized but unused (no click dispatch wired;
+     * osd.c's dismiss-on-click owns the whole slab). */
+    fprintf(o, "static int __%s_nhit;\n", nm);
+    fprintf(o, "typedef struct { int x, y, w, h; int kind; int arg; int slider_idx; int st_idx; } %s_Hit;\n", nm);
+    fprintf(o, "static %s_Hit __%s_hits_buf[64];\n", nm, nm);
+    fprintf(o, "static int __%s_pressed_st = -1;\n", nm);
+    fprintf(o, "static Widget *__%s_pressed_w;\n", nm);
 
-    fprintf(o, "__attribute__((unused))\n");
-    fprintf(o, "static void render_%s_skel(Widget *w) {\n", nm);
+    /* Fallbacks only — a bg/border that is an expression (a `:warn` overlay)
+     * lowers per-slab instead; evaluating it here would demand a literal. */
+    uint32_t slab_bg   = surface_prop(sur, "bg")     ? 0 : 0xff000000;
+    uint32_t slab_bord = eval_color_ctx(ctx, surface_prop(sur, "border"), 0);
+    int slab_bord_w    = eval_int(surface_prop(sur, "border_width"), 0);
+    int slab_radius    = eval_int(surface_prop(sur, "radius"), 0);
+    int slab_margin    = eval_int(surface_prop(sur, "margin"), 0);
+    int slab_w         = eval_int(surface_prop(sur, "width"), 0);
+    int sep_frac       = eval_int(surface_prop(sur, "separator_frac"), 0);
+    uint32_t sep_col   = eval_color_ctx(ctx, surface_prop(sur, "separator"), 0);
+    int fillet_r       = eval_int(surface_prop(sur, "fillet_r"), 0);
+
+    /* Anchor drives the whole stack layout. An edge in the mask with margin 0
+     * means the chain sits FLUSH against that screen edge: no round-over, no
+     * border, and (for a two-edge corner) a fillet flaring into it. A margin
+     * lifts the chain off every edge, so nothing is flush. */
+    int amask = eval_anchor(surface_prop(sur, "anchor"));
+    if (amask < 0) amask = 1;
+    int flush = slab_margin > 0 ? 0 : amask;
+    int fl_t = !!(flush & 1), fl_b = !!(flush & 2),
+        fl_l = !!(flush & 4), fl_r = !!(flush & 8);
+    int up = !!(amask & 2);   /* bottom-anchored: chain grows upward */
+    /* Corner rounds only where the chain faces the desktop on both its edges. */
+    int r_tl = (!fl_t && !fl_l) ? slab_radius : 0;
+    int r_tr = (!fl_t && !fl_r) ? slab_radius : 0;
+    int r_br = (!fl_b && !fl_r) ? slab_radius : 0;
+    int r_bl = (!fl_b && !fl_l) ? slab_radius : 0;
+
+    fprintf(o, "void render_%s(Widget *w) {\n", nm);
     fputs("    if (!w->configured || w->w <= 0 || w->h <= 0) return;\n", o);
+    /* Nothing left in the ring: hand back a transparent buffer (never NULL —
+     * see osd_attach_empty) and let the pool go, so idle costs nothing. */
+    fputs("    if (!w->s.osd.items[0].active) {\n"
+          "        if (w->s.osd.has_pixels) osd_stack_attach_empty(w);\n"
+          "        return;\n    }\n", o);
+    fputs("    int __n = osd_slab_layout(w);\n", o);
+    fputs("    osd_stack_input_region(w);\n", o);
     fputs("    widget_ensure_pool(w, 2);\n", o);
     fputs("    BufSlot *sl = widget_free_slot(w);\n", o);
     fputs("    if (!sl) return;\n", o);
     fputs("    clear_buf(sl->px, w->w, w->h, 0);\n", o);
     fprintf(o, "    const Font *f = &font_%d; (void)f;\n",
             eval_int(surface_prop(sur, "font_size"), 14));
-    int slab_h_dflt = eval_int(surface_prop(sur, "height"), 60);
-    int slab_gap    = eval_int(surface_prop(sur, "gap"), 0);
-    fprintf(o, "    int __slab_h = %d, __slab_gap = %d;\n", slab_h_dflt, slab_gap);
+    fprintf(o, "    int __slab_w = %d; if (__slab_w <= 0) __slab_w = w->w;\n", slab_w);
+    /* First/last *visible* slab: the chain rounds only its outer corners.
+     * __chain_h is the whole chain's current extent — a bottom-anchored stack
+     * is laid out from it, and both anchors use it to ramp the fillets. */
+    fputs("    int __first = -1, __last = -1, __chain_h = 0;\n", o);
+    fputs("    for (int i = 0; i < __n; i++) { OsdSlabGeom g; osd_slab_geom(w, i, &g);\n"
+          "        if (g.vh > 0) { if (__first < 0) __first = i; __last = i;\n"
+          "            __chain_h = g.y + g.vh; } }\n"
+          "    (void)__chain_h;\n", o);
+    fprintf(o, "    int __chain_x = %s;\n",
+            (amask & 8) ? "w->w - __slab_w" : (amask & 4) ? "0" : "(w->w - __slab_w) / 2");
+    fprintf(o, "    int __split = %s;\n", fl_t ? "osd_bar_split()" : "0");
+    fputs("    int __ctop = w->h, __cbot = 0;\n", o);
+    fputs("    uint32_t __ctop_bg = 0, __cbot_bg = 0;\n", o);
+    fputs("    (void)__ctop_bg; (void)__cbot_bg;\n", o);
     /* Slab loop. MAX_OSDS comes from src/wisp.h via the included wisp.h header. */
-    fputs("    int __y_acc = 0;\n", o);
-    fputs("    for (int __sl = 0; __sl < MAX_OSDS; __sl++) {\n", o);
-    fputs("        if (!w->s.osd.items[__sl].active) continue;\n", o);
-    fputs("        int __reg_x = 0, __reg_y = __y_acc, __reg_w = w->w, __reg_h = __slab_h;\n", o);
+    fputs("    for (int __sl = 0; __sl < __n; __sl++) {\n", o);
+    fputs("        OsdSlabGeom __g; osd_slab_geom(w, __sl, &__g);\n", o);
+    fputs("        if (__g.vh <= 0) continue;\n", o);
+    /* The leading slab slides: drawn at full settled height but offset up by
+     * the not-yet-emerged remainder, so body and content slide as one and the
+     * overflow clips against the buffer top. Lower slabs grow in place. */
+    if (up)
+        /* Bottom-anchored: the chain is pinned to its bottom edge, so every
+         * slab keeps its top at the running offset measured up from there and
+         * grows in place; the emerging slab's overflow clips off-screen. */
+        fprintf(o, "        int __reg_x = __chain_x, __reg_y = w->h - %d - __chain_h + __g.y,"
+                   " __reg_w = __slab_w, __reg_h = __g.vh;\n", slab_margin);
+    else {
+        fputs("        int __slide = (__sl == __first) ? __g.vh - __g.sh : 0;\n", o);
+        fprintf(o, "        int __reg_x = __chain_x, __reg_y = %d + __g.y + __slide,"
+                   " __reg_w = __slab_w, __reg_h = (__sl == __first) ? __g.sh : __g.vh;\n", slab_margin);
+    }
     fputs("        (void)__reg_x; (void)__reg_y; (void)__reg_w; (void)__reg_h;\n", o);
-    /* `y` is the text baseline cursor for horizontally-laid items; matches
-     * the formula in emit_generated_surface so emit_item_draw can reference
-     * it as a free variable. */
-    fputs("        int y = (__reg_h - f->line_h) / 2 + __reg_y; (void)y;\n", o);
-    fputs("        int __cox = __reg_x, __coy = __reg_y, __cws = __reg_w, __chs = __reg_h;\n", o);
-    fputs("        (void)__cox; (void)__coy; (void)__cws; (void)__chs;\n", o);
     /* Per-slab transient buffers for $pct → "42" string interpolation. */
     fputs("        char __pct_buf[16]; snprintf(__pct_buf, sizeof __pct_buf, \"%d\", w->s.osd.items[__sl].progress);\n", o);
 
     /* Push $-bindings. src_name slot is the type-tag: "str" → T_STR, "int" → T_INT. */
     push_local(ctx, "summary", 7, LB_DOLLAR_BIND,
                "w->s.osd.items[__sl].summary", "str");
+    /* Wrapped, not raw: osd_slab_layout already broke the body to the slab's
+     * text column, and a widget's body_lines renderer splits on "\n". */
     push_local(ctx, "body", 4, LB_DOLLAR_BIND,
-               "w->s.osd.items[__sl].body", "str");
+               "osd_slab_body(__sl)", "str");
+    push_local(ctx, "nbody", 5, LB_DOLLAR_BIND,
+               "osd_slab_nbody(__sl)", "int");
     push_local(ctx, "icon", 4, LB_DOLLAR_BIND,
                "w->s.osd.items[__sl].icon_cp", "int");
     push_local(ctx, "pct", 3, LB_DOLLAR_BIND,
@@ -115,6 +174,63 @@ int emit_spawned_osd_skeleton(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
                "w->s.osd.items[__sl].muted", "int");
     push_local(ctx, "urgency", 7, LB_DOLLAR_BIND,
                "w->s.osd.items[__sl].urgency", "int");
+    /* $pct is the display string, $progress the 0..100 number a slider wants. */
+    push_local(ctx, "progress", 8, LB_DOLLAR_BIND,
+               "w->s.osd.items[__sl].progress", "int");
+    /* Truthy derivations of `muted`, so `:mute` / `:warn` work with the same
+     * boolean-field mechanism the for-cell pseudos use. */
+    push_local(ctx, "mute", 4, LB_DOLLAR_BIND,
+               "(w->s.osd.items[__sl].muted == 1)", "int");
+    push_local(ctx, "warn", 4, LB_DOLLAR_BIND,
+               "(w->s.osd.items[__sl].muted == 2)", "int");
+
+    /* Slab body, drawn before the widgets that sit on it. Colors lower as
+     * expressions, not constants — a `:warn` pseudo makes them per-slab. */
+    {
+        CE cbg = {0};
+        Expr *bge = surface_prop(sur, "bg");
+        if (bge) cbg = lower(ctx, bge);
+        Expr *bde = surface_prop(sur, "border");
+        CE cbd = {0};
+        if (bde) cbd = lower(ctx, bde);
+        cgctx_flush_prelude(ctx, o, "        ");
+        char bgtxt[512];
+        if (bge) snprintf(bgtxt, sizeof bgtxt, "(uint32_t)(%s)", cbg.text);
+        else          snprintf(bgtxt, sizeof bgtxt, "0x%08xu", slab_bg);
+        /* The chain reads as one body: only its outer corners round, and the
+         * outline is a single pass after the loop over the accumulated extent
+         * (a per-slab border would draw seams across every join). */
+        fprintf(o, "        { int __rtl = (__sl == __first) ? %d : 0, __rtr = (__sl == __first) ? %d : 0;\n",
+                r_tl, r_tr);
+        fprintf(o, "          int __rbr = (__sl == __last) ? %d : 0, __rbl = (__sl == __last) ? %d : 0;\n",
+                r_br, r_bl);
+        fprintf(o, "          uint32_t __bg = %s;\n", bgtxt);
+        /* Flush under a bar: the round-over must not bite into the rows the
+         * bar cutout already nulled (wallpaper would show through the bar),
+         * so it only applies past the junction. __split is 0 everywhere else,
+         * which makes the call plain fill_rect_rounded. */
+        fputs("          fill_rect_rounded_split(sl->px, w->w, w->h, __reg_x, __reg_y, __reg_w,"
+              " __reg_h, __rtl, __rtr, __rbr, __rbl, __split, __bg);\n", o);
+        fputs("          if (__reg_y < __ctop) { __ctop = __reg_y; __ctop_bg = __bg; }\n", o);
+        fputs("          if (__reg_y + __reg_h > __cbot) { __cbot = __reg_y + __reg_h; __cbot_bg = __bg; }\n", o);
+        fputs("        }\n", o);
+        (void)cbd; (void)bde;
+    }
+    /* Hairline between two slabs that have both finished animating — drawn
+     * mid-slide it would slice across a body that is still moving. */
+    if (sep_frac > 0 && (sep_col & 0xff000000u)) {
+        fputs("        if (__sl > __first) { OsdSlabGeom __pg; osd_slab_geom(w, __sl - 1, &__pg);\n", o);
+        fprintf(o, "            if (__g.settled && __pg.settled) {\n"
+                   "                int __sw = __reg_w * %d / 100;\n"
+                   "                fill_rect(sl->px, w->w, w->h, __reg_x + (__reg_w - __sw) / 2,"
+                   " __reg_y, __sw, 1, 0x%08xu);\n            } }\n", sep_frac, sep_col);
+    }
+    /* `y` is the text baseline cursor for horizontally-laid items; matches
+     * the formula in emit_generated_surface so emit_item_draw can reference
+     * it as a free variable. */
+    fputs("        int y = (__reg_h - f->line_h) / 2 + __reg_y; (void)y;\n", o);
+    fputs("        int __cox = __reg_x, __coy = __reg_y, __cws = __reg_w, __chs = __reg_h;\n", o);
+    fputs("        (void)__cox; (void)__coy; (void)__cws; (void)__chs;\n", o);
 
     /* Measure + draw passes — same scaffolding as a real surface, just inside
      * the slab loop. center_pos math uses __reg_w as the extent. */
@@ -125,17 +241,13 @@ int emit_spawned_osd_skeleton(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     fputs("        int __center_trail_pad = 0; (void)__center_trail_pad;\n", o);
     fputs("        int end_extent = __reg_w;\n", o);
     /* Re-purpose nhit for this slab — overwritten each iteration. */
-    fprintf(o, "        __%s_skel_nhit = 0;\n", nm);
+    fprintf(o, "        __%s_nhit = 0;\n", nm);
 
-    /* Need a fake-but-uniform nm for emit_item_* — they use it to build
-     * __<nm>_skel_nhit / __<nm>_skel_hits_buf / __<nm>_skel_pressed_st names.
-     * The helpers we declared above use the skel-suffixed names; pass through. */
-    char skel_nm[128]; snprintf(skel_nm, sizeof skel_nm, "%s_skel", nm);
 
     fputs("        /* --- measure pass --- */\n", o);
     for (int i = 0; i < nitems; i++) {
-        emit_item_measure(o, &items[i], ctx, 0 /*horizontal*/, skel_nm, i);
-        if (ctx->failed) { for (int k = 0; k < 6; k++) pop_local(ctx); return 1; }
+        emit_item_measure(o, &items[i], ctx, 0 /*horizontal*/, nm, i);
+        if (ctx->failed) { for (int k = 0; k < 10; k++) pop_local(ctx); return 1; }
     }
     fputs("        if (center_total > __center_trail_pad) center_total -= __center_trail_pad;\n", o);
     fputs("        int start_pos = __reg_x;\n", o);
@@ -144,14 +256,63 @@ int emit_spawned_osd_skeleton(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     fputs("        (void)start_pos; (void)end_pos; (void)center_pos;\n", o);
     fputs("        /* --- draw pass --- */\n", o);
     for (int i = 0; i < nitems; i++)
-        emit_item_draw(o, &items[i], ctx, 0 /*horizontal*/, skel_nm);
+        emit_item_draw(o, &items[i], ctx, 0 /*horizontal*/, nm);
 
-    fputs("        __y_acc += __slab_h + __slab_gap;\n", o);
     fputs("    }\n", o);
-    fputs("    widget_attach(w, sl, 0);\n", o);
+
+    /* Outline the whole chain as one shape; sides on a flush screen edge stay
+     * open. Mid-slide overflow past the buffer is clipped by the primitives. */
+    if (slab_bord_w > 0 && (slab_bord & 0xff000000u))
+        fprintf(o, "    if (__cbot > __ctop)\n"
+                   "        fill_rect_rounded_border(sl->px, w->w, w->h, __chain_x, __ctop, __slab_w,"
+                   " __cbot - __ctop, %d, %d, %d, %d, %d, %d, %d, %d, %d, 0, 0x%08xu);\n",
+                r_tl, r_tr, r_br, r_bl, slab_bord_w,
+                !fl_t, !fl_r, !fl_b, !fl_l, slab_bord);
+
+    /* Fillets flare the chain into the two screen edges it is flush against,
+     * ramping with the emerged height so they never outsize the body. Only the
+     * bottom-right corner stack needs them today; the top-flush-under-a-bar
+     * variant's junction split is still osd.c's (see the plan).
+     * ponytail: hardcoded to the bottom|right armpits — generalize when a
+     * preset anchors bottom|left. */
+    if (fillet_r > 0 && fl_t && !fl_l && !fl_r) {
+        /* Flush under a bar: the armpits sit on the junction line and grow
+         * with the body's emerged-past-bar extent, so the chain reads as one
+         * shape with the bar instead of butting into it. Two regimes — a
+         * spawning chain ramps the arc proportionally across the whole reveal,
+         * a closing one holds it at full R until the chain has less than R
+         * left, so slab[0] sliding away over a full slab[1] doesn't snap.
+         * ponytail: emerged is the chain extent incl. gaps; both presets run
+         * gap = 0. Subtract the gaps if one ever doesn't. */
+        fprintf(o, "    if (__first >= 0) { int __em = __cbot - __split; if (__em < 0) __em = 0;\n"
+                   "        OsdSlabGeom __lg; osd_slab_geom(w, __first, &__lg);\n"
+                   "        int __fr;\n"
+                   "        if (__lg.closing) { __fr = __em < %d ? __em : %d; }\n"
+                   "        else { int __bd = __lg.sh - __split; if (__bd < 1) __bd = 1;\n"
+                   "               __fr = %d * __em / __bd; if (__fr > %d) __fr = %d; }\n"
+                   "        if (__fr > 0) {\n"
+                   "            fill_corner_fillet(sl->px, w->w, w->h, __chain_x, __split, __fr, 0, __ctop_bg);\n"
+                   "            fill_corner_fillet(sl->px, w->w, w->h, __chain_x + __slab_w, __split, __fr, 1, __ctop_bg);\n"
+                   "        } }\n",
+                fillet_r, fillet_r, fillet_r, fillet_r, fillet_r);
+    } else if (fillet_r > 0 && fl_b && fl_r) {
+        fprintf(o, "    { int __fr = (__cbot - __ctop) < %d ? (__cbot - __ctop) : %d;\n",
+                fillet_r, fillet_r);
+        fputs("      if (__fr > 0) {\n"
+              "          fill_corner_fillet(sl->px, w->w, w->h, w->w, __ctop, __fr, 3, __ctop_bg);\n"
+              "          fill_corner_fillet(sl->px, w->w, w->h, __chain_x, w->h, __fr, 3, __cbot_bg);\n", o);
+        if (slab_bord_w > 0 && (slab_bord & 0xff000000u))
+            fprintf(o, "          fill_corner_fillet_border(sl->px, w->w, w->h, w->w, __ctop, __fr, 3, %d, 0x%08xu);\n"
+                       "          fill_corner_fillet_border(sl->px, w->w, w->h, __chain_x, w->h, __fr, 3, %d, 0x%08xu);\n",
+                    slab_bord_w, slab_bord, slab_bord_w, slab_bord);
+        fputs("      } }\n", o);
+    }
+
+    fputs("    w->s.osd.has_pixels = 1;\n", o);
+    fputs("    widget_attach(w, sl, osd_slab_anim_pending(w));\n", o);
     fputs("}\n\n", o);
 
-    for (int k = 0; k < 6; k++) pop_local(ctx);
+    for (int k = 0; k < 10; k++) pop_local(ctx);
     return 0;
 }
 
@@ -1762,12 +1923,9 @@ int emit_surfaces(FILE *o, Unit *u, CGCtx *ctx) {
          * are handled inside emit_generated_surface. */
         if (d->kind == D_SURFACE && surface_prop(d, "spawned_by")) {
             fprintf(o, "void %.*s_apply_visibility(void) {}\n", (int)d->nlen, d->name);
-            /* Foundation slice (task #4): emit a skeleton render_<name>_skel
-             * that walks the OSD slab ring, sets up $-bindings, and calls
-             * through the normal widget measure/draw pipeline. Not wired in
-             * yet — osd.c still owns runtime rendering. This proves
-             * EX_DOLLAR + per-slab scoping compile end-to-end; a follow-up
-             * session swaps osd.c's render path to call this. */
+            /* `spawned_by = osd` lowers to render_<name>(): walks the slab
+             * ring, sets up the per-slab $-bindings, runs the normal widget
+             * measure/draw pipeline. osd_render() calls straight into it. */
             Expr *sb = surface_prop(d, "spawned_by");
             int is_osd = sb && sb->kind == EX_IDENT
                       && sb->ident.n == 3 && memcmp(sb->ident.s, "osd", 3) == 0;

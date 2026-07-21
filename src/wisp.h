@@ -294,6 +294,7 @@ struct Widget {
             double    fade;                 /* 0..1, anim target */
             uint32_t *fade_from, *fade_to;  /* pw*ph ARGB; NULL = no fade */
             int       fade_w, fade_h;       /* physical dims at fade start */
+            int       fade_u_last;          /* last composed 0..255 step; -1 = none */
         } wall;
     } s;
 };
@@ -369,6 +370,10 @@ void fill_rect(uint32_t *px, int sw, int sh, int x, int y, int w, int h, uint32_
 void fill_rect_rounded(uint32_t *px, int sw, int sh,
                        int x, int y, int w, int h,
                        int r_tl, int r_tr, int r_br, int r_bl, uint32_t c);
+void fill_rect_rounded_split(uint32_t *px, int sw, int sh,
+                             int x, int y, int w, int h,
+                             int r_tl, int r_tr, int r_br, int r_bl,
+                             int split, uint32_t c);
 /* Anti-aliased rounded-rectangle border (annular outline) of thickness `bw`,
  * following the outer rounded shape. Each side may be suppressed by passing
  * side_t/r/b/l = 0 (matches the 4-side fill_rect_clipped border the codegen
@@ -444,6 +449,11 @@ void draw_text(uint32_t *px, int sw, int sh, int x, int y,
                const Font *f, const char *s, uint32_t fg);
 void draw_glyph(uint32_t *px, int sw, int sh, int x, int y,
                 const Font *f, const Glyph *g, uint32_t fg);
+/* draw_text, but truncated to `max_w` px with a trailing ellipsis. Text whose
+ * length is attacker-controlled (a D-Bus notification summary) must not be
+ * allowed to run past its cell. */
+void draw_text_elided(uint32_t *px, int sw, int sh, int x, int y,
+                      const Font *f, const char *s, int max_w, uint32_t fg);
 
 /* ============================================================ */
 /* Status sampling (status.c)                                    */
@@ -564,6 +574,23 @@ int      osd_check_expiry(int64_t now);  /* returns ms-until-next or -1 */
 void     osd_tick(Widget *w);            /* compositor frame callback hook */
 void     osd_on_first_configure(Widget *w); /* restart spawn tweens pending on initial configure */
 void     osd_on_click(Widget *w, int x, int y);
+
+/* Runtime owns time, DSL owns layout: a generated slab renderer asks here for
+ * per-slab geometry instead of re-deriving the slide. `y` is relative to the
+ * stack origin (the backend adds its own margin/anchor offset), `sh` is the
+ * settled height, `vh` the animated visible height, `settled` is vh == sh. */
+typedef struct { int y, vh, sh, settled, closing; } OsdSlabGeom;
+int  osd_slab_layout(Widget *w);              /* wrap + measure + tween; → n_active */
+void osd_slab_geom(Widget *w, int i, OsdSlabGeom *g);
+const char *osd_slab_body(int i);             /* wrapped body, "\n"-joined */
+int  osd_slab_nbody(int i);                   /* wrapped line count */
+void osd_stack_input_region(Widget *w);
+void osd_stack_attach_empty(Widget *w);        /* transparent buffer + pool free */
+int  osd_slab_anim_pending(Widget *w);
+/* Screen row where a bar-flush stack stops being covered by the bar — the
+ * junction the generated renderer squares off above and hangs its fillets on.
+ * 0 when the stack isn't flush under a bar. */
+int  osd_bar_split(void);
 
 /* ============================================================ */
 /* Wallpaper (wall.c)                                            */

@@ -196,13 +196,6 @@
 #ifndef OSD_RADIUS
 #define OSD_RADIUS      10
 #endif
-#ifndef OSD_SEPARATOR
-#define OSD_SEPARATOR   0xff202020u
-#endif
-#ifndef OSD_SEPARATOR_FRAC
-/* Separator width as a fraction of OSD_W (×100, so 80 == 80%). */
-#define OSD_SEPARATOR_FRAC 80
-#endif
 #define OSD_BORDER_CRIT 0xffffffffu
 #define OSD_BORDER_MUTE 0xffa04050u
 #define OSD_BG_MUTE     0xff3a1418u   /* solid */

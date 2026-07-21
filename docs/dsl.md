@@ -357,12 +357,27 @@ instance, and `$name` inside the body reads an emit argument.
 Two templates are wired end to end.
 
 **osd** — `surface osd { spawned_by = osd; ... }` takes `$summary $body $icon
-$pct $muted $urgency`. The slab is rendered by `osd.c`, not by your widget
-blocks. Properties on the surface become compile-time overrides that osd.c
-reads: `max gap pad_x icon_gap prog_h body_lines body_max timeout slide_ms
-fillet_r border_width prog_fg prog_track fg`. The anchor picks between three
-wired layouts: flush under the bar, a floating top-centre pill, or a
-`bottom | right` corner stack. Set `pill_w` above 0 and progress-only posts
+$pct $muted $urgency`, plus `$progress` (0–100, or -1 on a plain
+notification), `$nbody` (how many lines the body wrapped to) and the derived
+`$mute`/`$warn` booleans behind the `:mute`/`:warn` pseudo-classes. Your
+widget blocks ARE the slab: the generated renderer draws them once per
+notification, so a slab is composed like any other surface — text with
+`body_lines = 1 + $nbody`, an `elide;` marker to truncate a long summary with
+an ellipsis, `visible = $progress >= 0` gating, a `slider;` widget as the
+progress bar, and `#osd:warn { bg = ...; }` styling per category. `osd.c`
+keeps only what a declaration cannot say: the slab ring, the slide tweens and
+the bar cutout.
+
+Properties on the surface become compile-time overrides that osd.c reads:
+`max gap pad_x icon_gap prog_h body_lines body_max timeout timeout_low
+timeout_normal slide_ms fillet_r border_width separator separator_frac
+prog_fg prog_track fg focus_follow dbus_close`. `anchor` and `margin` *are*
+the layout: an edge named in `anchor` with `margin = 0` sits flush against it
+— that side stays square, its border stays open, and under a bar `fillet_r`
+flares the corner into the bar row — while `margin > 0` lifts the chain off
+every edge so all four corners round and the outline closes. `anchor = top;
+margin = 12` is a floating top-centre stack; `anchor = bottom | right;
+margin = 0` is the corner stack. Set `pill_w` above 0 and progress-only posts
 render as a minimal centred pill instead of joining the stack.
 
 **menu** — `surface menu { spawned_by = menu; ... }`. Same idea; `menu.c` owns

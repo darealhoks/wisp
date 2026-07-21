@@ -132,8 +132,16 @@ static Prop *find_prop(Node *n, const char *name) {
     return NULL;
 }
 
+/* One rule can list several selectors (`#hud, #osd { bg = … }`), so the winning
+ * Prop* is shared. Splice a copy — a pseudo overlay rewrites the base value in
+ * place, and that must not leak into the other nodes the rule matched. */
 static void add_props(Arena *a, Node *n, Prop **add, int nadd) {
     if (!nadd) return;
+    for (int i = 0; i < nadd; i++) {
+        Prop *c = arena_alloc(a, sizeof *c);
+        *c = *add[i];
+        add[i] = c;
+    }
     switch (n->kind) {
     case N_WIDGET: case N_CELL: {
         Widget *w = n->owner;
@@ -169,7 +177,7 @@ static void add_props(Arena *a, Node *n, Prop **add, int nadd) {
 
 /* State pseudo-classes, applied in this order — a later one wraps the earlier
  * ternary, so `:urgent` wins over `:active` when both hold. */
-static const char *PSEUDOS[] = { "active", "urgent", "pressed" };
+static const char *PSEUDOS[] = { "active", "urgent", "mute", "warn", "pressed" };
 
 static Expr *mk_expr(Arena *a, ExKind k, Loc loc) {
     Expr *e = arena_alloc(a, sizeof *e);
@@ -187,6 +195,19 @@ static Expr *loop_field(Arena *a, Node *n, const char *field, Loc loc) {
     return m;
 }
 
+/* `$field` — the condition a pseudo lowers to inside a spawned_by template,
+ * where the per-item state arrives as $-bindings instead of a loop var. */
+static Expr *dollar_field(Arena *a, const char *field, Loc loc) {
+    Expr *e = mk_expr(a, EX_DOLLAR, loc);
+    e->dollar.s = field; e->dollar.n = strlen(field);
+    return e;
+}
+
+static bool in_spawn_template(Node *n) {
+    while (n->parent) n = n->parent;
+    return n->kind == N_SURFACE && find_prop(n, "spawned_by") != NULL;
+}
+
 /* Splice one resolved pseudo prop into the node, wrapping whatever value the
  * prop already has. */
 static void apply_pseudo(Arena *a, Node *n, const char *pseudo, Prop *p) {
@@ -202,8 +223,11 @@ static void apply_pseudo(Arena *a, Node *n, const char *pseudo, Prop *p) {
         add_props(a, n, &np, 1);
         return;
     }
-    if (n->kind != N_CELL || !n->loop) {
-        diag_error(p->loc, "':%s' is only supported on `for` cells (it reads the loop item's field)", pseudo);
+    Expr *cond;
+    if (n->kind == N_CELL && n->loop)      cond = loop_field(a, n, pseudo, p->loc);
+    else if (in_spawn_template(n))         cond = dollar_field(a, pseudo, p->loc);
+    else {
+        diag_error(p->loc, "':%s' is only supported on `for` cells and inside a spawned_by template", pseudo);
         return;
     }
     Prop *base = find_prop(n, p->name);
@@ -212,7 +236,7 @@ static void apply_pseudo(Arena *a, Node *n, const char *pseudo, Prop *p) {
         return;
     }
     Expr *t = mk_expr(a, EX_TERN, p->loc);
-    t->tern.cond = loop_field(a, n, pseudo, p->loc);
+    t->tern.cond = cond;
     t->tern.t = p->val;
     t->tern.e = base->val;
     base->val = t;                               /* base prop is this node's own */

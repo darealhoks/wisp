@@ -207,20 +207,31 @@ void anim_tick(int64_t now) {
         int done = 0;
         if (t >= 1.0) { t = 1.0; done = 1; }
         double u = ease(a->easing, t, a->bez);
+        /* Easing tails produce runs of identical quantized values; a tick
+         * that moved nothing must not pay a full owner repaint. */
+        int changed = 0;
         switch (a->type) {
         case ANIM_T_INT: {
             double v = a->from + (a->to - a->from) * u;
-            *(int*)a->target = (int)(v + (v >= 0 ? 0.5 : -0.5));
+            int nv = (int)(v + (v >= 0 ? 0.5 : -0.5));
+            changed = *(int*)a->target != nv;
+            *(int*)a->target = nv;
             break;
         }
-        case ANIM_T_FLOAT:
-            *(double*)a->target = a->from + (a->to - a->from) * u;
-            break;
-        case ANIM_T_COLOR:
-            *(uint32_t*)a->target = done ? a->to_c : lerp_color(a->from_c, a->to_c, u);
+        case ANIM_T_FLOAT: {
+            double nv = a->from + (a->to - a->from) * u;
+            changed = *(double*)a->target != nv;
+            *(double*)a->target = nv;
             break;
         }
-        if (a->owner) {
+        case ANIM_T_COLOR: {
+            uint32_t nc = done ? a->to_c : lerp_color(a->from_c, a->to_c, u);
+            changed = *(uint32_t*)a->target != nc;
+            *(uint32_t*)a->target = nc;
+            break;
+        }
+        }
+        if (changed && a->owner) {
             int idx = (int)(a->owner - widgets);
             if (idx >= 0 && idx < MAX_WIDGETS) repaint[idx] = 1;
         }

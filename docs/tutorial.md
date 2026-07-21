@@ -290,8 +290,10 @@ Test it without one:
 
     wispctl notify 1 "hello" "body text"
 
-The slab itself is drawn by `osd.c`. Properties on this surface configure that
-renderer; widget blocks inside it do not replace it.
+The widget blocks inside the surface are the slab layout — they render once
+per notification, with `$summary`, `$body` and friends bound per slab.
+Properties on the surface itself (timeouts, spacing, the slide animation)
+configure the stack machinery in `osd.c`.
 
 Volume and brightness feed the same surface:
 

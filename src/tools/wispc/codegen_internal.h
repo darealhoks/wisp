@@ -118,7 +118,7 @@ typedef struct {
 struct CGCtx {
     SrcInst *srcs; int nsrc;
     Decl   **konst; int nkonst;
-    Local locals[8]; int nlocals;
+    Local locals[16]; int nlocals;
     const char *widget_var;
     FILE *prelude;
     char *prelude_buf; size_t prelude_sz;

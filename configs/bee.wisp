@@ -214,16 +214,40 @@ surface osd {
   body_lines = 4; body_max = 256;
   timeout_low = 3000; timeout_normal = 5000; timeout = 1200;
   prog_fg = WSACT; prog_track = REST;
+  bg = CRUST; radius = 10; border_width = 2; border = BORD;
+  separator = REST; separator_frac = 80;
   /* Pct posts (volume / brightness) skip the stack and render as this pill. */
   pill_w = 220; pill_h = 40; pill_margin = 3; pill_radius = 8;
   dismiss_on_click = true; focus_follow = true; dbus_close = true;
 
   widget icon  { align = left;   width = 40; icon = $icon; }
-  widget title { align = left;   text = $summary;          pad = 12; y_offset = -34; }
-  widget pct   { align = right;  text = "{$pct}%";         pad = 12; y_offset = -34; }
+  /* Summary + wrapped body as one block: $body arrives "\n"-joined, so
+     body_lines is 1 (summary) + however many lines it wrapped to. The block
+     centers in the slab; a progress band steals the bottom prog_h + 8 px, so
+     lift by half that to stay centered in what's left. elide keeps a long
+     summary (attacker-controlled, it comes off D-Bus) inside the slab. */
+  widget title { align = left;  text = $nbody > 0 ? "{$summary}\n{$body}" : $summary;
+                 body_lines = 1 + $nbody; elide;
+                 pad = 12; y_offset = $progress >= 0 ? -9 : 0; }
+  /* progress is -1 on a plain notification — no pct column then. */
+  widget pct   { align = right;  text = "{$pct}%";         pad = 12;
+                 y_offset = $progress >= 0 ? -9 : 0;
+                 visible = $progress >= 0; }
+  /* Progress band. $progress is 0..100, hence value_max. */
+  widget prog  { slider; align = left; width = 312; height = 10;
+                 visible = $progress >= 0; value = $progress; value_max = 100;
+                 track_bg = REST; track_fg = WSACT; track_radius = 5; }
 }
 
 #osd widget { fg = TEXT; }
+
+/* Category styling. `muted` arrives as 1 (mute) / 2 (warn) per slab; the
+ * pseudos read the derived $mute / $warn bindings, so the render path has no
+ * C branch on it. */
+#osd:warn { bg = REST; }
+#osd widget:warn { fg = ORANGE; }
+#prog:warn { track_fg = ORANGE; }
+#prog:mute { track_fg = RED; }
 
 // ============================================================================
 // Optional subsystems.
