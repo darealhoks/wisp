@@ -185,7 +185,10 @@ static void emit_main(FILE *o, SrcInst *srcs, int nsrc, SemaResult *r) {
     fputs("        for (int i = 0; i < n; i++) {\n", o);
     fputs("            int fd = evs[i].data.fd;\n", o);
     fputs("            if (fd == wl_fd) {\n"
-          "                while (wl_recv(0) == 0 && wl_rlen >= 8) { wl_dispatch(); if (wl_rlen == 0) break; }\n"
+          "                int rc;\n"
+          "                while ((rc = wl_recv(0)) == 0 && wl_rlen >= 8) { wl_dispatch(); if (wl_rlen == 0) break; }\n"
+          "                /* EOF/error leaves wl_fd readable forever -> epoll busy-loop; die instead. */\n"
+          "                if (rc < 0) die(\"wl: compositor closed the connection\");\n"
           "            } else if (fd == ctl_fd) {\n"
           "                ctl_accept();\n"
           "            } else if (tags_fd >= 0 && fd == tags_fd) {\n"
