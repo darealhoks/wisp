@@ -60,7 +60,7 @@ void wl_req_str(uint32_t obj, uint16_t op, const uint32_t *pre, int npre,
 void wl_registry_bind(uint32_t name, const char *iface, uint32_t version,
                       uint32_t new_oid);
 
-int  wl_recv(int block);
+int  wl_recv(int block);   /* 0 = got data, 1 = would block, -1 = EOF/error */
 int  wl_take_pending_fd(void);
 void wl_close_pending_fds(void);
 

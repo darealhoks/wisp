@@ -208,7 +208,10 @@ int wl_recv(int block) {
         .msg_control = c.b, .msg_controllen = sizeof c.b,
     };
     ssize_t n = recvmsg(wl_fd, &m, MSG_CMSG_CLOEXEC | (block ? 0 : MSG_DONTWAIT));
-    if (n < 0) return errno == EAGAIN ? 0 : -1;
+    /* EAGAIN returns 1, not 0: a partial message parked in wl_rbuf keeps the
+     * drain loop's wl_rlen >= 8, so "no data" must break that loop or it
+     * busy-spins until the compositor sends the rest. */
+    if (n < 0) return errno == EAGAIN ? 1 : -1;
     if (n == 0) return -1;
     wl_rlen += n;
     for (struct cmsghdr *h = CMSG_FIRSTHDR(&m); h; h = CMSG_NXTHDR(&m, h))
