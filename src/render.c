@@ -287,6 +287,32 @@ void fill_rect(uint32_t *px, int sw, int sh, int x, int y, int w, int h, uint32_
     fill_rect_px(px, SC(sw), SC(sh), SC(x), SC(y), SC(w), SC(h), c);
 }
 
+/* Src-over blit of a premultiplied ARGB square, nearest-sampled from its
+ * logical `s` to the physical size so a scaled output doesn't shrink it. */
+void blit_argb(uint32_t *px, int sw, int sh, int x, int y,
+               const uint32_t *src, int s) {
+    if (!src || s <= 0) return;
+    int W = SC(sw), H = SC(sh), x0 = SC(x), y0 = SC(y), d = SC(s);
+    for (int j = 0; j < d; j++) {
+        int dy = y0 + j;
+        if (dy < 0 || dy >= H) continue;
+        const uint32_t *srow = src + (j * s / d) * s;
+        uint32_t *drow = px + (size_t)dy * W;
+        for (int i = 0; i < d; i++) {
+            int dx = x0 + i;
+            if (dx < 0 || dx >= W) continue;
+            uint32_t sp = srow[i * s / d], a = sp >> 24;
+            if (!a) continue;
+            if (a == 255) { drow[dx] = sp; continue; }
+            uint32_t inv = 255 - a, dv = drow[dx];
+            drow[dx] = (DIV255((dv >> 24)        * inv) + a)              << 24
+                     | (DIV255((dv >> 16 & 0xff) * inv) + (sp >> 16 & 0xff)) << 16
+                     | (DIV255((dv >>  8 & 0xff) * inv) + (sp >>  8 & 0xff)) << 8
+                     | (DIV255((dv       & 0xff) * inv) + (sp       & 0xff));
+        }
+    }
+}
+
 void fill_rect_rounded(uint32_t *px, int sw, int sh,
                        int x, int y, int w, int h,
                        int r_tl, int r_tr, int r_br, int r_bl,

@@ -442,6 +442,10 @@ void draw_slider(uint32_t *px, int sw, int sh, int x, int y, int w, int h,
                  int vertical, double value,
                  uint32_t track_bg, uint32_t track_fg, const SliderStyle *st);
 
+/* Premultiplied ARGB square (app icon, decoded PNG) blitted src-over. */
+void blit_argb(uint32_t *px, int sw, int sh, int x, int y,
+               const uint32_t *src, int s);
+
 int  utf8_decode(const char *s, uint32_t *cp);
 const Glyph *font_find(const Font *f, uint32_t cp);
 int  text_width(const Font *f, const char *s);

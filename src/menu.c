@@ -102,27 +102,6 @@ static int menu_row_h(const Font *f) {
 
 int menu_icon_px(void) { return menu_row_h(&font_small) - 12; }
 
-/* Src-over blit of a premultiplied ARGB icon, clipped to the buffer. */
-static void blit_icon(uint32_t *px, int W, int H, int x, int y,
-                      const uint32_t *ic, int s) {
-    for (int j = 0; j < s; j++) {
-        if (y + j < 0 || y + j >= H) continue;
-        for (int i = 0; i < s; i++) {
-            if (x + i < 0 || x + i >= W) continue;
-            uint32_t sp = ic[j * s + i], a = sp >> 24;
-            if (!a) continue;
-            uint32_t *d = &px[(y + j) * W + x + i];
-            if (a == 255) { *d = sp; continue; }
-            uint32_t inv = 255 - a, dv = *d;
-            uint32_t da = ((dv >> 24)        * inv) / 255 + a;
-            uint32_t dr = ((dv >> 16 & 0xff) * inv) / 255 + (sp >> 16 & 0xff);
-            uint32_t dg = ((dv >>  8 & 0xff) * inv) / 255 + (sp >>  8 & 0xff);
-            uint32_t db = ((dv       & 0xff) * inv) / 255 + (sp       & 0xff);
-            *d = da << 24 | dr << 16 | dg << 8 | db;
-        }
-    }
-}
-
 /* Vertical launcher float: query row on top, up to MENU_MAX_VIS item rows
  * below, height tracks the filtered count. On size change we only commit the
  * new size — the configure event re-enters menu_render at the right w/h. */
@@ -180,7 +159,7 @@ static void menu_render_vert(Widget *w) {
         int tx = x;
         if (ipx) {
             if (w->s.menu.icons[idx])
-                blit_icon(s->px, W, H, x, y0 + (rh - ipx) / 2,
+                blit_argb(s->px, W, H, x, y0 + (rh - ipx) / 2,
                           w->s.menu.icons[idx], ipx);
             tx += ipx + 8;   /* indent all rows so text stays aligned */
         }
