@@ -235,7 +235,7 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
     if (has_ve) {
         fprintf(o, "%sdouble rev = 1.0;\n", indent);
         fprintf(o, "%s#ifdef WISP_HAS_ANIM\n", indent);
-        fprintf(o, "%s{ VisSlot *__s = &%s_vis%d[%s];\n", indent, surf_nm, item_idx, ve_idx);
+        fprintf(o, "%s{ VisSlot *__s = &%s_vis%d[__wi][%s];\n", indent, surf_nm, item_idx, ve_idx);
         fprintf(o, "%s  if (!__s->has) { __s->prev = vis; __s->rev = vis ? 1.0 : 0.0; __s->has = 1; }\n", indent);
         fprintf(o, "%s  else if (!__s->prev && vis) { anim_start_num(&__s->rev, ANIM_T_FLOAT, __s->rev, 1.0, %d, %s, NULL, w, NULL, NULL); __s->prev = 1; }\n",
                 indent, ve_in > 0 ? ve_in : 1, widget_easing_id(wd, "enter_easing"));
@@ -367,18 +367,29 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
      * stops cancelling, wobbling everything after them by 2px. */
     int tr_sz = transition_dur(wd, "size");
     if (tr_sz > 0) emit_size_slot(o, indent, "tw", "tw", &sc, tr_sz, 0);
+    /* Step 6.3b: the reveal factor also scales geometry, so an entering item
+     * grows from nothing and an exiting one collapses — not just alpha. Runs
+     * after the size slot: the slot owns steady-state resizes (e.g. 28↔34),
+     * rev owns appear/disappear; layering them keeps both animations smooth. */
+    if (has_ve)
+        fprintf(o, "%sif (rev < 1.0) tw = (int)(tw * rev);\n", indent);
     fprintf(o, "%sst[%s].tw  = tw;\n", indent, idx_expr);
     fprintf(o, "%sst[%s].h   = __h;\n", indent, idx_expr);
     /* Cross-axis size (horizontal: height, vertical: width) lowered as an expr
      * so `tag.active ? 34 : 30` resizes per-item; 0 = fill the region. */
     Expr *che = widget_prop(wd, vertical ? "width" : "height");
     if (che) { CE cc = lower(ctx, che); cc = coerce_to_int(ctx, cc);
-               if (tr_sz > 0) {
-                   fprintf(o, "%sint __ch = %s;\n", indent, cc.text);
-                   emit_size_slot(o, indent, "__ch", "ch", &sc, tr_sz, 1);
-                   fprintf(o, "%sst[%s].ch = __ch;\n", indent, idx_expr);
-               } else fprintf(o, "%sst[%s].ch = %s;\n", indent, idx_expr, cc.text); }
-    fprintf(o, "%sst[%s].pad = %d;\n", indent, idx_expr, padE);
+               fprintf(o, "%sint __ch = %s;\n", indent, cc.text);
+               if (tr_sz > 0) emit_size_slot(o, indent, "__ch", "ch", &sc, tr_sz, 1);
+               /* keep the even quantisation — see the cross-axis note above */
+               if (has_ve)
+                   fprintf(o, "%sif (rev < 1.0) __ch = ((int)(__ch * rev)) & ~1;\n", indent);
+               fprintf(o, "%sst[%s].ch = __ch;\n", indent, idx_expr); }
+    if (has_ve)
+        fprintf(o, "%sst[%s].pad = rev < 1.0 ? (int)(%d * rev) : %d;\n",
+                indent, idx_expr, padE, padE);
+    else
+        fprintf(o, "%sst[%s].pad = %d;\n", indent, idx_expr, padE);
     fprintf(o, "%sst[%s].align = %d;\n", indent, idx_expr, (int)al);
     fprintf(o, "%sst[%s].body_lines = __bl;\n", indent, idx_expr);
     if (al == ALIGN_CENTER) {
@@ -905,9 +916,9 @@ void emit_stmt(FILE *o, CGCtx *ctx, Stmt *st, const char *indent,
             if (wrote > 0) off += (size_t)wrote;
         }
         cgctx_flush_prelude(ctx, o, indent);
-        /* Forward decl + call. spawn_<name>() is supplied by Step E (Session 5);
-         * until then this references a symbol that must be either declared or
-         * left to fail at link time — codegen-level OK. */
+        /* Forward decl + call. Only spawn_osd() is emitted (gen_spawn.c); any
+         * other template deliberately fails at link until a generic slot
+         * allocator exists. */
         fprintf(o, "%sextern void spawn_%s();\n", indent, nm);
         fprintf(o, "%sspawn_%s(%s);\n", indent, nm, args);
         return;

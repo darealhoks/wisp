@@ -472,7 +472,9 @@ config produces a genuinely smaller daemon rather than a smaller code path.
     enter_easing = ease_out;  exit_easing = ease_in;
 
 `enter_anim` and `exit_anim` need the widget to have a `visible` expression, as
-they play on the transition of that expression.
+they play on the transition of that expression. They animate size as well as
+alpha: an entering item grows out of nothing and an exiting one collapses, so
+its neighbours slide rather than jump.
 
 Easings are `linear`, `ease_in`, `ease_out`, `ease_in_out`, or
 `cubic_bezier(a,b,c,d)`. Hyphenated `ease-out` is also accepted.

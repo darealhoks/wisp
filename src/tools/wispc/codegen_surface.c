@@ -117,6 +117,7 @@ int emit_spawned_osd_skeleton(FILE *o, Decl *sur, CGCtx *ctx, const char *nm, in
 
     fprintf(o, "void render_%s(Widget *w) {\n", nm);
     fputs("    if (!w->configured || w->w <= 0 || w->h <= 0) return;\n", o);
+    fputs("    int __wi = 0; (void)__wi;\n", o);   /* OSD template: singleton widget */
     /* Nothing left in the ring: hand back a transparent buffer (never NULL —
      * see osd_attach_empty) and let the pool go, so idle costs nothing. */
     fputs("    if (!w->s.osd.items[0].active) {\n"
@@ -404,11 +405,11 @@ int emit_menu_render(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     for (int i = 0; i < nitems; i++) {
         if (!item_has_any_transition(items[i].w)) continue;
         emit_item_slot_decls(o, items[i].w, nm, i,
-                             items[i].is_runtime_for_cell ? items[i].runtime_for_cap : 1);
+                             items[i].is_runtime_for_cell ? items[i].runtime_for_cap : 1, 1);
     }
     for (int i = 0; i < nitems; i++) {
         if (!widget_has_vis_anim(items[i].w)) continue;
-        fprintf(o, "static VisSlot %s_vis%d[%d];\n", nm, i,
+        fprintf(o, "static VisSlot %s_vis%d[1][%d];\n", nm, i,
                 items[i].is_runtime_for_cell ? items[i].runtime_for_cap : 1);
     }
     fputs("#endif\n", o);
@@ -426,6 +427,7 @@ int emit_menu_render(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     fputs("    if (!w->configured || w->w <= 0 || w->h <= 0) return;\n", o);
     fprintf(o, "    if (__%s_nw == 0 || __%s_widgets[0] != w) { __%s_widgets[0] = w; __%s_nw = 1; }\n",
             nm, nm, nm, nm);
+    fputs("    int __wi = 0; (void)__wi;\n", o);   /* menu registry cap is 1 */
     fputs("    widget_ensure_pool(w, 2);\n", o);
     fputs("    BufSlot *sl = widget_free_slot(w);\n    if (!sl) return;\n", o);
     fputs("    clear_buf(sl->px, w->w, w->h, 0);\n", o);
@@ -713,18 +715,20 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     for (int i = 0; i < nitems; i++) {
         if (!item_has_any_transition(items[i].w)) continue;
         int slots = items[i].is_runtime_for_cell ? items[i].runtime_for_cap : 1;
-        emit_item_slot_decls(o, items[i].w, nm, i, slots);
+        emit_item_slot_decls(o, items[i].w, nm, i, slots, 8);
     }
     /* Step 6.3: per-item VisSlot for enter/exit animations on `visible`. */
     for (int i = 0; i < nitems; i++) {
         if (!widget_has_vis_anim(items[i].w)) continue;
         int slots = items[i].is_runtime_for_cell ? items[i].runtime_for_cap : 1;
-        fprintf(o, "static VisSlot %s_vis%d[%d];\n", nm, i, slots);
+        fprintf(o, "static VisSlot %s_vis%d[8][%d];\n", nm, i, slots);
     }
     fputs("#endif\n", o);
 
     fprintf(o, "void render_%s(Widget *w) {\n", nm);
     fputs("    if (!w->configured || w->w <= 0 || w->h <= 0) return;\n", o);
+    /* Per-instance tween state: the surface exists once per output. */
+    fprintf(o, "    int __wi = __%s_slot(w); if (__wi < 0) __wi = 0; (void)__wi;\n", nm);
     /* Skip render for HUD-class surfaces parked at full slide-out: their body
      * isn't visible, and allocating a pool here just to attach a buffer that
      * never gets used (until reveal) is the main idle-RAM regression. The
@@ -1748,19 +1752,20 @@ int emit_generated_compound(FILE *o, Decl *cmp, CGCtx *ctx, const char *nm) {
             BarItem *it = &all_items[n_all + i];
             if (!item_has_any_transition(it->w)) continue;
             int slots = it->is_runtime_for_cell ? it->runtime_for_cap : 1;
-            emit_item_slot_decls(o, it->w, rnm, n_all + i, slots);
+            emit_item_slot_decls(o, it->w, rnm, n_all + i, slots, 4);
         }
         for (int i = 0; i < got; i++) {
             BarItem *it = &all_items[n_all + i];
             if (!widget_has_vis_anim(it->w)) continue;
             int slots = it->is_runtime_for_cell ? it->runtime_for_cap : 1;
-            fprintf(o, "static VisSlot %s_vis%d[%d];\n", rnm, n_all + i, slots);
+            fprintf(o, "static VisSlot %s_vis%d[4][%d];\n", rnm, n_all + i, slots);
         }
         fputs("#endif\n", o);
 
         /* render_<rnm>(Widget *w): paint just this region. */
         fprintf(o, "void render_%s(Widget *w) {\n", rnm);
         fputs("    if (!w->configured || w->w <= 0 || w->h <= 0) return;\n", o);
+        fprintf(o, "    int __wi = __%s_slot(w); if (__wi < 0) __wi = 0; (void)__wi;\n", rnm);
         fputs("    widget_ensure_pool(w, 1);\n", o);
         fputs("    BufSlot *sl = widget_free_slot(w);\n", o);
         fputs("    if (!sl) return;\n", o);
@@ -2135,8 +2140,8 @@ int emit_surfaces(FILE *o, Unit *u, CGCtx *ctx) {
             continue;
         }
         if (d->is_menu) {
-            /* An item-only menu (no widget body) stays on the legacy
-             * menu.c render path until every preset is ported. */
+            /* No widget body: the `spawned_by = menu` template's renderer
+             * (render_menu_default) covers it — nothing to emit here. */
             if (!surface_has_body(d)) continue;
             if (nmenu >= 8) { diag_error(d->loc, "codegen: too many menus"); return 1; }
             char *mn = malloc(d->nlen + 8);

@@ -40,7 +40,7 @@ void        emit_color_slot(FILE *o, const char *ind, const char *var, const cha
                             const char *tgt_expr, const SlotCtx *sc, int dur);
 void        emit_size_slot(FILE *o, const char *ind, const char *var, const char *slot,
                            const SlotCtx *sc, int dur, int even);
-void        emit_item_slot_decls(FILE *o, Widget *wd, const char *nm, int idx, int slots);
+void        emit_item_slot_decls(FILE *o, Widget *wd, const char *nm, int idx, int slots, int nwid);
 int         widget_enter_ms(Widget *wd);
 int         widget_exit_ms (Widget *wd);
 int         widget_has_vis_anim(Widget *wd);

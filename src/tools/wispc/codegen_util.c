@@ -224,7 +224,7 @@ void emit_color_slot(FILE *o, const char *ind, const char *var, const char *slot
     if (dur <= 0) { fprintf(o, "%suint32_t %s = (uint32_t)(%s);\n", ind, var, tgt_expr); return; }
     fprintf(o, "%suint32_t __%s_tgt = (uint32_t)(%s); uint32_t %s;\n", ind, var, tgt_expr, var);
     fprintf(o, "%s#ifdef WISP_HAS_ANIM\n", ind);
-    fprintf(o, "%s{ TransSlot *__s = &%s_tr%d_%s[%s];\n", ind, sc->surf, sc->item, slot, sc->idx);
+    fprintf(o, "%s{ TransSlot *__s = &%s_tr%d_%s[__wi][%s];\n", ind, sc->surf, sc->item, slot, sc->idx);
     fprintf(o, "%s  if (!__s->has) { __s->cur = __%s_tgt; __s->last = __%s_tgt; __s->has = 1; }\n", ind, var, var);
     fprintf(o, "%s  else if (__s->last != __%s_tgt) { anim_start_color(&__s->cur, __s->cur, __%s_tgt, %d, %s, NULL, w, NULL, NULL); __s->last = __%s_tgt; }\n",
             ind, var, var, dur, sc->ease, var);
@@ -238,7 +238,7 @@ void emit_size_slot(FILE *o, const char *ind, const char *var, const char *slot,
                     const SlotCtx *sc, int dur, int even) {
     if (dur <= 0) return;
     fprintf(o, "%s#ifdef WISP_HAS_ANIM\n", ind);
-    fprintf(o, "%s{ SizeSlot *__s = &%s_tr%d_%s[%s];\n", ind, sc->surf, sc->item, slot, sc->idx);
+    fprintf(o, "%s{ SizeSlot *__s = &%s_tr%d_%s[__wi][%s];\n", ind, sc->surf, sc->item, slot, sc->idx);
     fprintf(o, "%s  if (!__s->has) { __s->cur = %s; __s->last = %s; __s->has = 1; }\n", ind, var, var);
     fprintf(o, "%s  else if (__s->last != %s) { anim_start_num(&__s->cur, ANIM_T_FLOAT, __s->cur, %s, %d, %s, NULL, w, NULL, NULL); __s->last = %s; }\n",
             ind, var, var, dur, sc->ease, var);
@@ -246,12 +246,15 @@ void emit_size_slot(FILE *o, const char *ind, const char *var, const char *slot,
     fprintf(o, "%s#endif\n", ind);
 }
 
-/* The storage behind the above — slot names are the contract between the two. */
-void emit_item_slot_decls(FILE *o, Widget *wd, const char *nm, int idx, int slots) {
-    if (transition_dur(wd, "bg")     > 0) fprintf(o, "static TransSlot %s_tr%d_bg[%d];\n",     nm, idx, slots);
-    if (transition_dur(wd, "fg")     > 0) fprintf(o, "static TransSlot %s_tr%d_fg[%d];\n",     nm, idx, slots);
-    if (transition_dur(wd, "border") > 0) fprintf(o, "static TransSlot %s_tr%d_border[%d];\n", nm, idx, slots);
-    if (transition_dur(wd, "size")   > 0) fprintf(o, "static SizeSlot %s_tr%d_tw[%d], %s_tr%d_ch[%d];\n", nm, idx, slots, nm, idx, slots);
+/* The storage behind the above — slot names are the contract between the two.
+ * Outer dim = the surface's widget-registry cap: a surface instantiates once
+ * per output, and sharing tween state across outputs makes two bars fight
+ * over one animation (retarget ping-pong on every render). */
+void emit_item_slot_decls(FILE *o, Widget *wd, const char *nm, int idx, int slots, int nwid) {
+    if (transition_dur(wd, "bg")     > 0) fprintf(o, "static TransSlot %s_tr%d_bg[%d][%d];\n",     nm, idx, nwid, slots);
+    if (transition_dur(wd, "fg")     > 0) fprintf(o, "static TransSlot %s_tr%d_fg[%d][%d];\n",     nm, idx, nwid, slots);
+    if (transition_dur(wd, "border") > 0) fprintf(o, "static TransSlot %s_tr%d_border[%d][%d];\n", nm, idx, nwid, slots);
+    if (transition_dur(wd, "size")   > 0) fprintf(o, "static SizeSlot %s_tr%d_tw[%d][%d], %s_tr%d_ch[%d][%d];\n", nm, idx, nwid, slots, nm, idx, nwid, slots);
 }
 
 /* Step 6.3: enter_anim / exit_anim on a widget's `visible` expression. */

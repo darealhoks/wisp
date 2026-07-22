@@ -131,7 +131,8 @@ widget { fg = TEXT; }
 /* Active tag grows 4px */
 .ws        { align = left; fg = TEXT; bg = CRUST; border = BORD; border_width = 2;
              radius = 8; pad = 6; width = 28; height = 28;
-             transition_size = 160ms; }
+             transition_size = 160ms;
+             enter_anim = 160ms; exit_anim = 160ms; }
 .ws:active { fg = TEXT; border = BORD; width = 34; height = 34; }
 
 
