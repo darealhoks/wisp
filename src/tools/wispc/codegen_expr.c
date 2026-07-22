@@ -515,3 +515,155 @@ CE coerce_to_int(CGCtx *c, CE e) {
     (void)c;
 }
 
+/* Recursive statement emitter used from event handlers (on_click bodies).
+ * Handles ST_EXEC / ST_SET / ST_EMIT / ST_BLOCK. */
+void emit_stmt(FILE *o, CGCtx *ctx, Stmt *st, const char *indent,
+                      SemaResult *r) {
+    if (!st) return;
+    switch (st->kind) {
+    case ST_BLOCK:
+        for (int i = 0; i < st->block.n; i++)
+            emit_stmt(o, ctx, st->block.list[i], indent, r);
+        return;
+    case ST_EXEC: {
+        CE ce = lower(ctx, st->exec.arg);
+        if (ce.type != T_STR) ce = coerce_to_str(ctx, ce, st->loc);
+        cgctx_flush_prelude(ctx, o, indent);
+        fprintf(o, "%sexec_cmd(%s);\n", indent, ce.text);
+        return;
+    }
+    case ST_SET: {
+        const char *nm = sname(st->set.name, st->set.nlen);
+        Decl *k = find_konst(ctx, st->set.name, st->set.nlen);
+        /* Allow `set <exec_line_source> = <expr>` to override the source's
+         * line buffer optimistically. Used so a toggle button can paint the
+         * post-click state in the same frame, instead of waiting for the
+         * spawned probe to re-poll over a pipe. */
+        SrcInst *si = find_inst(ctx->srcs, ctx->nsrc, st->set.name, st->set.nlen);
+        CE val = lower(ctx, st->set.val);
+        cgctx_flush_prelude(ctx, o, indent);
+        if (si && si->drv->drv == DRV_EXEC) {
+            if (val.type != T_STR) val = coerce_to_str(ctx, val, st->loc);
+            cgctx_flush_prelude(ctx, o, indent);
+            fprintf(o, "%ssnprintf(src_%s_line, sizeof src_%s_line, \"%%s\", %s);\n",
+                    indent, nm, nm, val.text);
+        } else if (k && k->konst.val && k->konst.val->kind == EX_STRING) {
+            /* String mut: copy with bounded snprintf. */
+            if (val.type != T_STR) val = coerce_to_str(ctx, val, st->loc);
+            cgctx_flush_prelude(ctx, o, indent);
+            fprintf(o, "%ssnprintf(mut_%s, sizeof mut_%s, \"%%s\", %s);\n",
+                    indent, nm, nm, val.text);
+        } else {
+            fprintf(o, "%smut_%s = (%s);\n", indent, nm, val.text);
+        }
+        /* Mark every surface that reads this mut/source dirty. sema records
+         * deps uniformly for both source and mut names. */
+        if (r) {
+            for (int i = 0; i < r->nsurfaces; i++) {
+                const char **deps = r->surface_deps[i];
+                for (int j = 0; deps && deps[j]; j++) {
+                    if (strcmp(deps[j], nm) == 0) {
+                        fprintf(o, "%sdirty_%s = 1;\n", indent, r->surface_names[i]);
+                        break;
+                    }
+                }
+            }
+        }
+        return;
+    }
+    case ST_ANIMATE: {
+        const char *nm = sname(st->anim.name, st->anim.nlen);
+        Decl *k = find_konst(ctx, st->anim.name, st->anim.nlen);
+        const char *easing_id = "EASE_LINEAR";
+        const char *bez_arg = "NULL";
+        char bez_buf[160] = "";
+        if (st->anim.easing) {
+            Expr *e = st->anim.easing;
+            if (e->kind == EX_IDENT) {
+                const char *en = e->ident.s; size_t eL = e->ident.n;
+                if      (eL == 6 && !memcmp(en, "linear",      6)) easing_id = "EASE_LINEAR";
+                else if (eL == 7 && !memcmp(en, "ease_in",     7)) easing_id = "EASE_IN";
+                else if (eL == 8 && !memcmp(en, "ease_out",    8)) easing_id = "EASE_OUT";
+                else if (eL == 11 && !memcmp(en, "ease_in_out",11)) easing_id = "EASE_IN_OUT";
+                else diag_error(e->loc, "unknown easing '%.*s'", (int)eL, en);
+            } else if (e->kind == EX_CALL && e->call.nlen == 13 &&
+                       !memcmp(e->call.name, "cubic_bezier", 12)) {
+                /* fall-through below */
+            } else if (e->kind == EX_CALL && e->call.nlen == 12 &&
+                       !memcmp(e->call.name, "cubic_bezier", 12) && e->call.nargs == 4) {
+                easing_id = "EASE_CUBIC_BEZIER";
+                CE a = lower(ctx, e->call.args[0]);
+                CE b = lower(ctx, e->call.args[1]);
+                CE c = lower(ctx, e->call.args[2]);
+                CE d = lower(ctx, e->call.args[3]);
+                snprintf(bez_buf, sizeof bez_buf,
+                         "(double[]){(double)(%s),(double)(%s),(double)(%s),(double)(%s)}",
+                         a.text, b.text, c.text, d.text);
+                bez_arg = bez_buf;
+            } else {
+                diag_error(e->loc, "easing must be ident or cubic_bezier(a,b,c,d)");
+            }
+        }
+        CE to = lower(ctx, st->anim.to);
+        CE dur = lower(ctx, st->anim.duration);
+        cgctx_flush_prelude(ctx, o, indent);
+        if (!k || k->kind != D_MUT) {
+            fprintf(o, "%s/* animate: target '%s' not a mut */\n", indent, nm);
+            return;
+        }
+        CE init = lower(ctx, k->konst.val);
+        const char *fn = "anim_start_num";
+        const char *type_id = "ANIM_T_INT";
+        if (init.type == T_FLOAT) type_id = "ANIM_T_FLOAT";
+        else if (init.type == T_COLOR) { fn = "anim_start_color"; type_id = NULL; }
+        else if (init.type == T_STR) {
+            diag_error(st->loc, "cannot animate a string mut");
+            return;
+        }
+        /* Owner widget: `w` is in scope inside <surf>_on_click handlers.
+         * Outside click context the codegen-emitted ctx doesn't bind `w` yet
+         * — for now pass NULL (acceptable: bar_redraw_all() on the next status
+         * tick will catch up). */
+        const char *owner = "w";
+        if (type_id) {
+            fprintf(o, "%s%s(&mut_%s, %s, (double)(mut_%s), (double)(%s), (int)(%s), %s, %s, %s, NULL, NULL);\n",
+                    indent, fn, nm, type_id, nm, to.text, dur.text, easing_id, bez_arg, owner);
+        } else {
+            fprintf(o, "%s%s(&mut_%s, mut_%s, (uint32_t)(%s), (int)(%s), %s, %s, %s, NULL, NULL);\n",
+                    indent, fn, nm, nm, to.text, dur.text, easing_id, bez_arg, owner);
+        }
+        /* Mark surfaces that read this mut dirty so any side-effects (visible/
+         * static layout) recompute on next tick. */
+        if (r) {
+            for (int i = 0; i < r->nsurfaces; i++) {
+                const char **deps = r->surface_deps[i];
+                for (int j = 0; deps && deps[j]; j++) {
+                    if (strcmp(deps[j], nm) == 0) {
+                        fprintf(o, "%sdirty_%s = 1;\n", indent, r->surface_names[i]);
+                        break;
+                    }
+                }
+            }
+        }
+        return;
+    }
+    case ST_EMIT: {
+        const char *nm = sname(st->emit.name, st->emit.nlen);
+        /* Lower each positional value into a comma-separated arg list. */
+        char args[1024]; size_t off = 0; args[0] = 0;
+        for (int i = 0; i < st->emit.n; i++) {
+            CE ce = lower(ctx, st->emit.val[i]);
+            if (off && off + 2 < sizeof args) { args[off++] = ','; args[off++] = ' '; args[off] = 0; }
+            int wrote = snprintf(args + off, sizeof args - off, "(%s)", ce.text);
+            if (wrote > 0) off += (size_t)wrote;
+        }
+        cgctx_flush_prelude(ctx, o, indent);
+        /* Forward decl + call. Only spawn_osd() is emitted (gen_spawn.c); any
+         * other template deliberately fails at link until a generic slot
+         * allocator exists. */
+        fprintf(o, "%sextern void spawn_%s();\n", indent, nm);
+        fprintf(o, "%sspawn_%s(%s);\n", indent, nm, args);
+        return;
+    }
+    }
+}

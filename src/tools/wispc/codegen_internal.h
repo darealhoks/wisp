@@ -90,6 +90,10 @@ void          emit_bindings(FILE *o, SrcInst *srcs, int nsrc, SemaResult *r,
 
 /* ---------- codegen_expr.c ---------- */
 
+/* Statement lowering (on_click bodies) sits with expression lowering. */
+void emit_stmt(FILE *o, CGCtx *ctx, Stmt *st, const char *indent,
+               SemaResult *r);
+
 /* T_PIXMAP: a premultiplied-ARGB square (a decoded app icon), not a value —
  * it only ever reaches a widget's `icon` prop, which accepts it beside a
  * codepoint. Every other consumer treats it as T_UNK. */
@@ -190,15 +194,44 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
  * horizontal band occupying one row of the stack. */
 int  emit_group_draw(FILE *o, BarItem *items, int first, int nitems,
                      CGCtx *ctx, const char *nm, int vertical);
-void emit_stmt(FILE *o, CGCtx *ctx, Stmt *st, const char *indent,
-               SemaResult *r);
 int  emit_surface_click_dispatch(FILE *o, BarItem *items, int nitems,
                                  CGCtx *ctx, SemaResult *r, const char *nm);
 
-/* ---------- codegen_surface.c ---------- */
+/* ---------- codegen_util.c: per-surface registries + hit tables ---------- */
+
+void reg_reset(void);
+void reg_collect(const char *base);
+void emit_reg_destroyed(FILE *o);
+void emit_hit_store(FILE *o, const char *nm, int maxw);
+void emit_hit_snapshot(FILE *o, const char *nm);
+
+/* Surface geometry derived once from the DSL props. Shared by the render emit
+ * (codegen_surface.c) and the lifecycle emit (codegen_surface_life.c): the SHM
+ * buffer sized there must match the pixels painted here, so both read the same
+ * gutter/armpit/fillet-corner numbers. cid_* is the wedge direction per corner
+ * (see the anchor switch in emit_generated_surface). */
+typedef struct {
+    int anchor, layer, margin, width, height, excl_zone;
+    int gut_g, gutter_top, gutter_bottom, armpit, reveal_g;
+    int cid_tl, cid_tr, cid_br, cid_bl;
+} SurGeom;
+
+/* Which pad strip a fillet's wedge box extends into — depends on cid AND corner.
+ *   LEFT  pad iff TL or BL with cid in {0,3}
+ *   RIGHT pad iff TR or BR with cid in {1,2}
+ *   TOP   pad iff TL or TR with cid in {2,3}
+ *   BOT   pad iff BL or BR with cid in {0,1} */
+#define USES_LEFT(cid)  ((cid)==0 || (cid)==3)
+#define USES_RIGHT(cid) ((cid)==1 || (cid)==2)
+#define USES_TOP(cid)   ((cid)==2 || (cid)==3)
+#define USES_BOT(cid)   ((cid)==0 || (cid)==1)
+
+/* ---------- codegen_surface.c / _spawned.c / _compound.c ---------- */
 
 int  emit_menu_render(FILE *o, Decl *sur, CGCtx *ctx, const char *nm);
 int  emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm);
+int  emit_surface_life(FILE *o, Decl *sur, CGCtx *ctx, const char *nm,
+                       BarItem *items, int nitems, const SurGeom *g);
 int  emit_generated_compound(FILE *o, Decl *cmp, CGCtx *ctx, const char *nm);
 int  emit_spawned_osd_skeleton(FILE *o, Decl *sur, CGCtx *ctx, const char *nm, int pill);
 int  emit_surfaces(FILE *o, Unit *u, CGCtx *ctx);

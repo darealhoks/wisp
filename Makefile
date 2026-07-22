@@ -201,6 +201,7 @@ WISPC_SRC := $(TOOLDIR)/wispc/arena.c $(TOOLDIR)/wispc/diag.c $(TOOLDIR)/wispc/l
             $(TOOLDIR)/wispc/codegen.c $(TOOLDIR)/wispc/codegen_util.c \
             $(TOOLDIR)/wispc/codegen_sources.c $(TOOLDIR)/wispc/codegen_expr.c \
             $(TOOLDIR)/wispc/codegen_items.c $(TOOLDIR)/wispc/codegen_surface.c \
+            $(TOOLDIR)/wispc/codegen_surface_life.c $(TOOLDIR)/wispc/codegen_spawned.c $(TOOLDIR)/wispc/codegen_compound.c \
             $(TOOLDIR)/wispc/wispc.c
 
 BIN := $(BUILD)/wisp $(BUILD)/wispctl $(BUILD)/wisp-lock $(BUILD)/wisp-lock-helper $(WISPC_BOOT)

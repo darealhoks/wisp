@@ -338,3 +338,59 @@ int widget_value_align(Widget *w) {
     return 1;
 }
 
+/* Every per-surface / per-region widget registry (the `__<name>_widgets[]` +
+ * `__<name>_nw` pairs) gets its base name collected here as it is emitted, so
+ * emit_surfaces can generate a single wispgen_widget_destroyed() that prunes a
+ * destroyed widget out of every registry. Without this, widget_destroy (in the
+ * hand-written widget.c) leaves a dangling pointer in these append-only arrays:
+ * a later bar_redraw()/render_<surface>() then dereferences a freed widget and
+ * commits to surface id 0 → wl protocol error → die(). This is the monitor-
+ * disconnect crash. Reset at the top of emit_surfaces. */
+#define REG_MAX 128
+static char reg_names[REG_MAX][160];
+static int  n_reg_names;
+void reg_collect(const char *base) {
+    for (int i = 0; i < n_reg_names; i++)
+        if (strcmp(reg_names[i], base) == 0) return;
+    if (n_reg_names < REG_MAX) snprintf(reg_names[n_reg_names++], 160, "%s", base);
+}
+
+/* Per-widget hit-table storage. A surface with one widget per output (bar,
+ * hud, screen_corners, …) shares one render path across N widgets; click
+ * dispatch must test the geometry of the *clicked* widget, not whichever
+ * painted last. Emits a [maxw][64] snapshot indexed by the widget's slot in
+ * __<nm>_widgets[], plus a slot lookup. Must be emitted AFTER the
+ * __<nm>_widgets[]/__<nm>_nw declarations. */
+void emit_hit_store(FILE *o, const char *nm, int maxw) {
+    fprintf(o, "static %s_Hit __%s_hit[%d][64]; static int __%s_hit_n[%d];\n",
+            nm, nm, maxw, nm, maxw);
+    fprintf(o, "static int __%s_slot(Widget *w) {\n"
+               "    for (int i = 0; i < __%s_nw; i++) if (__%s_widgets[i] == w) return i;\n"
+               "    return -1;\n"
+               "}\n", nm, nm, nm);
+}
+
+/* Snapshot the render working buffer (__<nm>_hits_buf / __<nm>_nhit) into the
+ * clicked widget's per-slot row. Emitted at the end of render_<nm>. */
+void emit_hit_snapshot(FILE *o, const char *nm) {
+    fprintf(o, "    { int __wi = __%s_slot(w);\n"
+               "      if (__wi >= 0) {\n"
+               "          __%s_hit_n[__wi] = __%s_nhit;\n"
+               "          for (int i = 0; i < __%s_nhit; i++) __%s_hit[__wi][i] = __%s_hits_buf[i];\n"
+               "      } }\n",
+            nm, nm, nm, nm, nm, nm);
+}
+
+void reg_reset(void) { n_reg_names = 0; }
+
+/* Prune a destroyed widget out of every surface/region registry. Called by
+ * widget.c:widget_destroy() (weak symbol). Swap-remove keeps each array
+ * dense so the cap (8/32/4) is never hit by stale entries on monitor
+ * hotplug, and so redraw/tag fanouts never touch a freed widget. */
+void emit_reg_destroyed(FILE *o) {
+    fputs("void wispgen_widget_destroyed(Widget *w) {\n", o);
+    for (int i = 0; i < n_reg_names; i++)
+        fprintf(o, "    for (int i = 0; i < __%s_nw; i++) if (__%s_widgets[i] == w) { __%s_widgets[i] = __%s_widgets[--__%s_nw]; break; }\n",
+                reg_names[i], reg_names[i], reg_names[i], reg_names[i], reg_names[i]);
+    fputs("}\n", o);
+}
