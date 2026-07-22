@@ -779,11 +779,11 @@ int utf8_decode(const char *s, uint32_t *cp) {
 }
 
 const Glyph *font_find(const Font *f, uint32_t cp) {
-#ifdef WISP_FONT_FREETYPE
-    /* freetype backend: dynamic, unsorted cache + rasterize-on-miss. */
-    return font_ft_find(f, cp);
+#ifdef WISP_FONT_RUNTIME
+    /* truetype backend: dynamic, unsorted cache + rasterize-on-miss. */
+    return font_cache_find(f, cp);
 #else
-    /* baked/bitmap backend: const, codepoint-sorted table → binary search. */
+    /* bitmap backend: const, codepoint-sorted table → binary search. */
     int lo = 0, hi = f->n - 1;
     while (lo <= hi) {
         int m = (lo + hi) >> 1;
@@ -812,7 +812,7 @@ int text_width(const Font *f, const char *s) {
  * For simplicity we treat the destination as already premultiplied-or-opaque
  * background and blend FG color modulated by glyph alpha as src-over. */
 /* `m` replicates each source pixel into an m x m block — the fallback when the
- * strike is native-size on a scaled output (baked/bitmap backends). The source
+ * strike is native-size on a scaled output (bitmap backend). The source
  * index is carried in a counter rather than an i/m divide: m == 1 is the whole
  * scale-1 world and must not grow an idiv in the per-pixel loop. */
 static void draw_glyph_px(uint32_t *px, int sw, int sh, int x, int y,
@@ -881,14 +881,14 @@ static void draw_glyph_px(uint32_t *px, int sw, int sh, int x, int y,
     }
 }
 
-/* Pick the strike to blit and how much to replicate it: the freetype backend
- * can rasterize a real scale*px_size twin, the const-table backends can only
+/* Pick the strike to blit and how much to replicate it: the truetype backend
+ * can rasterize a real scale*px_size twin, the bitmap backend can only
  * pixel-double. Returns the font to read glyphs from; *m is the replication. */
-/* Fallback replication for the const-table backends: nearest whole factor. */
+/* Fallback replication for the bitmap backend: nearest whole factor. */
 #define REPL(s120) ((s120) < 180 ? 1 : ((s120) + 60) / 120)
 static const Font *strike_for(const Font *f, int s120, int *m) {
-#ifdef WISP_FONT_FREETYPE
-    const Font *sf = font_ft_at_scale(f, s120);
+#ifdef WISP_FONT_RUNTIME
+    const Font *sf = font_at_scale(f, s120);
     if (sf != f) { *m = 1; return sf; }
 #endif
     *m = REPL(s120);

@@ -322,6 +322,10 @@ static const char *arg_field(const char *s, const char *key) {
 void wl_adopt(int fd, const char *args) {
     wl_fd = fd;
     int fl = fcntl(wl_fd, F_GETFL); fcntl(wl_fd, F_SETFL, fl | O_NONBLOCK);
+    /* re-arm CLOEXEC dropped by ctl_reload_exec(); without it every spawned
+     * app inherits the live wl socket and keeps our surfaces/gamma alive
+     * after we die. */
+    fcntl(wl_fd, F_SETFD, FD_CLOEXEC);
 
     unsigned hi = 0;
     const char *p = arg_field(args, "hi=");

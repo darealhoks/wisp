@@ -46,7 +46,7 @@ SELECTED_FILE := $(BUILD)/.selected
 # Selection is STICKY across separate make invocations: with no explicit WISP=
 # on the command line, reuse whatever the previous build persisted in
 # .selected (WISP *and* FONT_BACKEND/FONT). This is what makes the two-step
-#   make WISP=configs/foo.wisp FONT_BACKEND=freetype && make install
+#   make WISP=configs/foo.wisp FONT_BACKEND=bitmap && make install
 # install `foo` (with the chosen backend) instead of silently reverting — the
 # second `make install` recovers the whole selection rather than re-defaulting.
 # CLI assignments always win; `//!` directives in the .wisp override further
@@ -103,33 +103,35 @@ $(eval $(call KNOB,FONT_FALLBACK,font_fallback))
 $(eval $(call KNOB,FRACTIONAL,fractional))
 
 # Font backend (one per build) + font path defaults — lowest priority.
-#   baked    — FreeType bakes a TTF into const tables (default, leanest).
-#   bitmap   — pixel-exact PSF/BDF baked into the same tables.
-#   freetype — daemon dlopen()s libfreetype.so.6 and rasterizes on demand.
-# Only `freetype` changes the runtime (WISP_FONT_FREETYPE) + links font_ft.o.
-FONT_BACKEND ?= baked
+#   truetype — daemon rasterizes TTF/OTF with src/tt/ (default; no FreeType).
+#   bitmap   — pixel-exact PSF/BDF baked into const tables at build time.
+# truetype changes the runtime (WISP_FONT_RUNTIME) + links font_cache.o.
+FONT_BACKEND ?= truetype
 FONT         ?= $(HOME)/.local/share/fonts/MapleMono-NF-Bold.ttf
-# Optional fallback font (freetype backend only). Empty → no chain. Outline
-# fonts render mono (alpha8); CBDT/sbix color-bitmap emoji fonts render in
-# color (downscaled to text size). SVG-only color fonts won't render (FreeType
-# needs an external SVG library). $WISP_FONT_FALLBACK overrides at runtime.
+# Optional fallback font (truetype backend only). Empty → no chain. Outline
+# fonts render mono (alpha8); CBDT color-bitmap emoji fonts render in color
+# (downscaled to text size). $WISP_FONT_FALLBACK overrides at runtime.
 FONT_FALLBACK ?=
 # Directive values can't rely on shell expansion — honor a leading ~/ here.
 FONT          := $(patsubst ~/%,$(HOME)/%,$(FONT))
 FONT_FALLBACK := $(patsubst ~/%,$(HOME)/%,$(FONT_FALLBACK))
-# Fractional scaling needs real strikes at arbitrary sizes — the const baked/
-# bitmap tables can only pixel-double, so selecting it forces freetype.
+# Fractional scaling needs real strikes at arbitrary sizes — the const bitmap
+# tables can only pixel-double, so it's truetype-only.
 FRACTIONAL ?= 0
 ifeq ($(FRACTIONAL),1)
-override FONT_BACKEND := freetype
+ifneq ($(FONT_BACKEND),truetype)
+$(error FRACTIONAL=1 needs FONT_BACKEND=truetype (bitmap fonts can only pixel-double))
+endif
 CFLAGS += -DWISP_FRACTIONAL
 endif
-ifeq ($(filter $(FONT_BACKEND),baked bitmap freetype),)
-$(error FONT_BACKEND must be one of: baked bitmap freetype (got '$(FONT_BACKEND)'))
+ifneq (,$(filter $(FONT_BACKEND),baked freetype))
+$(error FONT_BACKEND=$(FONT_BACKEND) was retired — truetype (default) covers it; bitmap remains for PSF/BDF pixel fonts)
 endif
-ifeq ($(FONT_BACKEND),freetype)
-FONT_DEFS := -DWISP_FONT_FREETYPE
-FT_CFLAGS := $(shell pkg-config --cflags freetype2 2>/dev/null)
+ifeq ($(filter $(FONT_BACKEND),truetype bitmap),)
+$(error FONT_BACKEND must be truetype or bitmap (got '$(FONT_BACKEND)'))
+endif
+ifeq ($(FONT_BACKEND),truetype)
+FONT_DEFS := -DWISP_FONT_TRUETYPE -DWISP_FONT_RUNTIME
 endif
 CFLAGS += $(FONT_DEFS)
 
@@ -182,9 +184,12 @@ CFLAGS += -include $(GENDIR)/features.h -include $(GENDIR)/gen_overrides.h -I$(S
 
 include $(GENDIR)/objects.mk
 
-# The freetype backend adds one runtime module (dlopen + on-demand raster).
-ifeq ($(FONT_BACKEND),freetype)
-GEN_OBJS += $(BUILD)/font_ft.o
+# The truetype backend adds the shared glyph cache + its rasterizer.
+ifeq ($(FONT_BACKEND),truetype)
+GEN_OBJS += $(BUILD)/font_cache.o $(BUILD)/font_tt.o $(BUILD)/tt/sfnt.o $(BUILD)/tt/raster.o $(BUILD)/tt/cff.o $(BUILD)/tt/color.o
+# color.c decodes CBDT emoji PNGs with image.c's stb; sort dedupes it away when
+# the preset already links image.o for the wallpaper.
+GEN_OBJS := $(sort $(GEN_OBJS) $(BUILD)/image.o)
 endif
 
 HDR := $(SRCDIR)/wisp.h $(SRCDIR)/proto.h $(SRCDIR)/config.h \
@@ -206,8 +211,8 @@ BIN := $(BUILD)/wisp $(BUILD)/wispctl $(BUILD)/wisp-lock $(BUILD)/wisp-lock-help
 # so only WISP_HAS_LOCK is set and every other module preprocesses out. The
 # DSL-driven `lock {}` block still flows through gen_overrides.h for styling.
 LOCK_SRC  := wl widget render xkb wisp lock lock-main image
-ifeq ($(FONT_BACKEND),freetype)
-LOCK_SRC  += font_ft
+ifeq ($(FONT_BACKEND),truetype)
+LOCK_SRC  += font_cache font_tt tt/sfnt tt/raster tt/cff tt/color
 endif
 LOCK_OBJS := $(LOCK_SRC:%=$(BUILD)/lock/%.o)
 LOCK_HDR  := $(SRCDIR)/wisp.h $(SRCDIR)/proto.h $(SRCDIR)/config.h \
@@ -215,7 +220,7 @@ LOCK_HDR  := $(SRCDIR)/wisp.h $(SRCDIR)/proto.h $(SRCDIR)/config.h \
              $(SRCDIR)/lock-features.h $(GENDIR)/gen_overrides.h
 LOCK_CFLAGS := -Os -Wall -Wextra -Werror -Wno-unused-parameter \
                -fno-asynchronous-unwind-tables -fdata-sections -ffunction-sections \
-               $(FONT_DEFS) $(FT_CFLAGS) \
+               $(FONT_DEFS) \
                -include $(SRCDIR)/lock-features.h \
                -include $(GENDIR)/gen_overrides.h -I$(SRCDIR) -iquote $(GENDIR)
 
@@ -239,10 +244,12 @@ $(BUILD)/wall.o: $(SRCDIR)/wall.c $(HDR) | $(BUILD)
 $(BUILD)/image.o: $(SRCDIR)/image.c $(SRCDIR)/image.h | $(BUILD)
 	$(CC) $(CFLAGS) -w -c $< -o $@
 
-# font_ft.c needs the freetype headers for *types only* (it dlopen()s the lib);
-# FT_CFLAGS supplies the include path. Only ever built when FONT_BACKEND=freetype.
-$(BUILD)/font_ft.o: $(SRCDIR)/font_ft.c $(HDR) | $(BUILD)
-	$(CC) $(CFLAGS) $(FT_CFLAGS) -c $< -o $@
+# src/tt/ is its own subdir of objects (shared with the lock binary below).
+$(BUILD)/tt $(BUILD)/lock/tt:
+	mkdir -p $@
+
+$(BUILD)/tt/%.o: $(SRCDIR)/tt/%.c $(SRCDIR)/tt/tt.h | $(BUILD)/tt
+	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/gen_main.o: $(MAIN_FROM)/main.c $(HDR) | $(BUILD)
 	$(CC) $(CFLAGS) $(GEN_WNO) -c $< -o $@
@@ -276,6 +283,10 @@ $(BUILD)/lock:
 $(BUILD)/lock/%.o: $(SRCDIR)/%.c $(LOCK_HDR) | $(BUILD)/lock
 	$(CC) $(LOCK_CFLAGS) -c $< -o $@
 
+# More specific than the rule above (shorter stem), so src/tt/*.c lands here.
+$(BUILD)/lock/tt/%.o: $(SRCDIR)/tt/%.c $(SRCDIR)/tt/tt.h | $(BUILD)/lock/tt
+	$(CC) $(LOCK_CFLAGS) -c $< -o $@
+
 # image.c embeds stb_image.h — suppress its warnings in the lock build too.
 $(BUILD)/lock/image.o: $(SRCDIR)/image.c $(SRCDIR)/image.h | $(BUILD)/lock
 	$(CC) $(LOCK_CFLAGS) -w -c $< -o $@
@@ -292,22 +303,26 @@ $(BUILD)/wisp-lock-helper: $(TOOLDIR)/lock-helper.c | $(BUILD)
 # (FONT_BACKEND/FONT switch) changes. The set of sizes always includes 14 + 22
 # (legacy aliases) plus any `font_size = N;` the .wisp declares.
 #
-# freetype backend: emit per-size mutable skeletons + the runtime default font
-# path; no glyph data is baked and the font file need not exist at build time.
-# baked/bitmap: bake glyph data from the font file (TTF/PSF/BDF auto-detected).
-ifeq ($(FONT_BACKEND),freetype)
+# truetype: emit per-size mutable skeletons + the runtime default font path;
+# no glyph data is baked and the font file need not exist at build time.
+# bitmap: bake glyph data from the PSF/BDF font file.
+ifeq ($(FONT_BACKEND),truetype)
 $(GENDIR)/bake.h: $(ROOT)/bake $(WISPC_BOOT) $(WISP) $(SRCDIR)/font.h $(BUILD_TAG_FILE)
 	$(WISPC_BOOT) --font-sizes $(WISP) > $(BUILD)/font-sizes.txt
-	$(ROOT)/bake --ft-stub $@ $(FONT) "$(FONT_FALLBACK)" $$(cat $(BUILD)/font-sizes.txt)
+	$(ROOT)/bake --stub $@ $(FONT) "$(FONT_FALLBACK)" $$(cat $(BUILD)/font-sizes.txt)
 else
 $(GENDIR)/bake.h: $(ROOT)/bake $(FONT) $(WISPC_BOOT) $(WISP) $(SRCDIR)/font.h $(BUILD_TAG_FILE)
 	$(WISPC_BOOT) --font-sizes $(WISP) > $(BUILD)/font-sizes.txt
 	$(ROOT)/bake $(FONT) $@ $$(cat $(BUILD)/font-sizes.txt)
 endif
 
+# Debug-only: diffs src/tt's parsing against freetype (dlopen'd). Never installed.
+ttmetrics: $(TOOLDIR)/ttmetrics.c $(SRCDIR)/tt/sfnt.c $(SRCDIR)/tt/raster.c $(SRCDIR)/tt/cff.c $(SRCDIR)/tt/tt.h
+	$(CC) -O1 -g -Wall -Wextra -Werror $(shell pkg-config --cflags freetype2 2>/dev/null) \
+	    $(TOOLDIR)/ttmetrics.c $(SRCDIR)/tt/sfnt.c $(SRCDIR)/tt/raster.c $(SRCDIR)/tt/cff.c -o $@ -lm
+
 $(ROOT)/bake: $(TOOLDIR)/bake.c
-	$(CC) -O2 -Wall -Werror $< -o $@ \
-	    `pkg-config --cflags --libs freetype2`
+	$(CC) -O2 -Wall -Werror $(TOOLDIR)/bake.c -o $@
 
 # Warm every OTHER config's cache too (repo configs + user configs; the
 # share-dir examples aren't swept unless this tree IS the share dir). A broken

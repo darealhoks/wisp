@@ -21,7 +21,6 @@ fail=""
 need() { command -v "$1" >/dev/null 2>&1 || fail="$fail $1"; }
 need cc; need make; need git; need pkg-config
 [ -z "$fail" ] || err "missing required tools:$fail"
-pkg-config --exists freetype2 || err "freetype2 headers missing (font baking needs them at build time)"
 echo '#include <security/pam_appl.h>' | cc -E - >/dev/null 2>&1 \
     || err "PAM headers missing (wisp-lock-helper links libpam)"
 
@@ -45,5 +44,3 @@ case ":$PATH:" in *":$PREFIX/bin:"*) ;; *) echo "${Y}note:$N $PREFIX/bin is not 
 
 # Optional bits: absence only disables a feature.
 command -v wl-copy >/dev/null 2>&1 || echo "${Y}optional:$N wl-clipboard missing — emoji picker can't copy"
-[ -e /usr/lib/libfreetype.so.6 ] || ldconfig -p 2>/dev/null | grep -q libfreetype.so.6 \
-    || echo "${Y}optional:$N libfreetype.so.6 missing — the freetype font backend won't run"

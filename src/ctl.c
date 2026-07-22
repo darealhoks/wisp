@@ -137,6 +137,7 @@ void ctl_adopt(int fd) {
     if (dir) snprintf(ctl_path, sizeof ctl_path, "%s/%s", dir, CTL_SOCK_NAME);
     ctl_fd = fd;
     int fl = fcntl(ctl_fd, F_GETFL); if (fl >= 0) fcntl(ctl_fd, F_SETFL, fl | O_NONBLOCK);
+    fcntl(ctl_fd, F_SETFD, FD_CLOEXEC);  /* re-arm CLOEXEC dropped for the reload exec */
     for (int i = 0; i < MAX_CLIENTS; i++) clients[i].fd = -1;
 }
 

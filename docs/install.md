@@ -2,13 +2,11 @@
 
 ## Requirements
 
-To build, you need a C compiler, `make`, and FreeType with its `.pc` file
-(`freetype2`). FreeType is used by the `bake` tool that turns a font into
-the generated `bake.h`, so it is required even when the daemon will not link against it.
-The lock helper links PAM, so `libpam` and its headers are needed too.
+To build, you need a C compiler and `make`. The lock helper links PAM, so
+`libpam` and its headers are needed too.
 
-At runtime wisp links only libc and libm. The one exception is the `freetype`
-font backend, which `dlopen`s `libfreetype.so.6` when the daemon starts.
+At runtime wisp links only libc and libm — the built-in `truetype` backend
+rasterizes fonts itself, so there is no font dependency at all.
 
 You also need a Wayland compositor that implements `wlr-layer-shell-unstable-v1`.
 wisp is currently only developed against mangoWM.
@@ -58,17 +56,17 @@ Set `PREFIX` to install elsewhere:
 Build settings live in the `.wisp` itself, as `//!` directive comments at the
 top of the file (plain comments to the compiler; the Makefile reads them):
 
-    //! font_backend = freetype
+    //! font_backend = bitmap
     //! font = ~/.local/share/fonts/MapleMono-NF-Bold.ttf
     //! font_fallback = /usr/share/fonts/noto-emoji/NotoColorEmoji.ttf
     //! fractional = 1
 
 All are optional. A variable given on the make command line beats a directive:
 
-    make FONT_BACKEND=freetype FONT=/usr/share/fonts/foo.ttf
+    make FONT=/usr/share/fonts/foo.ttf
 
 With neither, the build falls back to the last selection recorded in
-`build/.build-tag`, and then to `configs/bee.wisp` with the `baked` backend.
+`build/.build-tag`, and then to `configs/bee.wisp` with the `truetype` backend.
 Changing any knob wipes `build/` before compiling, because objects from the
 previous selection are not compatible.
 
@@ -95,26 +93,22 @@ See [dsl.md](dsl.md) for the language and [wispctl.md](wispctl.md) for what
 
 One backend is compiled in per build.
 
-`baked` is the default and the leanest. FreeType rasterizes the TTF at build
-time into const tables in the generated `bake.h` (per config, under `build/<name>/gen-tw/`). The font file is not needed at runtime,
-and the daemon has no font dependency at all.
-
-`bitmap` bakes a PSF or BDF into the same tables. Pixel-exact, no
-anti-aliasing, and most icon glyphs will be missing. Gzipped console fonts need
-decompressing first (`gunzip -k`).
-
-`freetype` `dlopen`s `libfreetype.so.6` and rasterizes on demand. This is the
-only backend where the font can change without a rebuild:
+`truetype` is the default: wisp's own TTF/OTF rasterizer (`src/tt/`), no
+dependencies, glyphs cached on demand. The font can change without a rebuild:
 
     WISP_FONT=/path/to/other.ttf wisp
     WISP_FONT_FALLBACK=/path/to/NotoColorEmoji.ttf wisp
 
-A fallback font covers glyphs the primary font lacks. A CBDT or sbix color font
-renders in color, downscaled to text size. An outline font renders monochrome.
-SVG-only color fonts do not render, because FreeType needs an external SVG
-library for those.
+A fallback font covers glyphs the primary font lacks. A CBDT color font renders
+in color, downscaled to text size. An outline font renders monochrome.
+SVG-only color fonts do not render.
 
-Baked font sizes come from the `.wisp`: every `font_size = N;` it declares, plus
+`bitmap` bakes a PSF or BDF at build time into const tables in the generated
+`bake.h` (per config, under `build/<name>/gen-tw/`). Pixel-exact, no
+anti-aliasing, and most icon glyphs will be missing. Gzipped console fonts need
+decompressing first (`gunzip -k`).
+
+Font sizes come from the `.wisp`: every `font_size = N;` it declares, plus
 14 and 22. Changing a size in the config regenerates that config's `bake.h` on the next
 build.
 

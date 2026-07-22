@@ -11,9 +11,12 @@ config.mk
 *.swp
 *~
 
-# Claude / local
+# local
 .claude/
+web/
 nohup.out
 *.log
 .map/
 CLAUDE.md
+
+/ttmetrics

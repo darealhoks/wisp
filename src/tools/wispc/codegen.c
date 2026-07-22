@@ -277,9 +277,9 @@ static void emit_main(FILE *o, SrcInst *srcs, int nsrc, SemaResult *r) {
             fprintf(o, "        if (dirty_%s) { dirty_%s = 0; %s_redraw(); }\n", sn, sn, sn);
         fprintf(o, "        %s_apply_visibility();\n", sn);
     }
-    /* Idle tail: drop the font mmap pages FreeType faulted while rasterizing
-     * any new glyph this iteration (no-op in non-freetype builds). */
-    fputs("        font_ft_trim();\n", o);
+    /* Idle tail: drop the font mmap pages the rasterizer faulted while caching
+     * any new glyph this iteration (no-op in bitmap builds). */
+    fputs("        font_trim();\n", o);
     fputs("    }\n", o);
     fputs("}\n", o);
 }

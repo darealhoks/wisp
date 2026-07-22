@@ -1,28 +1,20 @@
-/* Build-time font baker. Three input paths, one output (`bake.h`):
+/* Build-time font baker. Two input paths, one output (`bake.h`):
  *
- *   TTF/OTF  — FreeType rasterizes a curated subset (ASCII + bar/HUD/menu
- *              icons) at one or more pixel sizes into alpha8 bitmaps.
- *   PSF1/PSF2, BDF — pixel-exact bitmap fonts, read directly (no FreeType,
- *              no anti-aliasing). A bitmap font has a single native size, so
+ *   PSF1/PSF2, BDF — pixel-exact bitmap fonts, read directly (no
+ *              anti-aliasing). A bitmap font has a single native size, so
  *              every requested size aliases to one `font_bm`.
- *   --ft-stub  — emits mutable per-size `Font` skeletons + the default and
- *              fallback font paths for the dlopen'd-freetype runtime backend
- *              (font_ft.c). No glyphs baked; rasterization happens at runtime.
+ *   --stub   — emits mutable per-size `Font` skeletons + the default and
+ *              fallback font paths for the truetype runtime backend
+ *              (font_tt.c). No glyphs baked; TTF/OTF rasterize at runtime.
  *
- * Run once at build time; freetype is never linked into the runtime daemon
- * (the freetype *backend* dlopen()s it instead).
+ * usage: bake <font.{psf,psfu,bdf}> <out.h> <px-size>...
+ *        bake --stub <out.h> <default-font-path> <fallback-path|''> <px-size>...
  *
- * usage: bake <font.{ttf,otf,psf,psfu,bdf}> <out.h> <px-size>...
- *        bake --ft-stub <out.h> <default-font-path> <fallback-path|''> <px-size>...
- *
- * Each TTF size N is emitted as `static const Font font_N`. Sizes 14 and 22
- * always get `font_small` / `font_large` aliases for hand-written runtime
- * modules that pre-date the DSL; the DSL codegen refers to fonts by size. */
+ * Sizes 14 and 22 always get `font_small` / `font_large` aliases for
+ * hand-written runtime modules that pre-date the DSL; the DSL codegen refers
+ * to fonts by size. */
 
 #define _GNU_SOURCE
-#include <ft2build.h>
-#include FT_FREETYPE_H
-
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -154,51 +146,6 @@ static int is_wanted(uint32_t cp) {
     if (cp >= 32 && cp <= 126) return 1;
     for (int i = 0; i < N_ICONS; i++) if (WANT[i] == cp) return 1;
     return 0;
-}
-
-/* ------------------------------------------------------------------ */
-/* TTF / OTF via FreeType                                              */
-/* ------------------------------------------------------------------ */
-
-static int rasterize(FT_Face face, uint32_t cp, Bake *b) {
-    FT_UInt gi = FT_Get_Char_Index(face, cp);
-    if (!gi) return -1;
-    if (FT_Load_Glyph(face, gi, FT_LOAD_DEFAULT)) return -1;
-    if (FT_Render_Glyph(face->glyph, FT_RENDER_MODE_NORMAL)) return -1;
-
-    FT_GlyphSlot s = face->glyph;
-    FT_Bitmap *bm = &s->bitmap;
-    int w = bm->width, h = bm->rows;
-
-    /* Repack to tight w-byte rows (drop FT pitch padding). */
-    uint8_t *tmp = NULL;
-    if (w && h) {
-        tmp = xrealloc(NULL, (size_t)w * h);
-        for (int y = 0; y < h; y++)
-            memcpy(tmp + y * w, bm->buffer + y * bm->pitch, w);
-    }
-    add_glyph(b, cp, w, h, s->bitmap_left, s->bitmap_top, s->advance.x >> 6, tmp);
-    free(tmp);
-    return 0;
-}
-
-static void bake_ttf_size(FT_Library ft, const char *font_path, int px_size, Bake *b) {
-    FT_Face face;
-    if (FT_New_Face(ft, font_path, 0, &face)) {
-        fprintf(stderr, "can't open %s\n", font_path); exit(1);
-    }
-    if (FT_Set_Pixel_Sizes(face, 0, px_size)) {
-        fprintf(stderr, "set_pixel_sizes(%d) failed\n", px_size); exit(1);
-    }
-    b->px_size  = px_size;
-    b->line_h   = face->size->metrics.height   >> 6;
-    b->baseline = face->size->metrics.ascender >> 6;
-
-    for (uint32_t c = 32; c <= 126; c++) rasterize(face, c, b);
-    for (int i = 0; i < N_ICONS; i++)    rasterize(face, WANT[i], b);
-
-    qsort(b->glyphs, b->n_glyphs, sizeof(Glyph), cmp_glyph);
-    FT_Done_Face(face);
 }
 
 /* ------------------------------------------------------------------ */
@@ -463,13 +410,13 @@ static void emit_bake(FILE *f, const char *tag, const Bake *b) {
 #define ALIAS_SMALL 14
 #define ALIAS_LARGE 22
 
-static void emit_ft_stub(FILE *f, const char *default_path, const char *fallback_path,
-                         const int *sizes, int nsizes) {
+static void emit_stub(FILE *f, const char *default_path, const char *fallback_path,
+                      const int *sizes, int nsizes) {
     emit_preamble(f);
     fprintf(f, "#define WISP_FONT_DEFAULT_PATH \"%s\"\n", default_path);
-    /* Empty string → no fallback chain (font_ft.c skips it). */
+    /* Empty string → no fallback chain (font_tt.c skips it). */
     fprintf(f, "#define WISP_FONT_FALLBACK_PATH \"%s\"\n\n", fallback_path ? fallback_path : "");
-    /* font_N are mutable globals defined exactly once (font_ft.c sets
+    /* font_N are mutable globals defined exactly once (font_cache.c sets
      * WISP_FONT_DEFINE); every other TU sees the extern declarations. */
     fprintf(f, "#ifdef WISP_FONT_DEFINE\n");
     for (int i = 0; i < nsizes; i++)
@@ -512,30 +459,30 @@ static int collect_sizes(int argc, char **argv, int first, int *sizes, int cap) 
     return u;
 }
 
-enum Fmt { FMT_TTF, FMT_PSF, FMT_BDF };
+enum Fmt { FMT_PSF, FMT_BDF, FMT_BAD };
 
 static enum Fmt detect_fmt(const uint8_t *d, size_t len) {
     if (len >= 4 && d[0] == 0x72 && d[1] == 0xb5 && d[2] == 0x4a && d[3] == 0x86) return FMT_PSF;
     if (len >= 4 && d[0] == 0x36 && d[1] == 0x04) return FMT_PSF;
     if (len >= 9 && !memcmp(d, "STARTFONT", 9)) return FMT_BDF;
-    return FMT_TTF;
+    return FMT_BAD;
 }
 
 int main(int argc, char **argv) {
     want_init(argc, argv);
     int sizes[64];
 
-    /* --ft-stub: emit runtime skeletons, no glyph data. */
-    if (argc >= 3 && !strcmp(argv[1], "--ft-stub")) {
+    /* --stub: emit runtime skeletons, no glyph data. */
+    if (argc >= 3 && !strcmp(argv[1], "--stub")) {
         const char *out_path = argv[2];
         const char *font_path = argc >= 4 ? argv[3] : "";
         const char *fb_path   = argc >= 5 ? argv[4] : "";
         int nsizes = collect_sizes(argc, argv, 5, sizes, 64);
         FILE *f = fopen(out_path, "w");
         if (!f) { perror(out_path); return 1; }
-        emit_ft_stub(f, font_path, fb_path, sizes, nsizes);
+        emit_stub(f, font_path, fb_path, sizes, nsizes);
         fclose(f);
-        fprintf(stderr, "bake: %s freetype stub (%d sizes, default %s%s%s)\n",
+        fprintf(stderr, "bake: %s runtime stub (%d sizes, default %s%s%s)\n",
                 out_path, nsizes, font_path,
                 fb_path && *fb_path ? ", fallback " : "", fb_path ? fb_path : "");
         return 0;
@@ -543,59 +490,43 @@ int main(int argc, char **argv) {
 
     if (argc < 3) {
         fprintf(stderr,
-            "usage: bake <font.{ttf,otf,psf,psfu,bdf}> <out.h> [<px-size>...]\n"
-            "       bake --ft-stub <out.h> <default-font-path> [<fallback-path>] [<px-size>...]\n");
+            "usage: bake <font.{psf,psfu,bdf}> <out.h> [<px-size>...]\n"
+            "       bake --stub <out.h> <default-font-path> [<fallback-path>] [<px-size>...]\n");
         return 2;
     }
     const char *font_path = argv[1];
     const char *out_path  = argv[2];
     int nsizes = collect_sizes(argc, argv, 3, sizes, 64);
 
+    size_t flen = 0;
+    uint8_t *fdata = read_file(font_path, &flen);
+    enum Fmt fmt = detect_fmt(fdata, flen);
+    if (fmt == FMT_BAD) {
+        fprintf(stderr, "bake: %s is not PSF/BDF — TTF/OTF rasterize at runtime "
+                        "(FONT_BACKEND=truetype, the default)\n", font_path);
+        return 1;
+    }
+
     FILE *f = fopen(out_path, "w");
     if (!f) { perror(out_path); return 1; }
     emit_preamble(f);
 
-    size_t flen = 0;
-    uint8_t *fdata = read_file(font_path, &flen);
-    enum Fmt fmt = detect_fmt(fdata, flen);
-
-    if (fmt == FMT_TTF) {
-        free(fdata);
-        FT_Library ft;
-        if (FT_Init_FreeType(&ft)) { fprintf(stderr, "ft init\n"); return 1; }
-        for (int i = 0; i < nsizes; i++) {
-            Bake b = {0};
-            bake_ttf_size(ft, font_path, sizes[i], &b);
-            char tag[16]; snprintf(tag, sizeof tag, "%d", sizes[i]);
-            emit_bake(f, tag, &b);
-            fprintf(stderr, "bake: %s font_%d=%d glyphs/%d B\n",
-                    out_path, sizes[i], b.n_glyphs, b.px_len);
-            free(b.glyphs); free(b.pixels);
-        }
-        FT_Done_FreeType(ft);
-        fprintf(f, "\nstatic const Font *const wisp_fonts[] __attribute__((unused)) = {");
-        for (int i = 0; i < nsizes; i++) fprintf(f, " &font_%d,", sizes[i]);
-        fprintf(f, " };\nstatic const int wisp_n_fonts __attribute__((unused)) = %d;\n", nsizes);
-        fprintf(f, "\n#define font_small font_%d\n#define font_large font_%d\n",
-                ALIAS_SMALL, ALIAS_LARGE);
-    } else {
-        /* Bitmap font: one native size, every requested size aliases to it. */
-        Bake b = {0};
-        if (fmt == FMT_PSF) read_psf(fdata, flen, &b);
-        else                read_bdf(fdata, flen, &b);
-        free(fdata);
-        emit_bake(f, "bm", &b);
-        fprintf(stderr, "bake: %s font_bm=%d glyphs/%d B @ %dpx (bitmap)\n",
-                out_path, b.n_glyphs, b.px_len, b.px_size);
-        free(b.glyphs); free(b.pixels);
-        fprintf(f, "\n");
-        for (int i = 0; i < nsizes; i++)
-            fprintf(f, "#define font_%d font_bm\n", sizes[i]);
-        fprintf(f, "static const Font *const wisp_fonts[] __attribute__((unused)) = { &font_bm };\n");
-        fprintf(f, "static const int wisp_n_fonts __attribute__((unused)) = 1;\n");
-        fprintf(f, "#define font_small font_%d\n#define font_large font_%d\n",
-                ALIAS_SMALL, ALIAS_LARGE);
-    }
+    /* Bitmap font: one native size, every requested size aliases to it. */
+    Bake b = {0};
+    if (fmt == FMT_PSF) read_psf(fdata, flen, &b);
+    else                read_bdf(fdata, flen, &b);
+    free(fdata);
+    emit_bake(f, "bm", &b);
+    fprintf(stderr, "bake: %s font_bm=%d glyphs/%d B @ %dpx (bitmap)\n",
+            out_path, b.n_glyphs, b.px_len, b.px_size);
+    free(b.glyphs); free(b.pixels);
+    fprintf(f, "\n");
+    for (int i = 0; i < nsizes; i++)
+        fprintf(f, "#define font_%d font_bm\n", sizes[i]);
+    fprintf(f, "static const Font *const wisp_fonts[] __attribute__((unused)) = { &font_bm };\n");
+    fprintf(f, "static const int wisp_n_fonts __attribute__((unused)) = 1;\n");
+    fprintf(f, "#define font_small font_%d\n#define font_large font_%d\n",
+            ALIAS_SMALL, ALIAS_LARGE);
 
     fprintf(f, "\n#endif\n");
     fclose(f);

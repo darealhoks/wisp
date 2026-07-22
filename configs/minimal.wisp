@@ -1,4 +1,3 @@
-//! font_backend = baked
 
 source time = clock("%H:%M");
 source cpu  = cpu();

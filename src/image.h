@@ -12,6 +12,10 @@
 uint8_t *image_load(const char *path, int *w, int *h);
 void     image_free(uint8_t *px);
 
+/* Same decode from an in-memory PNG (a CBDT emoji strike, via src/tt/color.c).
+ * Returns malloc'd RGBA8 or NULL; free with image_free. */
+uint8_t *image_decode_png(const uint8_t *buf, int len, int *w, int *h);
+
 /* Non-zero if `path` starts with the PNG signature (the only format the
  * vendored stb decodes) — cheap synchronous validity check. */
 int      image_is_png(const char *path);

@@ -56,10 +56,14 @@ uint8_t *image_load(const char *path, int *w, int *h) {
     uint8_t *fbuf = slurp(real, &flen);
     free(real);
     if (!fbuf) return NULL;
-    int c = 0;
-    uint8_t *px = stbi_load_from_memory(fbuf, flen, w, h, &c, 4);
+    uint8_t *px = image_decode_png(fbuf, flen, w, h);
     free(fbuf);
     return px;
+}
+
+uint8_t *image_decode_png(const uint8_t *buf, int len, int *w, int *h) {
+    int c = 0;
+    return stbi_load_from_memory(buf, len, w, h, &c, 4);
 }
 
 void image_free(uint8_t *px) { stbi_image_free(px); }
