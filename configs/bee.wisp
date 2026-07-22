@@ -313,7 +313,7 @@ surface menu {
   max_visible = 5;
   row_h       = 34;
 
-  prompt = "run:";
+  prompt = "run: ";
   sort   = "most_used";
   icons  = true;
 
@@ -322,7 +322,7 @@ surface menu {
 
   // query row: dim prompt, the typed text, then a caret
   group query {
-    height = 34; pad = 0; pad_x = 8; gap = 6;
+    height = 34; pad = 0; pad_x = 8; gap = 0;   // caret hugs the query; prompt carries its own trailing space
     bg = #00000000; border = #00000000;
     cell { text = menu.prompt; fg = SUBTXT; }
     cell { text = menu.query;  fg = TEXT; }

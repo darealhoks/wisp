@@ -1090,7 +1090,7 @@ static void emit_group_member(FILE *o, BarItem *it, const char *nm, int gap) {
     if (clk)
         fprintf(o, "            { int __i = __%s_nhit++; __%s_hits_buf[__i].x=__gx; __%s_hits_buf[__i].y=__gy; __%s_hits_buf[__i].w=__ma; __%s_hits_buf[__i].h=__gh; __%s_hits_buf[__i].kind=0; __%s_hits_buf[__i].arg=%d; __%s_hits_buf[__i].slider_idx=-1; __%s_hits_buf[__i].st_idx=%d; }\n",
                 nm, nm, nm, nm, nm, nm, nm, it->handler_idx, nm, nm, sb);
-    fprintf(o, "            __gx += __ma + %d;\n", gap);
+    fprintf(o, "            if (__ma) __gx += __ma + %d;\n", gap);
     fputs("        }\n", o);
 }
 
@@ -1119,8 +1119,9 @@ int emit_group_draw(FILE *o, BarItem *items, int first, int nitems,
     fprintf(o, "        int __gw = %d, __gn = 0;\n", 2 * padx);
     for (int k = 0; k < cnt; k++) {
         int sb = items[first + k].st_base;
-        fprintf(o, "        if (st[%d].vis) { __gw += (st[%d].h>0?st[%d].h:st[%d].tw); if (__gn) __gw += %d; __gn++; }\n",
-                sb, sb, sb, sb, gap);
+        /* zero-extent members (e.g. an empty menu.query cell) consume no gap */
+        fprintf(o, "        if (st[%d].vis && (st[%d].h>0?st[%d].h:st[%d].tw) > 0) { __gw += (st[%d].h>0?st[%d].h:st[%d].tw); if (__gn) __gw += %d; __gn++; }\n",
+                sb, sb, sb, sb, sb, sb, sb, gap);
     }
     /* Vertical: the band advances the stack by its own height and spans the
      * region's width; horizontal: it advances by the members' total width. */
