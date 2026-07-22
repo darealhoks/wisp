@@ -291,26 +291,33 @@ wallpaper {
 
 media {}
 
+// dmenu strip: full-width top band, prompt + query then items left→right.
 surface menu {
   spawned_by = menu;
   layer = overlay;
-  anchor = top | left | right;
-  height = 28;
   exclusive_zone = -1;
   keyboard = exclusive;
-  bg = #ff0f1219;
-  prompt = "run:";
-  pad_x = 8;    // legacy MENU_PAD_X
 
-  widget prompt { text = menu.prompt; fg = #ffffffff; pad = 4; }
-  widget query { text = menu.query;  fg = #ffffffff; }
-  widget caret { text = "_";         fg = #ffffffff; pad = 12; }  // legacy MENU_GAP
+  axis   = horizontal;
+  prompt = "run:";
+  sort   = "most_used";
+
+  bg = #ff0f1219;
+  pad_x = 8;
+
+  group query {
+    pad = 8; gap = 6;
+    bg = #00000000; border = #00000000;
+    cell { text = menu.prompt; fg = DIM; }
+    cell { text = menu.query;  fg = FG; }
+    cell { text = "_";         fg = FG; }
+  }
   for row in rows {
     cell {
       text  = row.label;
-      fg    = #ffffffff;
-      bg    = row.selected ? #ff2a2f3a : #00000000;
-      pad_x = 8;   // legacy MENU_ITEM_PAD_X
+      fg    = FG;
+      bg    = row.selected ? ACT : #00000000;
+      pad_x = 8;
     }
   }
 }

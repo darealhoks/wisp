@@ -119,10 +119,24 @@ void menu_render(Widget *w) {
         if (*top > w->s.menu.n_filtered - vis) *top = w->s.menu.n_filtered - vis;
         if (*top < 0) *top = 0;
     } else {
-        /* Horizontal: scroll by whole items, so the selection is always the
-         * last row that can start inside the strip. */
-        if (w->s.menu.sel < w->s.menu.view_top) w->s.menu.view_top = w->s.menu.sel;
-        if (w->s.menu.view_top < 0) w->s.menu.view_top = 0;
+        /* Horizontal: scroll by whole items so the selection stays inside the
+         * strip. Widths are re-measured here against an approximate reserve
+         * for the prompt/query cells — the declared renderer owns the real
+         * layout, so a page may flip one item early, never late.
+         * ponytail: ~16px/item + 48px reserve mirror the .wisp's cell pads;
+         * feed real hit rects back from the renderer if presets diverge. */
+        int avail = w->w - text_width(f, w->s.menu.prompt)
+                  - text_width(f, w->s.menu.query) - 48;
+        int *top = &w->s.menu.view_top;
+        if (w->s.menu.sel < *top) *top = w->s.menu.sel;
+        while (*top < w->s.menu.sel) {
+            int x = 0;
+            for (int i = *top; i <= w->s.menu.sel && x <= avail; i++)
+                x += text_width(f, w->s.menu.items[w->s.menu.filtered[i]]) + 16;
+            if (x <= avail) break;
+            (*top)++;
+        }
+        if (*top < 0) *top = 0;
     }
     if (w->s.menu.render) w->s.menu.render(w);
 }
