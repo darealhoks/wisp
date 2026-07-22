@@ -295,7 +295,10 @@ per notification, with `$summary`, `$body` and friends bound per slab.
 Properties on the surface itself (timeouts, spacing, the slide animation)
 configure the stack machinery in `osd.c`.
 
-Volume and brightness feed the same surface:
+Volume and brightness feed the same surface — or, if you also declare a
+`surface pill { spawned_by = osd_pill; ... }` template, they render as that
+minimal top-centred pill instead of joining the stack (see
+[dsl.md](dsl.md)):
 
     wispctl volume up
 

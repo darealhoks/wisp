@@ -1,8 +1,20 @@
-/* Pct pill — minimal {icon}{slider} OSD for progress-only posts (volume /
- * brightness), top-centered so it reads as a bar module. #included at the end
- * of osd.c (single TU); enabled by `pill_w > 0` on the DSL osd surface. */
+/* Pct pill — the minimal OSD progress-only posts (volume / brightness) route
+ * to instead of the notification stack. What it looks like is declared: a
+ * `surface pill { spawned_by = osd_pill; … }` lowers to render_pill(). This
+ * file owns only what the DSL can't say — the widget, its buffer geometry and
+ * the post/replace rule. #included at the end of osd.c (single TU); enabled by
+ * OSD_PILL_W > 0, i.e. by the pill surface existing. */
 
 #if OSD_PILL_W > 0
+
+extern void render_pill(Widget *w);
+
+/* pill_margin <= 0 → flush against the bar like the stack: buffer grows
+ * fillet_r either side plus the bar row on top, and fillet wedges claw into
+ * the bar at its bottom edge. 0 rests the body exactly at the junction
+ * (square top, emerges from under the bar); negative rests it that many px
+ * INSIDE the bar row — straddling the edge to conserve screen space. */
+#define PILL_FR (OSD_PILL_MARGIN <= 0 ? OSD_PILL_FILLET_R : 0)
 
 static Widget *pill_widget(void) {
     for (int i = 0; i < MAX_WIDGETS; i++)
@@ -15,12 +27,14 @@ static Widget *pill_make_on(Output *o) {
     Widget *w = widget_alloc(W_OSD);
     if (!w) { msg("wisp: no widget slot for OSD pill"); return NULL; }
     w->s.osd.is_pill = 1;
-    w->w = OSD_PILL_W;
-    /* pill_margin is baked into the buffer (body drawn OSD_PILL_MARGIN below
-     * the buffer top) instead of a layer-surface margin: a margin puts the
+    w->w = OSD_PILL_W + 2 * PILL_FR;
+    /* pill_margin is baked into the buffer (osd_pill_layout's vh sweeps the
+     * whole height) instead of being a layer-surface margin: a margin puts the
      * buffer top BELOW the screen edge, so the slide tween clipped there —
-     * the pill visibly vanished pill_margin px before reaching the edge. */
-    w->h = OSD_PILL_H + OSD_PILL_MARGIN;
+     * the pill visibly vanished pill_margin px before reaching the edge.
+     * Flush mode swaps that inset for the bar row the fillets claw into
+     * (minus however far a negative margin tucks the body into the bar). */
+    w->h = OSD_PILL_H + OSD_PILL_MARGIN + (PILL_FR ? osd_bar_split() : 0);
     widget_setup_surface(w, LAYER_OVERLAY, "wisp-osd-pill", o);
     widget_set_size(w, w->w, w->h);
     /* Anchor TOP → compositor centers horizontally. exclusive_zone=-1 ignores
@@ -35,74 +49,7 @@ static Widget *pill_make_on(Output *o) {
 }
 
 static void osd_pill_render(Widget *w) {
-    if (!w->configured) return;
-    Osd *o = &w->s.osd.items[0];
-    if (!o->active && !w->s.osd.has_pixels) return;
-    if (!o->active) { osd_attach_empty(w); return; }
-
-    int64_t now = now_ms();
-    double p = slab_anim_p(o, now);
-    int W = w->w, H = w->h;
-    int vh = (int)((double)H * p);
-    if (vh < 0) vh = 0;
-    if (vh > H) vh = H;
-
-    update_input_region(w);
-    widget_ensure_pool(w, 2);
-    BufSlot *s = widget_free_slot(w);
-    if (!s) return;
-    memset(s->px, 0, (size_t)W * H * 4);
-
-    /* Body slides down into place: drawn at its full size, offset up by the
-     * not-yet-emerged remainder and clipped by the buffer top. vh sweeps the
-     * whole buffer (body + baked-in top margin) so p=1 rests the body at
-     * y=OSD_PILL_MARGIN and p=0 hides it fully above the screen edge. */
-    int BH = OSD_PILL_H;
-    int y = vh - BH;
-    uint32_t bg  = o->muted == 2 ? OSD_BG_WARN : OSD_BG;
-    uint32_t fg  = o->muted == 2 ? OSD_FG_WARN : OSD_FG;
-    uint32_t pfg = o->muted == 2 ? OSD_PROG_FG_WARN
-                 : o->muted == 1 ? OSD_PROG_FG_MUTE : OSD_PROG_FG;
-    int r = OSD_PILL_RADIUS;
-    fill_rect_rounded(s->px, W, H, 0, y, W, BH, r, r, r, r, bg);
-    if (OSD_BORDER_W > 0)
-        fill_rect_rounded_border(s->px, W, H, 0, y, W, BH, r, r, r, r,
-                                 OSD_BORDER_W, 1, 1, 1, 1, 0, OSD_BORDER);
-
-    int tx = OSD_PAD_X;
-    if (o->icon_cp) {
-        /* Pill icon: a step smaller than font_large + extra gap, else the
-         * glyph's right edge crowds the slider track. */
-        const Glyph *g = font_find(&font_20, o->icon_cp);
-        if (g) {
-            int gy = y + (BH - g->h) / 2 + g->by;
-            draw_glyph(s->px, W, H, tx - g->bx, gy, &font_20, g, fg);
-            tx += g->adv + OSD_ICON_GAP + 6;
-        }
-    }
-
-    /* Slider: rounded track filling the rest of the row. */
-    int bx = tx, bw = W - OSD_PAD_X - bx;
-    if (bw > 0) {
-        int by = y + (BH - OSD_PROG_H) / 2;
-        int pr = OSD_PROG_H / 2;
-        fill_rounded_clipped(s->px, W, H, bx, by, bw, OSD_PROG_H,
-                             pr, pr, pr, pr, bx, by, bw, OSD_PROG_H,
-                             pr, pr, pr, pr, OSD_PROG_TRACK_BG);
-        int pmax = o->progress > 100 ? o->progress : 100;
-        int pw = bw * o->progress / pmax;
-        if (pw > bw) pw = bw;
-        if (pw > 0)
-            fill_rounded_clipped(s->px, W, H, bx, by, pw, OSD_PROG_H,
-                                 pr, pr, pr, pr, bx, by, bw, OSD_PROG_H,
-                                 pr, pr, pr, pr, pfg);
-    }
-
-    w->s.osd.has_pixels = 1;
-    int anim_pending =
-        (o->closing_at_ms > 0 && now < o->closing_at_ms + OSD_SLIDE_MS) ||
-        (o->closing_at_ms == 0 && o->spawn_ms > 0 && now < o->spawn_ms + OSD_SLIDE_MS);
-    widget_attach(w, s, anim_pending);
+    render_pill(w);
 }
 
 static uint32_t pill_post(uint32_t icon_cp, int progress, int muted, int timeout_ms) {

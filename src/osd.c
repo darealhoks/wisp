@@ -46,8 +46,8 @@
 #ifndef OSD_PILL_MARGIN
 #define OSD_PILL_MARGIN 0
 #endif
-#ifndef OSD_PILL_RADIUS
-#define OSD_PILL_RADIUS OSD_RADIUS
+#ifndef OSD_PILL_FILLET_R
+#define OSD_PILL_FILLET_R OSD_FILLET_R
 #endif
 /* Floating top-center stack, OSD_TOP_MARGIN px below the bar's exclusive zone.
  * Like the bottom-right anchor it is fully declared now — the margin is what
@@ -389,6 +389,26 @@ int osd_slab_layout(Widget *w) {
 #endif
     return n_active;
 }
+
+#if OSD_PILL_W > 0
+/* Pill pass-1: one slab, height fixed by the declaration, and vh sweeping the
+ * WHOLE buffer — which bakes in the top margin (a layer-surface margin would
+ * put the buffer top below the screen edge and clip the slide). That makes the
+ * generated renderer's slide math rest the body exactly pill_margin px down. */
+int osd_pill_layout(Widget *w) {
+    Osd *o = &w->s.osd.items[0];
+    if (!o->active) return 0;
+    osd_nbody[0] = 0;
+    osd_item_y[0] = 0;
+    o->h = OSD_PILL_H;
+    osd_anim_p[0] = slab_anim_p(o, now_ms());
+    int vh = (int)((double)w->h * osd_anim_p[0]);
+    if (vh < 0) vh = 0;
+    if (vh > w->h) vh = w->h;
+    osd_visible_h[0] = vh;
+    return 1;
+}
+#endif
 
 int osd_bar_split(void) {
 #if !OSD_ANCHOR_BR && !OSD_FLOAT

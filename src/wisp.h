@@ -594,6 +594,7 @@ void     osd_on_click(Widget *w, int x, int y);
  * settled height, `vh` the animated visible height, `settled` is vh == sh. */
 typedef struct { int y, vh, sh, settled, closing; } OsdSlabGeom;
 int  osd_slab_layout(Widget *w);              /* wrap + measure + tween; → n_active */
+int  osd_pill_layout(Widget *w);              /* pill: one fixed-height slab; → 0 or 1 */
 void osd_slab_geom(Widget *w, int i, OsdSlabGeom *g);
 const char *osd_slab_body(int i);             /* wrapped body, "\n"-joined */
 int  osd_slab_nbody(int i);                   /* wrapped line count */

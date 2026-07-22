@@ -507,10 +507,6 @@ static void emit_overrides(FILE *o, Unit *u, CGCtx *ctx) {
             {"radius",         "OSD_RADIUS",          0},
             {"fillet_r",       "OSD_FILLET_R",        0},
             {"border_width",   "OSD_BORDER_W",        0},
-            {"pill_w",         "OSD_PILL_W",          0},
-            {"pill_h",         "OSD_PILL_H",          0},
-            {"pill_margin",    "OSD_PILL_MARGIN",     0},
-            {"pill_radius",    "OSD_PILL_RADIUS",     0},
             {"bg",             "OSD_BG",              1},
             {"fg",             "OSD_FG",              1},
             {"border",         "OSD_BORDER",          1},
@@ -522,18 +518,19 @@ static void emit_overrides(FILE *o, Unit *u, CGCtx *ctx) {
             if (!e) continue;
             if (map[i].is_color) {
                 /* A `:warn`/`:mute` overlay wraps the base value in a ternary
-                 * no #define can hold. The macro feeds the legacy pill path,
-                 * which wants the base (default-state) color — unwrap the
-                 * overlay's else branch back down to it. */
+                 * no #define can hold — unwrap the overlay's else branch back
+                 * down to the base (default-state) color. */
                 while (e->kind == EX_TERN) e = e->tern.e;
                 if (e->kind != EX_COLOR && e->kind != EX_IDENT) continue;
                 fprintf(o, "#undef %s\n#define %s 0x%08xu\n",
                         map[i].macro, map[i].macro,
                         (unsigned)eval_color_ctx(ctx, e, 0));
             } else {
-                if (e->kind != EX_INT) continue;
+                if (e->kind != EX_INT &&
+                    !(e->kind == EX_UN && e->un.op == OP_NEG))
+                    continue;
                 fprintf(o, "#undef %s\n#define %s %d\n",
-                        map[i].macro, map[i].macro, (int)e->i);
+                        map[i].macro, map[i].macro, eval_int(e, 0));
             }
         }
         /* anchor: only top-center (default) and bottom|right are wired in
@@ -541,6 +538,31 @@ static void emit_overrides(FILE *o, Unit *u, CGCtx *ctx) {
         Expr *a = surface_prop(osd, "anchor");
         if (a && expr_has_ident(a, "bottom"))
             fputs("#undef OSD_ANCHOR_BR\n#define OSD_ANCHOR_BR 1\n", o);
+        fputs("\n", o);
+    }
+
+    /* pill template → the geometry osd_pill.c needs to size and anchor the
+     * surface before the generated renderer paints into it. Its look is
+     * declared; OSD_PILL_W > 0 is also what compiles the pill in at all. */
+    Decl *pill = find_spawn_template(u, "pill");
+    if (pill) {
+        fputs("/* === pill surface overrides === */\n", o);
+        struct { const char *prop; const char *macro; } map[] = {
+            {"width",    "OSD_PILL_W"},
+            {"height",   "OSD_PILL_H"},
+            {"margin",   "OSD_PILL_MARGIN"},
+            {"fillet_r", "OSD_PILL_FILLET_R"},
+        };
+        for (size_t i = 0; i < sizeof(map)/sizeof(map[0]); i++) {
+            Expr *e = surface_prop(pill, map[i].prop);
+            /* eval_int also folds a negative literal (EX_UN neg) — a negative
+             * margin straddles the bar edge. */
+            if (!e || (e->kind != EX_INT &&
+                       !(e->kind == EX_UN && e->un.op == OP_NEG)))
+                continue;
+            fprintf(o, "#undef %s\n#define %s %d\n",
+                    map[i].macro, map[i].macro, eval_int(e, 0));
+        }
         fputs("\n", o);
     }
 

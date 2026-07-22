@@ -216,8 +216,6 @@ surface osd {
   prog_fg = WSACT; prog_track = REST;
   bg = CRUST; radius = 10; border_width = 2; border = BORD;
   separator = REST; separator_frac = 80;
-  /* Pct posts (volume / brightness) skip the stack and render as this pill. */
-  pill_w = 220; pill_h = 40; pill_margin = 3; pill_radius = 8;
   dismiss_on_click = true; focus_follow = true; dbus_close = true;
 
   widget icon  { align = left;   width = 40; icon = $icon; }
@@ -248,6 +246,27 @@ surface osd {
 #osd widget:warn { fg = ORANGE; }
 #prog:warn { track_fg = ORANGE; }
 #prog:mute { track_fg = RED; }
+
+/* Pct posts (volume / brightness) skip the stack and render as this pill —
+   one fixed-height slab, {icon}{slider}, top-centered like a bar module.
+   margin > 0 floats it below the bar, so it rounds and outlines all round.
+   The icon's leading gap is its widget width (the slab has no pad_x). */
+surface pill {
+  spawned_by = osd_pill;
+  layer = overlay;
+  anchor = top;
+  width = 220; height = 40; margin = 3; radius = 8; font_size = 20;
+
+  widget icon { align = left; width = 40; pad = 4; icon = $icon; }
+  widget prog { slider; align = left; width = 162; height = 10;
+                value = $progress; value_max = 100;
+                track_bg = REST; track_fg = WSACT; track_radius = 5; }
+}
+
+#pill { bg = CRUST; border = BORD; border_width = 2; }
+#pill widget { fg = TEXT; }
+#pill:warn { bg = REST; }
+#pill widget:warn { fg = ORANGE; }
 
 // ============================================================================
 // Optional subsystems.

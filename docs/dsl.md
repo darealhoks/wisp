@@ -377,8 +377,18 @@ the layout: an edge named in `anchor` with `margin = 0` sits flush against it
 flares the corner into the bar row — while `margin > 0` lifts the chain off
 every edge so all four corners round and the outline closes. `anchor = top;
 margin = 12` is a floating top-centre stack; `anchor = bottom | right;
-margin = 0` is the corner stack. Set `pill_w` above 0 and progress-only posts
-render as a minimal centred pill instead of joining the stack.
+margin = 0` is the corner stack.
+
+**pill** — `surface pill { spawned_by = osd_pill; ... }`. Declare it and
+progress-only posts (volume / brightness) skip the stack and render as this
+surface instead: one fixed-height slab, top-centred by the compositor. The
+body is composed like any other surface — `$icon` and `$progress` are bound,
+and `:mute`/`:warn` style it per state (`#pill:warn { bg = ...; }`). `width
+height margin fillet_r` size and anchor it; `margin > 0` floats it below the
+bar so all corners round, `margin = 0` rests it flush under the bar with
+`fillet_r` flaring into the bar row, and a *negative* margin tucks the body
+that many px inside the bar row, straddling the edge. Without this surface,
+progress posts join the stack like any notification.
 
 **menu** — `surface menu { spawned_by = menu; ... }`. Same idea; `menu.c` owns
 the render loop.
@@ -444,6 +454,7 @@ not using it leaves the code out of the binary entirely.
 | `tags()` | the workspace backends (mango IPC + ext-workspace) |
 | a surface with `reveal_on_hover` | `hud.c` |
 | `surface osd { spawned_by = osd }` | `osd.c` and D-Bus |
+| `surface pill { spawned_by = osd_pill }` | the progress pill path in `osd.c` |
 | `exclusive_zone = -1`, or a surface named `menu` | `menu.c` |
 | `lock {}` | the lock IPC |
 | `gamma {}` | gamma control |

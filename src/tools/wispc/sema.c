@@ -427,6 +427,9 @@ static void analyze_surface(S *s, Decl *d) {
             /* reveal_easing accepts a bare easing ident (Step 6.2). */
             if (b->prop->nlen == 13 && memcmp(b->prop->name, "reveal_easing", 13) == 0)
                 break;
+            /* spawned_by names an engine (osd / osd_pill / menu), not a decl. */
+            if (b->prop->nlen == 10 && memcmp(b->prop->name, "spawned_by", 10) == 0)
+                break;
             walk_expr(s, b->prop->val);
             break;
         case SB_WIDGET: walk_widget(s, b->widget); break;

@@ -52,8 +52,15 @@ static void emit_hit_snapshot(FILE *o, const char *nm) {
  * each declared widget through emit_item_measure/emit_item_draw. Emitted as
  * `render_<nm>(Widget *w)`; osd_render() calls it. The runtime owns time
  * (osd_slab_geom) and the bar junction (osd_bar_split); everything else about
- * where a pixel lands comes from the declaration. */
-int emit_spawned_osd_skeleton(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
+ * where a pixel lands comes from the declaration.
+ *
+ * `pill` selects the one-slab progress pill (`spawned_by = osd_pill`): same
+ * pipeline, but the ring is a single fixed-height item, the top margin is
+ * baked into the buffer instead of offsetting the body (a layer-surface
+ * margin would clip the slide), and a negative margin straddles the bar edge
+ * — body inside the bar row, all four corners round, fillets still on the
+ * junction line. */
+int emit_spawned_osd_skeleton(FILE *o, Decl *sur, CGCtx *ctx, const char *nm, int pill) {
     BarItem items[64]; int err = 0;
     int nitems = collect_bar_items(sur->surface.items, sur->surface.n,
                                    items, 64, ctx, &err);
@@ -99,9 +106,12 @@ int emit_spawned_osd_skeleton(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     int fl_t = !!(flush & 1), fl_b = !!(flush & 2),
         fl_l = !!(flush & 4), fl_r = !!(flush & 8);
     int up = !!(amask & 2);   /* bottom-anchored: chain grows upward */
+    /* A straddling pill sits *over* the bar (overlay layer), so there is no
+     * junction to clip against and its top corners round like any other. */
+    int straddle = pill && slab_margin < 0;
     /* Corner rounds only where the chain faces the desktop on both its edges. */
-    int r_tl = (!fl_t && !fl_l) ? slab_radius : 0;
-    int r_tr = (!fl_t && !fl_r) ? slab_radius : 0;
+    int r_tl = (straddle || (!fl_t && !fl_l)) ? slab_radius : 0;
+    int r_tr = (straddle || (!fl_t && !fl_r)) ? slab_radius : 0;
     int r_br = (!fl_b && !fl_r) ? slab_radius : 0;
     int r_bl = (!fl_b && !fl_l) ? slab_radius : 0;
 
@@ -112,7 +122,8 @@ int emit_spawned_osd_skeleton(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     fputs("    if (!w->s.osd.items[0].active) {\n"
           "        if (w->s.osd.has_pixels) osd_stack_attach_empty(w);\n"
           "        return;\n    }\n", o);
-    fputs("    int __n = osd_slab_layout(w);\n", o);
+    fprintf(o, "    int __n = %s;\n",
+            pill ? "osd_pill_layout(w)" : "osd_slab_layout(w)");
     fputs("    osd_stack_input_region(w);\n", o);
     fputs("    widget_ensure_pool(w, 2);\n", o);
     fputs("    BufSlot *sl = widget_free_slot(w);\n", o);
@@ -131,7 +142,11 @@ int emit_spawned_osd_skeleton(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
           "    (void)__chain_h;\n", o);
     fprintf(o, "    int __chain_x = %s;\n",
             (amask & 8) ? "w->w - __slab_w" : (amask & 4) ? "0" : "(w->w - __slab_w) / 2");
-    fprintf(o, "    int __split = %s;\n", fl_t ? "osd_bar_split()" : "0");
+    /* __jsplit is the bar junction line (where the fillets sit); __split is
+     * how far down the body fill must stay clear of it. They differ only for
+     * a straddling pill, which paints over the bar row. */
+    fprintf(o, "    int __jsplit = %s; (void)__jsplit;\n", fl_t ? "osd_bar_split()" : "0");
+    fprintf(o, "    int __split = %s;\n", straddle ? "0" : "__jsplit");
     fputs("    int __ctop = w->h, __cbot = 0;\n", o);
     fputs("    uint32_t __ctop_bg = 0, __cbot_bg = 0;\n", o);
     fputs("    (void)__ctop_bg; (void)__cbot_bg;\n", o);
@@ -150,8 +165,11 @@ int emit_spawned_osd_skeleton(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
                    " __reg_w = __slab_w, __reg_h = __g.vh;\n", slab_margin);
     else {
         fputs("        int __slide = (__sl == __first) ? __g.vh - __g.sh : 0;\n", o);
+        /* A pill's margin is already inside the buffer height its vh sweeps,
+         * so adding it here would rest the body twice as far down. */
         fprintf(o, "        int __reg_x = __chain_x, __reg_y = %d + __g.y + __slide,"
-                   " __reg_w = __slab_w, __reg_h = (__sl == __first) ? __g.sh : __g.vh;\n", slab_margin);
+                   " __reg_w = __slab_w, __reg_h = (__sl == __first) ? __g.sh : __g.vh;\n",
+                pill ? 0 : slab_margin);
     }
     fputs("        (void)__reg_x; (void)__reg_y; (void)__reg_w; (void)__reg_h;\n", o);
     /* Per-slab transient buffers for $pct → "42" string interpolation. */
@@ -275,7 +293,22 @@ int emit_spawned_osd_skeleton(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
      * variant's junction split is still osd.c's (see the plan).
      * ponytail: hardcoded to the bottom|right armpits — generalize when a
      * preset anchors bottom|left. */
-    if (fillet_r > 0 && fl_t && !fl_l && !fl_r) {
+    if (pill && fillet_r > 0 && fl_t) {
+        /* One slab, one regime: the arc ramps with how far the body has
+         * emerged past the junction, reaching the declared radius exactly at
+         * rest (a negative margin shortens that travel by however far the
+         * body finally tucks into the bar). */
+        int bd = eval_int(surface_prop(sur, "height"), 0)
+               + (slab_margin < 0 ? slab_margin : 0);
+        if (bd < 1) bd = 1;
+        fprintf(o, "    { int __em = __cbot - __jsplit; if (__em < 0) __em = 0;\n"
+                   "      int __fr = %d * __em / %d; if (__fr > %d) __fr = %d;\n"
+                   "      if (__fr > 0) {\n"
+                   "          fill_corner_fillet(sl->px, w->w, w->h, __chain_x, __jsplit, __fr, 0, __ctop_bg);\n"
+                   "          fill_corner_fillet(sl->px, w->w, w->h, __chain_x + __slab_w, __jsplit, __fr, 1, __ctop_bg);\n"
+                   "      } }\n",
+                fillet_r, bd, fillet_r, fillet_r);
+    } else if (fillet_r > 0 && fl_t && !fl_l && !fl_r) {
         /* Flush under a bar: the armpits sit on the junction line and grow
          * with the body's emerged-past-bar extent, so the chain reads as one
          * shape with the bar instead of butting into it. Two regimes — a
@@ -284,15 +317,15 @@ int emit_spawned_osd_skeleton(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
          * left, so slab[0] sliding away over a full slab[1] doesn't snap.
          * ponytail: emerged is the chain extent incl. gaps; both presets run
          * gap = 0. Subtract the gaps if one ever doesn't. */
-        fprintf(o, "    if (__first >= 0) { int __em = __cbot - __split; if (__em < 0) __em = 0;\n"
+        fprintf(o, "    if (__first >= 0) { int __em = __cbot - __jsplit; if (__em < 0) __em = 0;\n"
                    "        OsdSlabGeom __lg; osd_slab_geom(w, __first, &__lg);\n"
                    "        int __fr;\n"
                    "        if (__lg.closing) { __fr = __em < %d ? __em : %d; }\n"
-                   "        else { int __bd = __lg.sh - __split; if (__bd < 1) __bd = 1;\n"
+                   "        else { int __bd = __lg.sh - __jsplit; if (__bd < 1) __bd = 1;\n"
                    "               __fr = %d * __em / __bd; if (__fr > %d) __fr = %d; }\n"
                    "        if (__fr > 0) {\n"
-                   "            fill_corner_fillet(sl->px, w->w, w->h, __chain_x, __split, __fr, 0, __ctop_bg);\n"
-                   "            fill_corner_fillet(sl->px, w->w, w->h, __chain_x + __slab_w, __split, __fr, 1, __ctop_bg);\n"
+                   "            fill_corner_fillet(sl->px, w->w, w->h, __chain_x, __jsplit, __fr, 0, __ctop_bg);\n"
+                   "            fill_corner_fillet(sl->px, w->w, w->h, __chain_x + __slab_w, __jsplit, __fr, 1, __ctop_bg);\n"
                    "        } }\n",
                 fillet_r, fillet_r, fillet_r, fillet_r, fillet_r);
     } else if (fillet_r > 0 && fl_b && fl_r) {
@@ -380,6 +413,7 @@ int emit_menu_render(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     }
     fputs("#endif\n", o);
 
+    int vert        = surface_is_vertical(sur);
     uint32_t bg     = eval_color_ctx(ctx, surface_prop(sur, "bg"), 0xff000000);
     uint32_t bord   = eval_color_ctx(ctx, surface_prop(sur, "border"), 0);
     int bord_w      = eval_int(surface_prop(sur, "border_width"), 0);
@@ -407,10 +441,14 @@ int emit_menu_render(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
             pad_x, pad_y, 2 * pad_x, 2 * pad_y);
     fputs("    (void)__cox; (void)__coy; (void)__cws; (void)__chs;\n", o);
     fputs("    int __clip_top = 0; (void)__clip_top;\n", o);
-    /* Vertical draw uses the row band's x extent; for a menu that is the
-     * padded content box. */
+    /* Vertical draw uses the row band's x extent, horizontal the y extent;
+     * for a menu both are the padded content box. */
     fputs("    int __reg_x = __cox, __reg_w = __cws; (void)__reg_x; (void)__reg_w;\n", o);
-    fputs("    int y = __coy; (void)y;\n", o);
+    fputs("    int __reg_y = __coy, __reg_h = __chs; (void)__reg_y; (void)__reg_h;\n", o);
+    if (vert)
+        fputs("    int y = __coy; (void)y;\n", o);
+    else /* text baseline cursor for horizontally-laid items */
+        fputs("    int y = (__chs - f->line_h) / 2 + __coy; (void)y;\n", o);
     fprintf(o,
         "    struct { int tw, vis; uint32_t cp, fg, bg, border, press_bg; const uint32_t *pm; int pms; const char *txt; int pad, align; int h; int ch; int body_lines; } st[%d];\n",
         n_arr);
@@ -418,27 +456,28 @@ int emit_menu_render(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     fputs("    (void)st;\n", o);
     fputs("    int center_total = 0;\n", o);
     fputs("    int __center_trail_pad = 0; (void)__center_trail_pad;\n", o);
-    fputs("    int end_extent = __chs;\n", o);
+    fprintf(o, "    int end_extent = %s;\n", vert ? "__chs" : "__cws");
     fprintf(o, "    __%s_nhit = 0;\n\n", nm);
 
     fputs("    /* --- measure pass --- */\n", o);
     for (int i = 0; i < nitems; i++) {
-        emit_item_measure(o, &items[i], ctx, items[i].group_id >= 0 ? 0 : 1, nm, i);
+        emit_item_measure(o, &items[i], ctx, items[i].group_id >= 0 ? 0 : vert, nm, i);
         if (ctx->failed) return 1;
     }
+    const char *org = vert ? "__coy" : "__cox";
     fputs("    if (center_total > __center_trail_pad) center_total -= __center_trail_pad;\n", o);
-    fputs("    int start_pos = __coy;\n", o);
-    fputs("    int end_pos = end_extent + __coy;\n", o);
-    fputs("    int center_pos = (end_extent - center_total) / 2 + __coy;\n", o);
+    fprintf(o, "    int start_pos = %s;\n", org);
+    fprintf(o, "    int end_pos = end_extent + %s;\n", org);
+    fprintf(o, "    int center_pos = (end_extent - center_total) / 2 + %s;\n", org);
     fputs("    (void)start_pos; (void)end_pos; (void)center_pos;\n", o);
     fputs("    /* --- draw pass --- */\n", o);
     for (int i = 0; i < nitems; i++) {
         if (items[i].group_id >= 0) {
             if (items[i].group_first)
-                i += emit_group_draw(o, items, i, nitems, ctx, nm, 1) - 1;
+                i += emit_group_draw(o, items, i, nitems, ctx, nm, vert) - 1;
             continue;
         }
-        emit_item_draw(o, &items[i], ctx, 1 /*vertical*/, nm);
+        emit_item_draw(o, &items[i], ctx, vert, nm);
         if (ctx->failed) return 1;
     }
     emit_hit_snapshot(o, nm);
@@ -1469,8 +1508,9 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
                     reveal_ms, surface_easing_id(sur, "reveal_easing"));
         fputs("    wl_req(w->surface, SURFACE_REQ_COMMIT, NULL, 0, -1);\n", o);
     } else {
-        if (margin > 0)
-            fprintf(o, "    widget_set_margin(w, %d, %d, %d, %d);\n", margin, margin, margin, margin);
+        /* Always set, even at 0: a reload adopts the old process's layer
+         * surface, which may carry the previous preset's margin. */
+        fprintf(o, "    widget_set_margin(w, %d, %d, %d, %d);\n", margin, margin, margin, margin);
         fprintf(o, "    widget_set_exclusive_zone(w, %d);\n", excl_zone);
         fputs("    widget_set_kbd_interactive(w, 0);\n", o);
         Expr *inp = surface_prop(sur, "input");
@@ -1816,8 +1856,7 @@ int emit_generated_compound(FILE *o, Decl *cmp, CGCtx *ctx, const char *nm) {
         fprintf(o, "    widget_setup_surface(w, %d, \"wisp-%s\", o);\n", layer, rnm);
         fprintf(o, "    widget_set_size(w, %d, %d);\n", surf_w, surf_h);
         fprintf(o, "    widget_set_anchor(w, %d);\n", surf_anchor);
-        if (mt || mb)
-            fprintf(o, "    widget_set_margin(w, %d, 0, %d, 0);\n", mt, mb);
+        fprintf(o, "    widget_set_margin(w, %d, 0, %d, 0);\n", mt, mb);
         fprintf(o, "    widget_set_exclusive_zone(w, %d);\n", surf_ez);
         fputs("    widget_set_kbd_interactive(w, 0);\n", o);
         /* Input region is set per-frame in render_<rnm> because we need
@@ -2077,10 +2116,15 @@ int emit_surfaces(FILE *o, Unit *u, CGCtx *ctx) {
             Expr *sb = surface_prop(d, "spawned_by");
             int is_osd = sb && sb->kind == EX_IDENT
                       && sb->ident.n == 3 && memcmp(sb->ident.s, "osd", 3) == 0;
-            if (is_osd) {
+            /* `spawned_by = osd_pill` is the same lowering with a one-slab,
+             * fixed-height ring — the progress-only pill osd_post routes to. */
+            int is_pill = sb && sb->kind == EX_IDENT
+                       && sb->ident.n == 8 && memcmp(sb->ident.s, "osd_pill", 8) == 0;
+            if (is_osd || is_pill) {
                 char *nm = strndup0(d->name, d->nlen);
-                emit_spawned_osd_skeleton(o, d, ctx, nm);
+                int rc = emit_spawned_osd_skeleton(o, d, ctx, nm, is_pill);
                 free(nm);
+                if (rc) return 1;
             }
             /* `spawned_by = menu` is the default look every menu gets unless
              * its own decl carries a body. */

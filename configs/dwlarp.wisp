@@ -212,7 +212,7 @@ surface osd {
   prog_fg = #ff84a7b3; prog_track = #ff1c2733;
   /* margin 0 → flush under the bar: only the bottom corners round, and the
      fillets claw up into the bar row at the junction. */
-  radius = 10; fillet_r = 18;
+  radius = 10; fillet_r = 14;
   separator = #ff1c2733; separator_frac = 80;
   dismiss_on_click = true; focus_follow = true; dbus_close = true;
 
@@ -229,6 +229,35 @@ surface osd {
 }
 
 #osd widget { fg = FG; pad = 0; }
+
+/* Category styling: `muted` arrives 1 (mute) / 2 (warn) per slab; the pseudos
+ * read the derived $mute / $warn bindings. */
+#osd widget:warn { fg = #ffffaa20; }
+#prog:warn { track_fg = #ffffaa20; }
+#prog:mute { track_fg = WARN; }
+
+/* Pct posts (volume / brightness) skip the stack and render as this pill —
+   without it every volume tick lands in the 8-slab stack. A negative margin
+   rests the body that far INSIDE the bar row — straddling the bar edge like
+   the old OSD did, so all four corners round — with the fillet_r claw where
+   it pokes out below. The icon's leading gap is its widget width (a slab has
+   no pad_x). */
+surface pill {
+  spawned_by = osd_pill;
+  layer = overlay;
+  anchor = top;
+  width = 220; height = 40; margin = -20; radius = 8; fillet_r = 14;
+  font_size = 20;
+
+  widget icon { align = left; width = 40; pad = 4; icon = $icon; }
+  widget prog { slider; align = left; width = 162; height = 10;
+                value = $progress; value_max = 100;
+                track_bg = #ff1c2733; track_fg = #ff84a7b3; track_radius = 5; }
+}
+
+#pill { bg = #ff0f1219; }
+#pill widget { fg = FG; }
+#pill widget:warn { fg = #ffffaa20; }
 
 // ============================================================================
 // Optional subsystems.

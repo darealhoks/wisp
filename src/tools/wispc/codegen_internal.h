@@ -200,7 +200,7 @@ int  emit_surface_click_dispatch(FILE *o, BarItem *items, int nitems,
 int  emit_menu_render(FILE *o, Decl *sur, CGCtx *ctx, const char *nm);
 int  emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm);
 int  emit_generated_compound(FILE *o, Decl *cmp, CGCtx *ctx, const char *nm);
-int  emit_spawned_osd_skeleton(FILE *o, Decl *sur, CGCtx *ctx, const char *nm);
+int  emit_spawned_osd_skeleton(FILE *o, Decl *sur, CGCtx *ctx, const char *nm, int pill);
 int  emit_surfaces(FILE *o, Unit *u, CGCtx *ctx);
 
 #endif
