@@ -17,6 +17,68 @@ int    ui_hidden = 0;
 Client clients[MAX_CLIENTS];
 int    ctl_fd = -1;
 char   ctl_path[128];
+int    reload_pending = 0;
+
+/* Hot reload: hand off ctl_fd AND wl_fd across exec. Keeping the wl socket
+ * open keeps every old object alive, so the arg carries enough for the new
+ * process to adopt the long-lived ones IN PLACE — surfaces are never
+ * unmapped/remapped (which layer_animations-style compositors would animate)
+ * and gamma controls (exclusive per output) never released. The new process
+ * allocates above the id high-water mark, reuses the adoptable objects, and
+ * reaps only unclaimed leftovers (`old=` + unmatched adopts) after its own
+ * are up. Transient widgets (menu/osd/lock) just get reaped. Other old
+ * sub-objects (pools, regions, seat devices) leak until exit — one reload's
+ * worth.
+ *
+ * We exec by PATH ("wisp"), NOT /proc/self/exe — `install -m 755 …` unlinks
+ * the destination before creating the new inode, so /proc/self/exe of the
+ * running daemon resolves to the OLD (deleted) inode and re-execing it would
+ * re-run the stale binary. PATH lookup picks the freshly installed
+ * ~/.local/bin/wisp. */
+void ctl_reload_exec(void) {
+    extern char **environ;
+    int fl;
+    if (ctl_fd >= 0 && (fl = fcntl(ctl_fd, F_GETFD)) >= 0)
+        fcntl(ctl_fd, F_SETFD, fl & ~FD_CLOEXEC);
+    if (wl_fd >= 0 && (fl = fcntl(wl_fd, F_GETFD)) >= 0)
+        fcntl(wl_fd, F_SETFD, fl & ~FD_CLOEXEC);
+    char arg[1024];
+    int n = snprintf(arg, sizeof arg, "wl=%d,ctl=%d,hi=%u,adopt=",
+                     wl_fd, ctl_fd, wl_next_id);
+    /* WidgetKind values are the adoption contract between old and new binary;
+     * both come from this repo's wisp.h, so they only skew mid-rebase. */
+    for (int i = 0; i < MAX_WIDGETS && n < (int)sizeof arg - 96; i++) {
+        Widget *w = &widgets[i];
+        if (w->kind != W_BAR && w->kind != W_WALL && w->kind != W_HUD) continue;
+        if (!w->surface || !w->configured || !w->output || !w->output->name[0])
+            continue;
+        uint32_t vp = 0, fs = 0;
+#ifdef WISP_FRACTIONAL
+        vp = w->viewport; fs = w->frac_scale;
+#endif
+        n += snprintf(arg + n, sizeof arg - n, "%d:%s:%u:%u:%u:%u:%d:%d+",
+                      (int)w->kind, w->output->name, w->surface,
+                      w->layer_surface, vp, fs, w->w, w->h);
+        w->kind = W_NONE;   /* claimed — keep it out of the old= list below */
+    }
+    n += snprintf(arg + n, sizeof arg - n, ",gamma=");
+    for (int i = 0; i < MAX_OUTPUTS && n < (int)sizeof arg - 64; i++)
+        if (outputs[i].active && outputs[i].gamma_ctrl && outputs[i].name[0])
+            n += snprintf(arg + n, sizeof arg - n, "%s:%u:%u+",
+                          outputs[i].name, outputs[i].gamma_ctrl,
+                          outputs[i].gamma_size);
+    n += snprintf(arg + n, sizeof arg - n, ",old=");
+    for (int i = 0; i < MAX_WIDGETS && n < (int)sizeof arg - 24; i++) {
+        Widget *w = &widgets[i];
+        if (w->kind == W_NONE || !w->surface) continue;
+        n += snprintf(arg + n, sizeof arg - n, "%u/%u+",
+                      w->layer_surface, w->surface);
+    }
+    char *argv[] = { (char*)"wisp", (char*)"--reload-fds", arg, NULL };
+    execvpe("wisp", argv, environ);
+    msg("wisp: reload exec failed: %s", strerror(errno));
+    reload_pending = 0;
+}
 
 static Client *client_add(int fd) {
     for (int i = 0; i < MAX_CLIENTS; i++)
@@ -179,26 +241,14 @@ static int dispatch(Client *c, char *cmd) {
         exit(0);
     }
     if (!strcmp(op, "reload")) {
-        /* Hot reload: hand off ctl_fd across exec so the new process skips
-         * ctl_open. wl_fd is NOT inherited (compositor still has the prior
-         * connection's wl_registry@ID_REGISTRY bound, so re-issuing
-         * get_registry with the same id would be a protocol error). The new
-         * process re-binds the wl session and surfaces flash for a frame.
-         *
-         * We exec by PATH ("wisp"), NOT /proc/self/exe — `install -m 755 …`
-         * unlinks the destination before creating the new inode, so
-         * /proc/self/exe of the running daemon resolves to the OLD (deleted)
-         * inode and re-execing it would re-run the stale binary. PATH lookup
-         * picks the freshly installed ~/.local/bin/wisp. */
-        extern char **environ;
         (void)!write(c->fd, "ok\n", 3);
-        int fl;
-        if (ctl_fd >= 0 && (fl = fcntl(ctl_fd, F_GETFD)) >= 0) fcntl(ctl_fd, F_SETFD, fl & ~FD_CLOEXEC);
-        char arg[64];
-        snprintf(arg, sizeof arg, "wl=%d,ctl=%d", -1, ctl_fd);
-        char *argv[] = { (char*)"wisp", (char*)"--reload-fds", arg, NULL };
-        execvpe("wisp", argv, environ);
-        msg("wisp: reload exec failed: %s", strerror(errno));
+#ifdef WISP_HAS_WALL
+        /* `wispctl rebuild` sends `wall <newpath>` first, so the wallpaper is
+         * mid-crossfade right now. Exec'ing here would tear the surface down
+         * halfway through it; wait for the fade's last frame instead. */
+        if (wall_fade_active()) { reload_pending = 1; return 0; }
+#endif
+        ctl_reload_exec();
         return 0;
     }
     /* tag <n> [output-slot] — view tag n (1-based,

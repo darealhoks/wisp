@@ -47,6 +47,7 @@ typedef struct Widget Widget;
 
 extern int      wl_fd;
 extern uint32_t wl_next_id;
+extern uint32_t id_registry;
 extern uint8_t  wl_rbuf[8192];
 extern int      wl_rlen;
 
@@ -65,7 +66,10 @@ int  wl_take_pending_fd(void);
 void wl_close_pending_fds(void);
 
 void wl_connect(void);
-void wl_adopt(int fd);
+void wl_adopt(int fd, const char *args);   /* args = the --reload-fds value */
+int  wl_take_adopted(Widget *w, Output *o);
+uint32_t wl_take_adopted_gamma(const char *outname, uint32_t *size);
+void wl_reap_old(void);
 void wl_dispatch(void);
 
 /* Bound globals (set by registry handling). Per-output object ids
@@ -710,6 +714,8 @@ typedef struct {
 
 extern Client    clients[MAX_CLIENTS];
 extern int       ctl_fd;
+extern int       reload_pending;   /* reload deferred until a wall fade ends */
+void ctl_reload_exec(void);
 extern char      ctl_path[128];
 
 void  ctl_open(void);

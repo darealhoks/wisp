@@ -131,6 +131,12 @@ static void apply_kelvin_all(int kelvin) {
 
 void gamma_bind_output(Output *o) {
     if (!o || !id_gamma_mgr || o->gamma_ctrl || o->gamma_failed) return;
+    /* Reload path: the control is exclusive per output, so reuse the pre-exec
+     * process's instead of release+rebind (which blips the screen to neutral).
+     * The old ramp stays applied; no size event will come, but gamma_size is
+     * handed over and the auto tick re-applies within a second. */
+    o->gamma_ctrl = wl_take_adopted_gamma(o->name, &o->gamma_size);
+    if (o->gamma_ctrl) return;
     o->gamma_ctrl = wl_new_id();
     uint32_t a[2] = { o->gamma_ctrl, o->wl_output };
     wl_req(id_gamma_mgr, GAMMA_MGR_REQ_GET_GAMMA_CONTROL, a, 2, -1);

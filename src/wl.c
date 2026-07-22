@@ -18,6 +18,9 @@
 
 int      wl_fd = -1;
 uint32_t wl_next_id = 2;
+/* Fixed only on a fresh connect; a reload-adopted session allocates a new
+ * registry above the old process's ids (the old registry@2 is still bound). */
+uint32_t id_registry = ID_REGISTRY;
 uint8_t  wl_rbuf[8192];
 int      wl_rlen = 0;
 
@@ -185,7 +188,7 @@ void wl_registry_bind(uint32_t name, const char *iface, uint32_t version,
                       uint32_t new_oid) {
     uint32_t pre[1] = { name };
     uint32_t post[2] = { version, new_oid };
-    wl_req_str(ID_REGISTRY, REGISTRY_REQ_BIND, pre, 1, iface, post, 2);
+    wl_req_str(id_registry, REGISTRY_REQ_BIND, pre, 1, iface, post, 2);
 }
 
 int wl_take_pending_fd(void) {
@@ -291,15 +294,69 @@ void wl_roundtrip(void) {
 }
 
 /* Adopt an inherited wl_display fd (--reload-fds). The compositor still has
- * the prior connection's objects bound — the new client-side ID space is
- * fresh, so we re-issue GET_REGISTRY to rebind globals and SYNC to block
- * until they're delivered. Old per-output sub-objects on the compositor side
- * leak until process exit; acceptable for v0 (single reload's worth). */
-void wl_adopt(int fd) {
+ * the prior connection's objects bound and its half of the id namespace
+ * survives the exec, so we allocate strictly above the old high-water mark
+ * (`hi=`) and bind a fresh registry there. Long-lived objects ride the arg
+ * for IN-PLACE reuse — `adopt=` surfaces get new buffers attached without
+ * ever unmapping (a create+destroy cycle would be animated by compositors
+ * with layer animations, and would double the bar's exclusive zone for a
+ * frame), `gamma=` controls are exclusive per output so releasing them blips
+ * the screen to neutral. `old=` (plus any adopt record nothing claimed) is
+ * destroyed by wl_reap_old() once our own surfaces are up. Events still
+ * arriving on other old ids (frame done, pointer enter, buffer release) miss
+ * every dispatch match below the new watermark and fall through harmlessly;
+ * remaining old sub-objects leak until exit (single reload's worth). */
+typedef struct { int kind; char out[32]; uint32_t surf, ls, vp, frac; int w, h; } AdoptRec;
+static AdoptRec adopts[MAX_WIDGETS];
+static int      n_adopt;
+static struct { char out[32]; uint32_t ctrl, size; } gadopts[MAX_OUTPUTS];
+static int      n_gadopt;
+static uint32_t old_ls[MAX_WIDGETS], old_surf[MAX_WIDGETS];
+static int      n_old;
+
+static const char *arg_field(const char *s, const char *key) {
+    const char *p = s ? strstr(s, key) : NULL;
+    return p ? p + strlen(key) : NULL;
+}
+
+void wl_adopt(int fd, const char *args) {
     wl_fd = fd;
     int fl = fcntl(wl_fd, F_GETFL); fcntl(wl_fd, F_SETFL, fl | O_NONBLOCK);
 
-    uint32_t rid = ID_REGISTRY;
+    unsigned hi = 0;
+    const char *p = arg_field(args, "hi=");
+    if (p) sscanf(p, "%u", &hi);
+    if (hi > wl_next_id) wl_next_id = hi;
+    p = arg_field(args, "adopt=");
+    while (p && *p && *p != ',' && n_adopt < MAX_WIDGETS) {
+        AdoptRec *r = &adopts[n_adopt];
+        int c;
+        if (sscanf(p, "%d:%31[^:]:%u:%u:%u:%u:%d:%d%n", &r->kind, r->out,
+                   &r->surf, &r->ls, &r->vp, &r->frac, &r->w, &r->h, &c) < 8)
+            break;
+        n_adopt++; p += c;
+        if (*p == '+') p++;
+    }
+    p = arg_field(args, "gamma=");
+    while (p && *p && *p != ',' && n_gadopt < MAX_OUTPUTS) {
+        int c;
+        if (sscanf(p, "%31[^:]:%u:%u%n", gadopts[n_gadopt].out,
+                   &gadopts[n_gadopt].ctrl, &gadopts[n_gadopt].size, &c) < 3)
+            break;
+        n_gadopt++; p += c;
+        if (*p == '+') p++;
+    }
+    p = arg_field(args, "old=");
+    while (p && *p && n_old < MAX_WIDGETS) {
+        unsigned ls, sf; int c;
+        if (sscanf(p, "%u/%u%n", &ls, &sf, &c) < 2) break;
+        old_ls[n_old] = ls; old_surf[n_old++] = sf;
+        p += c;
+        if (*p == '+') p++;
+    }
+
+    id_registry = wl_new_id();
+    uint32_t rid = id_registry;
     wl_req(ID_DISPLAY, DISPLAY_REQ_GET_REGISTRY, &rid, 1, -1);
     sync_id = wl_new_id();
     uint32_t sa = sync_id;
@@ -311,6 +368,75 @@ void wl_adopt(int fd) {
         if (rc < 0) die("wl recv: %s", strerror(errno));
         wl_dispatch();
     }
+    /* wl_output name events trail the sync above (the binds that solicit them
+     * are only sent while dispatching it); adoption matches by output name, so
+     * one more roundtrip before anyone creates widgets. */
+    wl_roundtrip();
+}
+
+/* In-place adoption for widget_setup_surface: if the pre-exec process handed
+ * over a same-kind surface on this output, reuse its objects and report
+ * configured at its size — the caller re-sends anchor/size/exclusive on the
+ * mapped ls, which the compositor treats as a plain state change. */
+int wl_take_adopted(Widget *w, Output *o) {
+    if (!o || !o->name[0]) return 0;
+    for (int i = 0; i < n_adopt; i++) {
+        AdoptRec *r = &adopts[i];
+        if (!r->surf || r->kind != (int)w->kind || strcmp(r->out, o->name))
+            continue;
+        w->surface       = r->surf;
+        w->layer_surface = r->ls;
+#ifdef WISP_FRACTIONAL
+        w->viewport   = r->vp;
+        w->frac_scale = r->frac;
+#endif
+        w->w = r->w; w->h = r->h;
+        w->configured = 1;
+        r->surf = 0;   /* claimed */
+        return 1;
+    }
+    return 0;
+}
+
+/* Gamma-control adoption for gamma_bind_output; the old ramp stays applied,
+ * the 1 Hz auto tick re-derives the same kelvin within a second. */
+uint32_t wl_take_adopted_gamma(const char *outname, uint32_t *size) {
+    for (int i = 0; i < n_gadopt; i++) {
+        if (!gadopts[i].ctrl || strcmp(gadopts[i].out, outname)) continue;
+        uint32_t ctrl = gadopts[i].ctrl;
+        *size = gadopts[i].size;
+        gadopts[i].ctrl = 0;   /* claimed */
+        return ctrl;
+    }
+    return 0;
+}
+
+/* Destroy the previous process's surfaces. Called after our own widgets have
+ * been created AND a roundtrip has let their configure→attach→commit go out,
+ * so the destroys land behind fully-mapped replacements in the request
+ * stream — reaping any earlier is just the unmap flash again. */
+void wl_reap_old(void) {
+    for (int i = 0; i < n_old; i++) {
+        if (old_ls[i])   wl_req(old_ls[i],   LS_REQ_DESTROY,      NULL, 0, -1);
+        if (old_surf[i]) wl_req(old_surf[i], SURFACE_REQ_DESTROY, NULL, 0, -1);
+    }
+    n_old = 0;
+    /* Adoption records nothing claimed (preset dropped a surface, output name
+     * changed): same fate as old=. Unclaimed gamma controls likewise — the
+     * failed bind already marked that output gamma_failed, lost until restart. */
+    for (int i = 0; i < n_adopt; i++)
+        if (adopts[i].surf) {
+            if (adopts[i].ls) wl_req(adopts[i].ls, LS_REQ_DESTROY, NULL, 0, -1);
+            wl_req(adopts[i].surf, SURFACE_REQ_DESTROY, NULL, 0, -1);
+            adopts[i].surf = 0;
+        }
+    n_adopt = 0;
+    for (int i = 0; i < n_gadopt; i++)
+        if (gadopts[i].ctrl) {
+            wl_req(gadopts[i].ctrl, GAMMA_CTRL_REQ_DESTROY, NULL, 0, -1);
+            gadopts[i].ctrl = 0;
+        }
+    n_gadopt = 0;
 }
 
 /* Forward decls of input handlers in their respective modules. */
@@ -472,7 +598,7 @@ static void handle(uint32_t obj, uint16_t op, uint8_t *body, uint32_t bodylen) {
         }
         return;
     }
-    if (obj == ID_REGISTRY && op == REGISTRY_EV_GLOBAL) {
+    if (obj == id_registry && op == REGISTRY_EV_GLOBAL) {
         if (bodylen < 12) return;
         uint32_t name = *(uint32_t *)body;
         uint32_t slen = *(uint32_t *)(body + 4);
@@ -486,7 +612,7 @@ static void handle(uint32_t obj, uint16_t op, uint8_t *body, uint32_t bodylen) {
         handle_registry_global(name, iface, ver);
         return;
     }
-    if (obj == ID_REGISTRY && op == REGISTRY_EV_GLOBAL_REM) {
+    if (obj == id_registry && op == REGISTRY_EV_GLOBAL_REM) {
         if (bodylen < 4) return;
         uint32_t name = *(uint32_t *)body;
         Output *o = output_by_registry_name(name);

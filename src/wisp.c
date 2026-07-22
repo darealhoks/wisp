@@ -239,8 +239,11 @@ void widget_repaint(Widget *w, int first_configure) {
 #endif
 #ifdef WISP_HAS_HUD
     if (w->kind == W_HUD) {
+        /* Ensure BEFORE taking a slot: a configure can resize the surface (e.g.
+         * a reload-adopted widget whose pool is still the old preset's size),
+         * and memsetting a stale-size slot writes past its mapping. */
+        widget_ensure_pool(w, 2);
         BufSlot *s = widget_free_slot(w);
-        if (!s) { widget_ensure_pool(w, 2); s = widget_free_slot(w); }
         if (s) {
             memset(s->px, 0, (size_t)widget_pw(w) * widget_ph(w) * 4);
             widget_attach(w, s, 1);

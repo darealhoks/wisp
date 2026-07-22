@@ -158,6 +158,9 @@ void widget_setup_surface(Widget *w, uint32_t layer, const char *ns, Output *o) 
     w->scale120      = o ? o->scale120 : (focused_output ? focused_output->scale120 : 120);
     if (w->scale120 < 120) w->scale120 = 120;
     if (compositor_ver < 3) w->scale120 = 120;   /* set_buffer_scale is wl_surface v3 */
+    /* Reload path: reuse the pre-exec process's mapped surface instead of
+     * creating one — no unmap/remap, so nothing for the compositor to animate. */
+    if (o && wl_take_adopted(w, o)) return;
     w->surface       = wl_new_id();
     w->layer_surface = wl_new_id();
     uint32_t sa = w->surface;
@@ -347,6 +350,14 @@ void on_frame_done(Widget *w, uint32_t cb_id) {
             widget_free_pool(w);
         }
     }
+#ifdef WISP_HAS_WALL
+    /* A deferred reload waits here, not on the fade's anim-done: that callback
+     * only *attaches* the final frame. Exec'ing before the compositor has
+     * presented it destroys the surface holding it, putting back the flash the
+     * fade exists to hide. */
+    if (reload_pending && w->kind == W_WALL && !wall_fade_active())
+        ctl_reload_exec();
+#endif
 }
 
 /* Buffer release: clear busy flag for matching slot. If the widget has been

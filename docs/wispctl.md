@@ -61,10 +61,11 @@ the destination before creating the new file, so the running daemon's
 `/proc/self/exe` points at the old deleted inode. A PATH lookup picks up the
 binary you just installed.
 
-The control socket is passed across the exec, so clients stay connected. The
-Wayland connection is not: the compositor still holds the previous
-`wl_registry`, so the new process opens a fresh session and surfaces flash for
-one frame. That flash is expected.
+The control socket and the Wayland connection are both passed across the
+exec. The new process adopts the long-lived surfaces (bar, wallpaper, HUD)
+and gamma controls in place — they are never unmapped, so nothing flashes and
+the compositor never animates a remap. Transient surfaces (menu, OSD, lock)
+are simply torn down.
 
 `quit` stops the daemon without re-execing.
 

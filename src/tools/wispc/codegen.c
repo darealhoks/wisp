@@ -128,17 +128,35 @@ static void emit_main(FILE *o, SrcInst *srcs, int nsrc, SemaResult *r) {
      * zombies until RLIMIT_NPROC kills all spawning. exec_line sources still
      * waitpid() their own pid; ECHILD there just makes them re-kick. */
     fputs("    signal(SIGCHLD, SIG_IGN);\n", o);
-    /* --reload-fds wl=N,ctl=M : adopt inherited fds (Step H). */
+    /* --reload-fds wl=N,ctl=M,hi=H,adopt=...,gamma=...,old=... : adopt
+     * inherited fds; wl_adopt parses the rest (id high-water mark, in-place
+     * surface/gamma adoption records, leftover ids to reap). */
     fputs("    int reload_wl = -1, reload_ctl = -1;\n", o);
-    fputs("    for (int i = 1; i + 1 < argc; i++)\n"
-          "        if (!strcmp(argv[i], \"--reload-fds\"))\n"
-          "            sscanf(argv[i+1], \"wl=%d,ctl=%d\", &reload_wl, &reload_ctl);\n", o);
-    fputs("    if (reload_wl >= 0) wl_adopt(reload_wl); else wl_connect();\n", o);
+    fputs("    const char *reload_args = NULL;\n", o);
+    /* Reject unknown argv: "wisp rebuild foo" (meant wispctl) would otherwise
+     * silently start a second daemon that steals the ctl socket. */
+    fputs("    for (int i = 1; i < argc; i++)\n"
+          "        if (!strcmp(argv[i], \"--reload-fds\") && i + 1 < argc) {\n"
+          "            sscanf(argv[i+1], \"wl=%d,ctl=%d\", &reload_wl, &reload_ctl);\n"
+          "            reload_args = argv[++i];\n"
+          "        } else\n"
+          "            die(\"unknown argument '%s' — the daemon takes none; use wispctl\", argv[i]);\n", o);
+    fputs("    if (reload_wl >= 0) wl_adopt(reload_wl, reload_args);\n"
+          "    else wl_connect();\n", o);
     fputs("    if (!id_compositor)  die(\"compositor missing\");\n", o);
     fputs("    if (!id_shm)         die(\"wl_shm missing\");\n", o);
     fputs("    if (!id_layer_shell) die(\"layer-shell missing\");\n", o);
     fputs("    for (int i = 0; i < MAX_OUTPUTS; i++)\n"
           "        if (outputs[i].active) output_init_widgets(&outputs[i]);\n", o);
+    /* Adopted widgets never get a configure event (their surface is already
+     * mapped), so paint them explicitly; then reap leftovers only after a
+     * roundtrip has flushed those commits, so nothing is ever unmapped bare. */
+    fputs("    if (reload_wl >= 0) {\n"
+          "        for (int i = 0; i < MAX_WIDGETS; i++)\n"
+          "            if (widgets[i].kind != W_NONE && widgets[i].configured)\n"
+          "                widget_repaint(&widgets[i], 1);\n"
+          "        wl_roundtrip(); wl_reap_old();\n"
+          "    }\n", o);
     fputs("    if (reload_ctl >= 0) ctl_adopt(reload_ctl); else ctl_open();\n", o);
     fputs("    key_rep_tfd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);\n", o);
     if (has_status_src(srcs, nsrc)) fputs("    wispgen_status_init();\n", o);
