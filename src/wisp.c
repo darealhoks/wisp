@@ -30,7 +30,8 @@ uint32_t key_rep_key      = 0;
 int      key_rep_delay_ms = 400;
 int      key_rep_rate_ms  = 35;
 
-__attribute__((unused))
+/* Only menu and lock consume held keys; without either, nothing arms it. */
+#if defined(WISP_HAS_MENU) || defined(WISP_HAS_LOCK)
 static void key_rep_arm(uint32_t key) {
     key_rep_key = key;
     if (key_rep_tfd < 0) return;
@@ -42,6 +43,7 @@ static void key_rep_arm(uint32_t key) {
     };
     timerfd_settime(key_rep_tfd, 0, &ts, NULL);
 }
+#endif
 void key_rep_cancel(void) {
     key_rep_key = 0;
     if (key_rep_tfd < 0) return;

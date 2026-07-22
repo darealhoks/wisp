@@ -711,53 +711,9 @@ void fill_corner_fillet_border(uint32_t *px, int sw, int sh,
     }
 }
 
-/* Punch a quarter-disc shaped transparent hole. corner_id selects the
- * "inside" wedge: 0=tl (wedge extends down+right from cx,cy), 1=tr (down+left),
- * 2=br (up+left), 3=bl (up+right). Pixels inside the wedge bounding box but
- * outside the disc are kept; pixels inside the disc are erased (so the result
- * matches a concave fillet smoothing the inner corner). 2x supersampled at
- * the rim for AA. */
-void punch_inner_corner(uint32_t *px, int sw, int sh,
-                        int cx, int cy, int r, int corner_id) {
-    if (r <= 0) return;
-    sw = SC(sw); sh = SC(sh);
-    cx = SC(cx); cy = SC(cy); r = SC(r);
-    int bx0, by0, bx1, by1;
-    switch (corner_id) {
-    case 0: bx0 = cx;     by0 = cy;     bx1 = cx + r; by1 = cy + r; break;
-    case 1: bx0 = cx - r; by0 = cy;     bx1 = cx;     by1 = cy + r; break;
-    case 2: bx0 = cx - r; by0 = cy - r; bx1 = cx;     by1 = cy;     break;
-    default:bx0 = cx;     by0 = cy - r; bx1 = cx + r; by1 = cy;     break;
-    }
-    if (bx0 < 0) bx0 = 0;
-    if (by0 < 0) by0 = 0;
-    if (bx1 > sw) bx1 = sw;
-    if (by1 > sh) by1 = sh;
-    for (int j = by0; j < by1; j++) {
-        uint32_t *row = px + j * sw;
-        for (int i = bx0; i < bx1; i++) {
-            /* Erase INSIDE the disc: sd = dist - r, cov = fraction erased.
-             * Analytic 1px AA on the rim. */
-            double dx = (i + 0.5) - cx, dy = (j + 0.5) - cy;
-            double cov = cov_from_sd(sqrt(dx * dx + dy * dy) - r);
-            if (cov <= 0.0) continue;
-            if (cov >= 1.0) { row[i] = 0; continue; }
-            /* Partial coverage: blend the destination toward 0 (transparent). */
-            uint32_t d = row[i];
-            uint32_t inv = (uint32_t)((1.0 - cov) * 255.0 + 0.5);
-            uint8_t dr = (d >> 16) & 0xff, dg = (d >> 8) & 0xff, db = d & 0xff;
-            uint8_t da = (d >> 24) & 0xff;
-            row[i] = (DIV255(da * inv) << 24)
-                   | (DIV255(dr * inv) << 16)
-                   | (DIV255(dg * inv) << 8)
-                   |  DIV255(db * inv);
-        }
-    }
-}
-
-/* Fill a concave fillet at an L's inner corner. Same bbox semantics as
- * punch_inner_corner (cx,cy is the disc center; corner_id picks which quadrant
- * holds the bbox), but fills `color` into pixels OUTSIDE the disc — producing
+/* Fill a concave fillet at an L's inner corner. cx,cy is the disc center and
+ * corner_id (0=tl, 1=tr, 2=br, 3=bl) picks which quadrant holds the bbox;
+ * fills `color` into pixels OUTSIDE the disc — producing
  * a rounded bulge from the corner point at the bbox's near vertex into the
  * empty notch. 2x supersampled at the rim. Overwrites (no blending). */
 void fill_inner_fillet(uint32_t *px, int sw, int sh,

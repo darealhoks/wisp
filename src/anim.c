@@ -16,7 +16,7 @@
 #include <sys/timerfd.h>
 
 Anim anims[ANIM_MAX];
-int  anim_active_count = 0;
+static int anim_active_count = 0;
 
 static int     anim_tfd = -1;
 static int     anim_armed = 0;
@@ -44,8 +44,6 @@ static void anim_tfd_disarm(void) {
 }
 
 int anim_fd(void) { return anim_tfd; }
-
-int anim_any_active(void) { return anim_active_count; }
 
 void anim_cancel_for(void *target) {
     for (int i = 0; i < ANIM_MAX; i++) {

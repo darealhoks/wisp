@@ -138,7 +138,7 @@ void menu_render(Widget *w) {
         }
         if (*top < 0) *top = 0;
     }
-    if (w->s.menu.render) w->s.menu.render(w);
+    w->s.menu.render(w);
 }
 
 /* Click→pick: rows are a fixed grid, so the row under the pointer is

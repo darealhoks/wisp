@@ -75,10 +75,11 @@ previous selection are not compatible.
 ## Configs
 
 `WISP` selects the `.wisp` file that gets compiled into the daemon. There is no
-runtime config file. Two are real presets:
+runtime config file. Three ship in the repo:
 
     configs/bee.wisp      the Makefile default, and the config this rice actually runs
     configs/dwlarp.wisp   a second full preset (dwl-shaped bar)
+    configs/minimal.wisp  the smallest useful bar (clock + cpu/mem), a starting point
 
 Your own configs go in `~/.config/wisp/`; `wispctl rebuild <name>` finds them
 there by name (and falls back to the examples in `share/wisp/configs`).

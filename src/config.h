@@ -4,28 +4,14 @@
 
 /* ---------- Font ----------
  * Backend + font file are build-time choices, not runtime knobs: pick them via
- * `./configure` (or `make config`), or `make FONT_BACKEND={baked,bitmap,freetype}
- * FONT=/path/to/font`. baked/bitmap rasterize at build time into the generated bake.h;
+ * `//! font_backend = …` / `//! font = …` directives in the `.wisp`, or
+ * `make FONT_BACKEND={baked,bitmap,freetype} FONT=/path/to/font`. baked/bitmap rasterize at build time into the generated bake.h;
  * freetype dlopen()s libfreetype.so.6 at runtime (src/font_ft.c) and reads
  * $WISP_FONT, falling back to the FONT= path baked in as WISP_FONT_DEFAULT_PATH.
  * Glyph/Font types live in src/font.h. */
 
 /* ---------- Bar ---------- */
 #define BAR_HEIGHT      28
-#define BAR_PAD_X       16   /* L/R inset (was 10 — felt cramped against logo) */
-#define BAR_TAG_PAD_X   10   /* horizontal padding inside each tag cell (dwlb-ish) */
-#define BAR_TAG_GAP      0   /* dwlb runs tags edge-to-edge */
-
-#define BAR_BG          0xff0f1219u  /* solid; wallpaper shadow tone */
-#define BAR_FG          0xffffffffu
-#define BAR_DIM         0xff7a808bu  /* separators */
-#define BAR_ACTIVE_BG   0xff2a2f3au  /* active workspace tag */
-#define BAR_URGENT_BG   0xffee3300u
-
-/* VPN colors (match dwlarp WS_STATUS_VPN_*_FG) */
-#define VPN_ON_FG       0xff7fbf9fu
-#define VPN_STALE_FG    0xffff5050u
-#define VPN_OFF_FG      0xffffaa20u
 
 /* ---------- HUD (generic slide-in shell) ----------
  * Contents are DSL-driven (codegen-emitted render/click per reveal_on_hover
@@ -84,9 +70,6 @@
  * so the next discharge will fire again. */
 #define BAT_WARN_PCT  15
 #define BAT_CRIT_PCT   5
-
-#define TIME_FMT "%H:%M"
-#define DATE_FMT "%b %d"
 
 /* Tag labels (9). */
 #define TAG_LABELS { "1","2","3","4","5","6","7","8","9" }
@@ -160,18 +143,9 @@
 #ifndef OSD_RADIUS
 #define OSD_RADIUS      10
 #endif
-#define OSD_BORDER_CRIT 0xffffffffu
-#define OSD_BORDER_MUTE 0xffa04050u
-#define OSD_BG_MUTE     0xff3a1418u   /* solid */
-#define OSD_FG_MUTE     0xfff0c8c8u
-#define OSD_BORDER_WARN 0xffe0c060u   /* low-battery warn slab (yellow) */
-#define OSD_BG_WARN     0xff332a14u   /* solid */
-#define OSD_FG_WARN     0xfff0e0a8u
 #ifndef OSD_PROG_FG
 #define OSD_PROG_FG     0xff84a7b3u   /* wallpaper bright teal */
 #endif
-#define OSD_PROG_FG_MUTE 0xffd06070u
-#define OSD_PROG_FG_WARN 0xffe0c060u
 
 /* Default timeouts (ms). Critical sticky (caller passes 0). */
 #ifndef OSD_TIMEOUT_LOW

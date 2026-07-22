@@ -314,7 +314,6 @@ Widget *widget_alloc(WidgetKind k);
 Widget *widget_by_surface(uint32_t sid);
 Widget *widget_by_ls(uint32_t lsid);
 Widget *widget_by_slock_surf(uint32_t id);
-Widget *widget_first(WidgetKind k);
 void    widget_destroy(Widget *w);
 /* Pass NULL for `o` to let the compositor pick the output (dwl ships layer-
  * shell v3 which requires a non-null output, so callers must supply one in
@@ -408,12 +407,6 @@ void fill_corner_fillet(uint32_t *px, int sw, int sh,
 void fill_corner_fillet_border(uint32_t *px, int sw, int sh,
                                int x_corner, int y_corner, int r, int corner_id,
                                int bw, uint32_t c);
-/* Punch a quarter-disc transparent hole at (cx,cy), radius r, into the
- * given corner (0=tl, 1=tr, 2=br, 3=bl of the wedge bounding box). Used by
- * compound surfaces to soften the concave inner-corner where two regions
- * meet. 2x supersampled at the rim. */
-void punch_inner_corner(uint32_t *px, int sw, int sh,
-                        int cx, int cy, int r, int corner_id);
 void fill_inner_fillet(uint32_t *px, int sw, int sh,
                        int cx, int cy, int r, int corner_id, uint32_t color);
 /* Anti-aliased filled disc (knobs). Center may be fractional. */
@@ -779,7 +772,6 @@ typedef struct Anim {
 } Anim;
 
 extern Anim anims[ANIM_MAX];
-extern int  anim_active_count;
 
 /* Declarative transition slot — generated codegen per (widget-item, prop) that
  * carries a `transition_<prop> = <ms>` declaration. On each render the slot's
@@ -807,7 +799,6 @@ uint32_t anim_start_color(uint32_t *target, uint32_t from, uint32_t to,
                           Widget *owner, AnimDone on_done, void *user);
 void     anim_cancel_for(void *target);
 void     anim_tick(int64_t now);
-int      anim_any_active(void);
 int      anim_fd(void);
 void     anim_on_tfd(void);
 int      anim_px(double v);      /* tweened size -> pixels, pair-stable */

@@ -44,12 +44,6 @@ Widget *widget_by_slock_surf(uint32_t id) {
             return &widgets[i];
     return NULL;
 }
-Widget *widget_first(WidgetKind k) {
-    for (int i = 0; i < MAX_WIDGETS; i++)
-        if (widgets[i].kind == k) return &widgets[i];
-    return NULL;
-}
-
 void widget_free_pool(Widget *w) {
     for (int i = 0; i < w->n_slots; i++) {
         if (w->slots[i].id) {

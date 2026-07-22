@@ -153,8 +153,6 @@ static void walign(W *w, int a) {
 }
 static void wbyte(W *w, uint8_t v)  { wensure(w, 1); w->b[w->pos++] = v; }
 static void wu32 (W *w, uint32_t v) { walign(w, 4); wensure(w, 4); memcpy(w->b + w->pos, &v, 4); w->pos += 4; }
-static void wi32 (W *w, int32_t v)  __attribute__((unused));
-static void wi32 (W *w, int32_t v)  { wu32(w, (uint32_t)v); }
 static void wstr (W *w, const char *s) {
     if (!s) s = "";
     uint32_t l = (uint32_t)strlen(s);
