@@ -38,26 +38,26 @@ WISPC_CC := $(CC) -O2 -Wall -Wextra -Werror -Wno-unused-parameter -Wno-format-tr
 
 # Preset selector. wisp is DSL-first: `make WISP=configs/foo.wisp` runs wispc to
 # compile the .wisp into C (features.h + objects.mk + gen_*.c + main.c) and links
-# it. The selection is sticky across invocations (see below); `wispctl rebuild`
-# passes an explicit WISP= from the user's config dir.
-BUILD_TAG_FILE := $(BUILD)/.build-tag
+# it. Each config gets its OWN build dir (build/<name>/) so switching configs is
+# a relink-nothing cache hit; the current selection lives in build/.selected and
+# `wispctl rebuild` passes an explicit WISP= from the user's config dir.
+SELECTED_FILE := $(BUILD)/.selected
 
 # Selection is STICKY across separate make invocations: with no explicit WISP=
 # on the command line, reuse whatever the previous build persisted in
-# .build-tag (WISP *and* FONT_BACKEND/FONT). This is what makes the two-step
+# .selected (WISP *and* FONT_BACKEND/FONT). This is what makes the two-step
 #   make WISP=configs/foo.wisp FONT_BACKEND=freetype && make install
 # install `foo` (with the chosen backend) instead of silently reverting — the
-# second `make install` recovers the whole selection from the tag rather than
-# re-defaulting. CLI assignments always win (origin != undefined → recovery
-# skipped); `//!` directives in the .wisp override the tag further below.
-PERSISTED_TAG := $(shell [ -f $(BUILD_TAG_FILE) ] && cat $(BUILD_TAG_FILE) 2>/dev/null)
+# second `make install` recovers the whole selection rather than re-defaulting.
+# CLI assignments always win; `//!` directives in the .wisp override further
+# below. FONT knobs are only recovered together with WISP: an explicit WISP=
+# means "that config's own directives/defaults", not the old selection's fonts.
+PERSISTED_TAG := $(shell [ -f $(SELECTED_FILE) ] && cat $(SELECTED_FILE) 2>/dev/null)
 
 ifndef WISP
 ifneq (,$(filter WISP=%,$(PERSISTED_TAG)))
 WISP := $(patsubst WISP=%,%,$(filter WISP=%,$(PERSISTED_TAG)))
 endif
-endif
-
 ifeq ($(origin FONT_BACKEND),undefined)
 ifneq (,$(filter FONT_BACKEND=%,$(PERSISTED_TAG)))
 FONT_BACKEND := $(patsubst FONT_BACKEND=%,%,$(filter FONT_BACKEND=%,$(PERSISTED_TAG)))
@@ -68,11 +68,19 @@ ifneq (,$(filter FONT=%,$(PERSISTED_TAG)))
 FONT := $(patsubst FONT=%,%,$(filter FONT=%,$(PERSISTED_TAG)))
 endif
 endif
+endif
 
 # Still no selector (fresh build/, no tag) → canonical default. bee is what
-# sync.sh installs, so a tagless tree (post-clean, or after `make check` ran
-# with no prior tag to restore) rebuilds the preset that's actually running.
+# sync.sh installs, so a tagless tree rebuilds the preset that's actually running.
 WISP ?= configs/bee.wisp
+# Absolute so the tag can't thrash between rel/abs spellings of one config.
+override WISP := $(abspath $(WISP))
+# ponytail: build dirs keyed by basename — two same-named configs from
+# different dirs share (and wipe) one cache via the tag mismatch below.
+CFG   := $(notdir $(basename $(WISP)))
+ROOT  := $(BUILD)
+BUILD := $(ROOT)/$(CFG)
+BUILD_TAG_FILE := $(BUILD)/.build-tag
 
 # Build knobs declared in the .wisp itself as `//! key = value` directive
 # comments (plain // comments to wispc, so the compiler never sees them).
@@ -125,25 +133,27 @@ FT_CFLAGS := $(shell pkg-config --cflags freetype2 2>/dev/null)
 endif
 CFLAGS += $(FONT_DEFS)
 
-# Build "tag" — uniquely identifies the (GEN/WISP, FONT_BACKEND, FONT) tuple
-# backing the current build/. Stored in $(BUILD)/.build-tag. If the tag differs
-# from last time, wipe build/ before doing anything — otherwise leftover objects
-# + the linked binary from the previous configuration silently survive (the
-# `make check` footgun: check loops WISP=A..WISP=Z and leaves build/wisp linked
-# against Z; the next `make WISP=A` then reused stale objects). FONT last so a
-# spaced path can't corrupt the earlier fields during recovery.
+# Build "tag" — uniquely identifies the (WISP, FONT_BACKEND, FONT) tuple backing
+# this config's build/<name>/. If the tag differs from last time, wipe the dir —
+# otherwise leftover objects from a previous font selection (or a same-named
+# config at another path) silently survive. FONT last so a spaced path can't
+# corrupt the earlier fields during recovery. build/.selected is refreshed with
+# the same tuple so a bare `make` repeats this selection — sub-makes fanning out
+# over all configs (install/check) pass WISP_NOSELECT=1 to not steal it.
 BUILD_TAG := WISP=$(WISP) FRACTIONAL=$(FRACTIONAL) FONT_BACKEND=$(FONT_BACKEND) FONT=$(FONT) FONT_FALLBACK=$(FONT_FALLBACK)
 TAG_RESET := $(shell mkdir -p $(BUILD); \
   prev=""; [ -f $(BUILD_TAG_FILE) ] && prev=$$(cat $(BUILD_TAG_FILE)); \
   if [ "$$prev" != "$(BUILD_TAG)" ]; then \
-    find $(BUILD) -mindepth 1 -maxdepth 1 \
-      ! -name wispc ! -name bake ! -name .build-tag -exec rm -rf {} +; \
+    rm -rf $(BUILD); mkdir -p $(BUILD); \
     printf '%s' '$(BUILD_TAG)' > $(BUILD_TAG_FILE); \
-  fi; echo OK)
+  fi; \
+  [ -n "$(WISP_NOSELECT)" ] || printf '%s' '$(BUILD_TAG)' > $(SELECTED_FILE); \
+  echo OK)
 
 GENDIR    := $(BUILD)/gen-tw
 MAIN_FROM := $(GENDIR)
-WISPC_BOOT := $(BUILD)/wispc
+# wispc + bake are config-independent — shared at the build root across caches.
+WISPC_BOOT := $(ROOT)/wispc
 WISPC_BOOT_SRC := $(wildcard $(TOOLDIR)/wispc/*.c) $(TOOLDIR)/wispc/wispc.h
 # Bootstrap is incremental: rebuild wispc only when its sources changed; rerun
 # --emit only when the .wisp or wispc binary is newer than the generated files.
@@ -178,7 +188,7 @@ GEN_OBJS += $(BUILD)/font_ft.o
 endif
 
 HDR := $(SRCDIR)/wisp.h $(SRCDIR)/proto.h $(SRCDIR)/config.h \
-       $(SRCDIR)/font.h $(SRCDIR)/bake.h \
+       $(SRCDIR)/font.h $(GENDIR)/bake.h \
        $(GENDIR)/features.h $(GENDIR)/gen_overrides.h $(GENDIR)/gen_menus.h
 
 WISPC_SRC := $(TOOLDIR)/wispc/arena.c $(TOOLDIR)/wispc/diag.c $(TOOLDIR)/wispc/lex.c \
@@ -188,7 +198,7 @@ WISPC_SRC := $(TOOLDIR)/wispc/arena.c $(TOOLDIR)/wispc/diag.c $(TOOLDIR)/wispc/l
             $(TOOLDIR)/wispc/codegen_items.c $(TOOLDIR)/wispc/codegen_surface.c \
             $(TOOLDIR)/wispc/wispc.c
 
-BIN := $(BUILD)/wisp $(BUILD)/wispctl $(BUILD)/wisp-lock $(BUILD)/wisp-lock-helper $(BUILD)/wispc
+BIN := $(BUILD)/wisp $(BUILD)/wispctl $(BUILD)/wisp-lock $(BUILD)/wisp-lock-helper $(WISPC_BOOT)
 
 # wisp-lock is a separate binary: a session-locker crash must NOT take down
 # the bar/HUD, and a wisp daemon crash must NOT drop the lock. Its compile
@@ -201,7 +211,7 @@ LOCK_SRC  += font_ft
 endif
 LOCK_OBJS := $(LOCK_SRC:%=$(BUILD)/lock/%.o)
 LOCK_HDR  := $(SRCDIR)/wisp.h $(SRCDIR)/proto.h $(SRCDIR)/config.h \
-             $(SRCDIR)/font.h $(SRCDIR)/bake.h \
+             $(SRCDIR)/font.h $(GENDIR)/bake.h \
              $(SRCDIR)/lock-features.h $(GENDIR)/gen_overrides.h
 LOCK_CFLAGS := -Os -Wall -Wextra -Werror -Wno-unused-parameter \
                -fno-asynchronous-unwind-tables -fdata-sections -ffunction-sections \
@@ -257,7 +267,7 @@ $(BUILD)/wispctl: $(SRCDIR)/wispctl.c | $(BUILD)
 	$(CC) $(CFLAGS) -Wno-format-truncation -DWISP_DATADIR='"$(PREFIX)/share/wisp"' $< -o $@ -Wl,--gc-sections -Wl,-s
 	strip --strip-all --remove-section=.comment --remove-section=.note* $@ 2>/dev/null || true
 
-$(BUILD)/wispc: $(WISPC_SRC) $(TOOLDIR)/wispc/wispc.h | $(BUILD)
+$(WISPC_BOOT): $(WISPC_SRC) $(TOOLDIR)/wispc/wispc.h
 	$(WISPC_CC) $(WISPC_SRC) -o $@
 
 $(BUILD)/lock:
@@ -286,34 +296,52 @@ $(BUILD)/wisp-lock-helper: $(TOOLDIR)/lock-helper.c | $(BUILD)
 # path; no glyph data is baked and the font file need not exist at build time.
 # baked/bitmap: bake glyph data from the font file (TTF/PSF/BDF auto-detected).
 ifeq ($(FONT_BACKEND),freetype)
-$(SRCDIR)/bake.h: $(BUILD)/bake $(BUILD)/wispc $(WISP) $(SRCDIR)/font.h $(BUILD_TAG_FILE)
-	$(BUILD)/wispc --font-sizes $(WISP) > $(BUILD)/font-sizes.txt
-	$(BUILD)/bake --ft-stub $@ $(FONT) "$(FONT_FALLBACK)" $$(cat $(BUILD)/font-sizes.txt)
+$(GENDIR)/bake.h: $(ROOT)/bake $(WISPC_BOOT) $(WISP) $(SRCDIR)/font.h $(BUILD_TAG_FILE)
+	$(WISPC_BOOT) --font-sizes $(WISP) > $(BUILD)/font-sizes.txt
+	$(ROOT)/bake --ft-stub $@ $(FONT) "$(FONT_FALLBACK)" $$(cat $(BUILD)/font-sizes.txt)
 else
-$(SRCDIR)/bake.h: $(BUILD)/bake $(FONT) $(BUILD)/wispc $(WISP) $(SRCDIR)/font.h $(BUILD_TAG_FILE)
-	$(BUILD)/wispc --font-sizes $(WISP) > $(BUILD)/font-sizes.txt
-	$(BUILD)/bake $(FONT) $@ $$(cat $(BUILD)/font-sizes.txt)
+$(GENDIR)/bake.h: $(ROOT)/bake $(FONT) $(WISPC_BOOT) $(WISP) $(SRCDIR)/font.h $(BUILD_TAG_FILE)
+	$(WISPC_BOOT) --font-sizes $(WISP) > $(BUILD)/font-sizes.txt
+	$(ROOT)/bake $(FONT) $@ $$(cat $(BUILD)/font-sizes.txt)
 endif
 
-$(BUILD)/bake: $(TOOLDIR)/bake.c | $(BUILD)
+$(ROOT)/bake: $(TOOLDIR)/bake.c
 	$(CC) -O2 -Wall -Werror $< -o $@ \
 	    `pkg-config --cflags --libs freetype2`
 
-install: $(BIN)
+# Warm every OTHER config's cache too (repo configs + user configs; the
+# share-dir examples aren't swept unless this tree IS the share dir). A broken
+# non-selected config warns instead of blocking the install/switch. Each
+# sub-make lands in its own build/<name>/, so with fresh caches this is a
+# mtime sweep + copy — `wispctl rebuild other` then switches without compiling.
+CONFDIR := $(or $(XDG_CONFIG_HOME),$(HOME)/.config)/wisp
+ALL_WISP := $(sort $(abspath $(wildcard configs/*.wisp) $(wildcard $(CONFDIR)/*.wisp)))
+
+warm-cache: $(BIN)
+	@for w in $(filter-out $(WISP),$(ALL_WISP)); do \
+	    out=$$($(MAKE) -s WISP=$$w WISP_NOSELECT=1 2>&1) || { \
+	        echo "$$out" >&2; \
+	        echo "warning: $$w failed to build (cache not updated)" >&2; }; \
+	done
+
+# WISP_NOWARM=1 skips warming the other configs' caches: `wispctl rebuild`
+# reloads first and warms them in a detached make so a switch isn't blocked
+# on rebuilding configs it isn't switching to.
+install: $(BIN) $(if $(WISP_NOWARM),,warm-cache)
 	install -d $(DESTDIR)$(PREFIX)/bin
 	install -m 755 $(BUILD)/wisp              $(DESTDIR)$(PREFIX)/bin/wisp
 	install -m 755 $(BUILD)/wispctl           $(DESTDIR)$(PREFIX)/bin/wispctl
-	install -m 755 $(BUILD)/wispc             $(DESTDIR)$(PREFIX)/bin/wispc
+	install -m 755 $(WISPC_BOOT)              $(DESTDIR)$(PREFIX)/bin/wispc
 	install -m 755 $(BUILD)/wisp-lock         $(DESTDIR)$(PREFIX)/bin/wisp-lock
 	install -m 755 $(BUILD)/wisp-lock-helper  $(DESTDIR)$(PREFIX)/bin/wisp-lock-helper
 
 # The tools alone need no config: wispc + wispctl are what a from-share user
 # gets from install.sh; `wispctl rebuild` then compiles the daemon itself.
-tools: $(BUILD)/wispc $(BUILD)/wispctl
+tools: $(WISPC_BOOT) $(BUILD)/wispctl
 
 install-tools: tools
 	install -d $(DESTDIR)$(PREFIX)/bin
-	install -m 755 $(BUILD)/wispc   $(DESTDIR)$(PREFIX)/bin/wispc
+	install -m 755 $(WISPC_BOOT)    $(DESTDIR)$(PREFIX)/bin/wispc
 	install -m 755 $(BUILD)/wispctl $(DESTDIR)$(PREFIX)/bin/wispctl
 
 # Runtime sources for `wispctl rebuild`: the runtime is compiled per config
@@ -336,51 +364,39 @@ uninstall:
 	rm -rf $(SHAREDIR)
 
 clean:
-	rm -rf $(BUILD)
+	rm -rf $(ROOT)
 
 distclean: clean
 	rm -f $(SRCDIR)/bake.h
+
+.PHONY: warm-cache
 
 # Configs present under configs/. Glob so deleting a .wisp file doesn't break
 # `make check`; add new ones by dropping them in configs/ — no Makefile edit.
 CONFIGS := $(patsubst configs/%.wisp,%,$(wildcard configs/*.wisp))
 
-# Build matrix: every config present under configs/.
-# Each WISP invocation needs a clean build dir because objects.mk differs.
+# Build matrix: every config present under configs/. Per-config build dirs make
+# this incremental and side-effect-free: nothing to clean, and WISP_NOSELECT=1
+# keeps the matrix from stealing the sticky selection.
 # The nm DCE assertions run only when configs/minimal.wisp is present — it's
 # the only unit whose stripped-down feature set makes the assertion meaningful.
-# check clobbers the sticky preset with whatever config it built last, so a
-# plain `make install` afterwards silently ships the wrong preset. Restore the
-# caller's WISP=/FONT_* fields on the way out, but stamped `STALE=check`: the
-# fields make stickiness recover the right preset, the marker guarantees the
-# tag can never equal a computed BUILD_TAG, so the auto-wipe fires and the
-# matrix's leftover objects can't be relinked under the restored name.
 check:
 	@set -e; \
 	fail=0; \
-	saved=$$(cat $(BUILD_TAG_FILE) 2>/dev/null || true); \
-	restore_tag() { \
-	    if [ -n "$$saved" ]; then mkdir -p $(BUILD); printf '%s STALE=check\n' "$$saved" > $(BUILD_TAG_FILE); \
-	    else rm -f $(BUILD_TAG_FILE); fi; \
-	}; \
-	build1() { \
-	    name="$$1"; shift; \
-	    $(MAKE) -s clean >/dev/null 2>&1; \
-	    if out=$$($(MAKE) -s "$$@" 2>&1); then \
-	        sz=$$(stat -c%s $(BUILD)/wisp); \
-	        printf "  %-26s OK  %d B\n" "$$name" "$$sz"; \
+	echo "==> Build matrix"; \
+	for e in $(CONFIGS); do \
+	    if out=$$($(MAKE) -s WISP=configs/$$e.wisp WISP_NOSELECT=1 2>&1); then \
+	        sz=$$(stat -c%s $(ROOT)/$$e/wisp); \
+	        printf "  %-26s OK  %d B\n" "WISP=$$e.wisp" "$$sz"; \
 	    else \
-	        printf "  %-26s FAIL\n%s\n" "$$name" "$$out"; \
+	        printf "  %-26s FAIL\n%s\n" "WISP=$$e.wisp" "$$out"; \
 	        fail=1; \
 	    fi; \
-	}; \
-	echo "==> Build matrix"; \
-	for e in $(CONFIGS); do build1 "WISP=$$e.wisp" WISP=configs/$$e.wisp; done; \
+	done; \
 	if [ -f configs/minimal.wisp ]; then \
 	    echo "==> nm assertions (WISP=minimal.wisp must not link optional modules)"; \
-	    $(MAKE) -s clean >/dev/null; $(MAKE) -s WISP=configs/minimal.wisp >/dev/null; \
 	    for sym in dbus_ osd_ menu_ hud_ lock_ gamma_ wall_; do \
-	        if nm $(BUILD)/wisp 2>/dev/null | grep -q " T $$sym\| t $$sym"; then \
+	        if nm $(ROOT)/minimal/wisp 2>/dev/null | grep -q " T $$sym\| t $$sym"; then \
 	            echo "  $$sym  FAIL  found in minimal binary"; fail=1; \
 	        else \
 	            echo "  $$sym  OK"; \
@@ -389,7 +405,6 @@ check:
 	else \
 	    echo "==> nm assertions skipped (configs/minimal.wisp absent)"; \
 	fi; \
-	restore_tag; \
 	if [ $$fail -ne 0 ]; then echo "check: FAIL"; exit 1; fi; \
 	echo "check: PASS"
 

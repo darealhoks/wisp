@@ -5,7 +5,7 @@
 /* ---------- Font ----------
  * Backend + font file are build-time choices, not runtime knobs: pick them via
  * `./configure` (or `make config`), or `make FONT_BACKEND={baked,bitmap,freetype}
- * FONT=/path/to/font`. baked/bitmap rasterize at build time into src/bake.h;
+ * FONT=/path/to/font`. baked/bitmap rasterize at build time into the generated bake.h;
  * freetype dlopen()s libfreetype.so.6 at runtime (src/font_ft.c) and reads
  * $WISP_FONT, falling back to the FONT= path baked in as WISP_FONT_DEFAULT_PATH.
  * Glyph/Font types live in src/font.h. */

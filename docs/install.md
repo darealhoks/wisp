@@ -4,7 +4,7 @@
 
 To build, you need a C compiler, `make`, and FreeType with its `.pc` file
 (`freetype2`). FreeType is used by the `bake` tool that turns a font into
-`src/bake.h`, so it is required even when the daemon will not link against it.
+the generated `bake.h`, so it is required even when the daemon will not link against it.
 The lock helper links PAM, so `libpam` and its headers are needed too.
 
 At runtime wisp links only libc and libm. The one exception is the `freetype`
@@ -95,7 +95,7 @@ See [dsl.md](dsl.md) for the language and [wispctl.md](wispctl.md) for what
 One backend is compiled in per build.
 
 `baked` is the default and the leanest. FreeType rasterizes the TTF at build
-time into const tables in `src/bake.h`. The font file is not needed at runtime,
+time into const tables in the generated `bake.h` (per config, under `build/<name>/gen-tw/`). The font file is not needed at runtime,
 and the daemon has no font dependency at all.
 
 `bitmap` bakes a PSF or BDF into the same tables. Pixel-exact, no
@@ -114,7 +114,7 @@ SVG-only color fonts do not render, because FreeType needs an external SVG
 library for those.
 
 Baked font sizes come from the `.wisp`: every `font_size = N;` it declares, plus
-14 and 22. Changing a size in the config regenerates `src/bake.h` on the next
+14 and 22. Changing a size in the config regenerates that config's `bake.h` on the next
 build.
 
 ## Rebuilding
@@ -124,7 +124,7 @@ change, and the `.wisp` is recompiled only when it or `wispc` is newer than the
 generated files under `build/gen-tw/`.
 
     make clean       remove build/
-    make distclean   also remove the generated src/bake.h
+    make distclean   also remove a legacy src/bake.h if present
     make uninstall   remove the binaries from $PREFIX/bin and $PREFIX/share/wisp
 
 To check that every config still builds:

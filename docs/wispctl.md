@@ -48,6 +48,11 @@ config (remembered in `~/.config/wisp/current`). Runtime sources come from the
 share dir the installer set up, or `$WISP_SRC` if you point it at a checkout.
 This is the whole edit loop: change the file, `wispctl rebuild`.
 
+If the new config changes the wallpaper, `rebuild` crossfades to it in the
+old process before reloading, so the switch is a transition instead of a
+blank frame. After the reload it re-warms the other configs' build caches in
+the background.
+
 ## reload
 
     make install && wispctl reload

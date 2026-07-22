@@ -3,6 +3,7 @@
  * is the only command handled client-side. Keep the two in sync. */
 #define _GNU_SOURCE
 #include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -31,6 +32,50 @@ static int connect_daemon(void) {
         close(s); return -1;
     }
     return s;
+}
+
+/* The wallpaper the just-built binary will use, read back out of wispc's
+ * emitted overrides — the running daemon can't know it, the path is baked into
+ * generated C. Absent when the config declares no `wallpaper { path }`; the
+ * caller then just skips the fade rather than duplicating config.h's default.
+ * Returns 1 on a hit. */
+static int new_wall_path(const char *src, char *out, size_t outsz) {
+    char p[PATH_MAX], cfg[NAME_MAX] = "";
+    /* Per-config build caches: the gen dir is build/<name>/gen-tw. make just
+     * wrote the resolved selection to build/.selected — take the WISP field's
+     * basename (FRACTIONAL= delimits it; only FONT paths may contain spaces). */
+    snprintf(p, sizeof p, "%s/build/.selected", src);
+    FILE *f = fopen(p, "r");
+    if (!f) return 0;
+    char line[PATH_MAX + 64];
+    if (fgets(line, sizeof line, f)) {
+        char *w = strstr(line, "WISP="), *end = w ? strstr(w, " FRACTIONAL=") : NULL;
+        if (w && end) {
+            *end = 0;
+            char *base = strrchr(w + 5, '/');
+            base = base ? base + 1 : w + 5;
+            char *dot = strrchr(base, '.');
+            if (dot) *dot = 0;
+            snprintf(cfg, sizeof cfg, "%s", base);
+        }
+    }
+    fclose(f);
+    if (!cfg[0]) return 0;
+    snprintf(p, sizeof p, "%s/build/%s/gen-tw/gen_overrides.h", src, cfg);
+    f = fopen(p, "r");
+    if (!f) return 0;
+    int got = 0;
+    while (fgets(line, sizeof line, f)) {
+        char *q = strstr(line, "#define WALL_PATH \"");
+        if (!q) continue;
+        q += sizeof "#define WALL_PATH \"" - 1;
+        char *end = strchr(q, '"');
+        if (!end) continue;
+        *end = 0;
+        got = snprintf(out, outsz, "%s", q) < (int)outsz;
+    }
+    fclose(f);
+    return got;
 }
 
 /* rebuild [name] — recompile the installed daemon from a .wisp, then reload.
@@ -87,8 +132,9 @@ static int cmd_rebuild(const char *name) {
     if (pid < 0) { perror("fork"); return 1; }
     if (pid == 0) {
         char wisparg[PATH_MAX + 8];
-        const char *mkargv[7] = { "make", "-s", "-C", src, "install" };
-        int n = 5;
+        const char *mkargv[8] = { "make", "-s", "-C", src, "install",
+                                  "WISP_NOWARM=1" };
+        int n = 6;
         if (wisp[0]) {
             snprintf(wisparg, sizeof wisparg, "WISP=%s", wisp);
             mkargv[n++] = wisparg;
@@ -110,11 +156,48 @@ static int cmd_rebuild(const char *name) {
         fprintf(stderr, "wispctl: installed; wisp not running — start it with `wisp`\n");
         return 0;
     }
+
+    /* Crossfade to the new wallpaper in the OLD process, then reload: the
+     * daemon holds the exec until the fade's last frame is on screen, so the
+     * switch is a transition instead of a blank frame. The old process also
+     * eats the ~150 ms decode and seeds the bg cache, so the new binary's
+     * first paint is a read(). A no-op when the path is unchanged (wall_set)
+     * or unreadable (err reply) — neither may block the reload. */
+    char wall[PATH_MAX];
+    if (new_wall_path(src, wall, sizeof wall)) {
+        char req[PATH_MAX + 8];
+        int n = snprintf(req, sizeof req, "wall\t%s\n", wall);
+        if (n > 0 && n < (int)sizeof req
+            && send(s, req, (size_t)n, MSG_NOSIGNAL) > 0) {
+            char ack[64];
+            (void)!recv(s, ack, sizeof ack, 0);
+        }
+        close(s);
+        s = connect_daemon();
+        if (s < 0) return 1;
+    }
+
     if (send(s, "reload\n", 7, MSG_NOSIGNAL) < 0) { perror("send"); close(s); return 1; }
     char rep[64];
     ssize_t k = recv(s, rep, sizeof rep - 1, 0);
     close(s);
     if (k > 0) { rep[k] = 0; fputs(rep, stdout); }
+
+    /* Warm the other configs' caches AFTER the reload, detached: the switch
+     * shouldn't wait on rebuilding configs it isn't switching to. Double-fork
+     * so no zombie; output discarded — warm-cache itself only warns. */
+    pid = fork();
+    if (pid == 0) {
+        if (fork() == 0) {
+            setsid();
+            int nul = open("/dev/null", O_RDWR);
+            if (nul >= 0) { dup2(nul, 1); dup2(nul, 2); }
+            execvp("make", (char *const[]){ "make", "-s", "-C",
+                                            (char *)src, "warm-cache", NULL });
+        }
+        _exit(0);
+    }
+    if (pid > 0) while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {}
     return 0;
 }
 
