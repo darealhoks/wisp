@@ -294,8 +294,7 @@ gamma {
 
 wallpaper {
   path = "~/next/rice/themes/current/wallpaper.png";
-  transition = dither;
-  dither_px  = 16;
+  transition = fade;
   fade_ms    = 300;
   bg         = SOLID;
 }
