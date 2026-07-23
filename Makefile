@@ -3,14 +3,6 @@ CFLAGS  ?= -Os -Wall -Wextra -Werror -Wno-unused-parameter \
            -fno-asynchronous-unwind-tables -fdata-sections -ffunction-sections
 LDFLAGS ?= -Wl,--gc-sections -Wl,-s -Wl,--as-needed -lm
 
-# Generated TUs (gen_*.c, main.c) are machine output: wispc emits benign
-# statements-per-line, always-true address guards on string-buffer compares,
-# and per-config-unused scratch vars. Demote ONLY those classes to warnings so
-# -Werror still catches real defects here (and in osd.c, #included via
-# gen_spawn.c) — everything else stays a hard error. Cleaner than -w'ing them.
-GEN_WNO := -Wno-error=misleading-indentation -Wno-error=address \
-           -Wno-error=unused-variable -Wno-error=unused-function
-
 # Default to one job per CPU when the user didn't already pick a -j value, so
 # `make` and `make install` saturate the box and finish in ~3-4s from clean
 # instead of ~7s sequentially. `MAKEFLAGS` inherits into recursive sub-makes
@@ -253,23 +245,23 @@ $(BUILD)/tt/%.o: $(SRCDIR)/tt/%.c $(SRCDIR)/tt/tt.h | $(BUILD)/tt
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/gen_main.o: $(MAIN_FROM)/main.c $(HDR) | $(BUILD)
-	$(CC) $(CFLAGS) $(GEN_WNO) -c $< -o $@
+	$(CC) $(CFLAGS) -c $< -o $@
 
 # WISP path also produces gen_sources.c / gen_surfaces.c / gen_bindings.c.
 # Preset paths don't (their objects.mk omits these), so the rules only fire
 # when a WISP build needs them.
 $(BUILD)/gen_sources.o:  $(GENDIR)/gen_sources.c  $(HDR) | $(BUILD)
-	$(CC) $(CFLAGS) $(GEN_WNO) -c $< -o $@
+	$(CC) $(CFLAGS) -c $< -o $@
 $(BUILD)/gen_surfaces.o: $(GENDIR)/gen_surfaces.c $(HDR) | $(BUILD)
-	$(CC) $(CFLAGS) $(GEN_WNO) -c $< -o $@
+	$(CC) $(CFLAGS) -c $< -o $@
 $(BUILD)/gen_bindings.o: $(GENDIR)/gen_bindings.c $(HDR) | $(BUILD)
-	$(CC) $(CFLAGS) $(GEN_WNO) -c $< -o $@
+	$(CC) $(CFLAGS) -c $< -o $@
 $(BUILD)/gen_outputs.o:  $(GENDIR)/gen_outputs.c  $(HDR) | $(BUILD)
-	$(CC) $(CFLAGS) $(GEN_WNO) -c $< -o $@
+	$(CC) $(CFLAGS) -c $< -o $@
 # gen_spawn.c does `#include "osd.c"` to inline the runtime — make the include
 # visible to make's dep graph so edits to osd.c actually trigger a rebuild.
 $(BUILD)/gen_spawn.o:    $(GENDIR)/gen_spawn.c    $(SRCDIR)/osd.c $(SRCDIR)/osd_pill.c $(HDR) | $(BUILD)
-	$(CC) $(CFLAGS) $(GEN_WNO) -c $< -o $@
+	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/wispctl: $(SRCDIR)/wispctl.c | $(BUILD)
 	$(CC) $(CFLAGS) -Wno-format-truncation -DWISP_DATADIR='"$(PREFIX)/share/wisp"' $< -o $@ -Wl,--gc-sections -Wl,-s

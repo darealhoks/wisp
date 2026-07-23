@@ -588,7 +588,7 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
     fprintf(o, "%s    int __h = st[%s].h;\n", indent, idx_expr);
     fprintf(o, "%s    int __adv = __h > 0 ? __h : tw;\n", indent);
     fprintf(o, "%s    const char *txt = st[%s].txt; uint32_t cp = st[%s].cp; const uint32_t *pm = st[%s].pm; int pms = st[%s].pms;\n", indent, idx_expr, idx_expr, idx_expr, idx_expr);
-    fprintf(o, "%s    uint32_t fg = st[%s].fg, bg = st[%s].bg, bdr = st[%s].border;\n",
+    fprintf(o, "%s    uint32_t fg = st[%s].fg, bg = st[%s].bg, bdr = st[%s].border; (void)bdr;\n",
             indent, idx_expr, idx_expr, idx_expr);
     /* press_bg override: while this st-index is the surface's pressed_st, swap
      * bg for the widget's press_bg if it has one. */
@@ -1005,7 +1005,7 @@ static void emit_group_member(FILE *o, BarItem *it, const char *nm, int gap) {
     fprintf(o, "        if (st[%s].vis) {\n", sb);
     fprintf(o, "            int __ma = (st[%s].h>0?st[%s].h:st[%s].tw);\n", sb, sb, sb);
     fprintf(o, "            const char *txt = st[%s].txt; uint32_t cp = st[%s].cp; const uint32_t *pm = st[%s].pm; int pms = st[%s].pms;\n", sb, sb, sb, sb);
-    fprintf(o, "            uint32_t fg = st[%s].fg, bg = st[%s].bg, bdr = st[%s].border;\n", sb, sb, sb);
+    fprintf(o, "            uint32_t fg = st[%s].fg, bg = st[%s].bg, bdr = st[%s].border; (void)bdr;\n", sb, sb, sb);
     fprintf(o, "            if (st[%s].press_bg & 0xff000000u && __%s_pressed_st == (%s) && __%s_pressed_w == w) bg = st[%s].press_bg;\n",
             sb, nm, sb, nm, sb);
     /* A member's declared height sizes its own bg/border; without one it fills
@@ -1087,11 +1087,11 @@ int emit_group_draw(FILE *o, BarItem *items, int first, int nitems,
     fprintf(o, "            default: pos = start_pos; start_pos += __adv + __gpad; break;\n");
     fprintf(o, "        }\n");
     if (vertical)
-        fprintf(o, "        int __gy = pos, __gh = __adv, __bx = __reg_x, __bw = __reg_w;\n");
+        fprintf(o, "        int __gy = pos, __gh = __adv, __bx = __reg_x, __bw = __reg_w; (void)__bw;\n");
     else if (ch > 0)
-        fprintf(o, "        int __gy = __reg_y + (__reg_h - %d)/2, __gh = %d, __bx = pos, __bw = __gw;\n", ch, ch);
+        fprintf(o, "        int __gy = __reg_y + (__reg_h - %d)/2, __gh = %d, __bx = pos, __bw = __gw; (void)__bw;\n", ch, ch);
     else
-        fprintf(o, "        int __gy = __reg_y, __gh = __reg_h, __bx = pos, __bw = __gw;\n");
+        fprintf(o, "        int __gy = __reg_y, __gh = __reg_h, __bx = pos, __bw = __gw; (void)__bw;\n");
     const char *gg = vertical ? "" : "if (__gn) ";
     if (r > 0) {
         if (cbg  & 0xff000000u) fprintf(o, "        %sfill_rect_rounded(sl->px,w->w,w->h, __bx,__gy,__bw,__gh, %d,%d,%d,%d, 0x%08xu);\n", gg, r, r, r, r, cbg);

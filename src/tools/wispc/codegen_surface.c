@@ -772,7 +772,7 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     if (vertical)
         fputs("    int y = __coy; (void)y;\n", o);
     else
-        fputs("    int y = (__chs - f->line_h) / 2 + __coy;\n", o);
+        fputs("    int y = (__chs - f->line_h) / 2 + __coy; (void)y;\n", o);
     fprintf(o,
         "    struct { int tw, vis; uint32_t cp, fg, bg, border, press_bg; const uint32_t *pm; int pms; const char *txt; int pad, align; int h; int ch; int body_lines; } st[%d];\n",
         n_arr);
