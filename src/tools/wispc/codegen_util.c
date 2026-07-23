@@ -152,6 +152,11 @@ WBody *widget_onclick(Widget *w) {
         if (w->items[i].kind == WB_ONCLICK) return &w->items[i];
     return NULL;
 }
+/* Hit-testing gate: a widget needs a click rect if either button binds. */
+int widget_clickable(Widget *w) {
+    return widget_onclick(w) || widget_handler(w, WB_ONRCLICK)
+        || widget_handler(w, WB_ONMCLICK);
+}
 WBody *widget_handler(Widget *w, WBKind k) {
     for (int i = 0; i < w->nitems; i++)
         if (w->items[i].kind == k) return &w->items[i];

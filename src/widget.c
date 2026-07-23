@@ -181,6 +181,18 @@ void widget_setup_surface(Widget *w, uint32_t layer, const char *ns, Output *o) 
     wl_send(b, size, -1);
 }
 
+ClickAnchor click_anchor;
+
+void widget_note_click(Widget *w, int x, int cw) {
+    click_anchor.out   = w->output;
+    click_anchor.x     = x;
+    click_anchor.w     = cw;
+    /* Bar's bottom edge in screen coords — the bar's own top margin counts,
+     * otherwise a floating bar (margin > 0) has its popup overlap it. */
+    click_anchor.below = w->margin_top + w->h;
+    click_anchor.ms    = now_ms();
+}
+
 void widget_set_size(Widget *w, int width, int height) {
     uint32_t a[2] = { (uint32_t)width, (uint32_t)height };
     wl_req(w->layer_surface, LS_REQ_SET_SIZE, a, 2, -1);
@@ -193,6 +205,7 @@ void widget_set_exclusive_zone(Widget *w, int zone) {
 }
 void widget_set_margin(Widget *w, int top, int right, int bot, int left) {
     uint32_t a[4] = { (uint32_t)top, (uint32_t)right, (uint32_t)bot, (uint32_t)left };
+    w->margin_top = top;
     wl_req(w->layer_surface, LS_REQ_SET_MARGIN, a, 4, -1);
 }
 void widget_set_kbd_interactive(Widget *w, int on) {

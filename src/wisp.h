@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <sys/types.h>
+#include <string.h>
 
 #include "proto.h"
 #include "font.h"
@@ -40,6 +41,17 @@
 /* Forward decls (Output and Widget reference each other). */
 typedef struct Output Output;
 typedef struct Widget Widget;
+
+/* Per-menu geometry. 0 = inherit the `spawned_by = menu` template's MENU_*.
+ * `hdr_h` is the height the body spends above the rows (the query line in the
+ * default template, 0 in a bodyless dropdown) — menu.c needs it to size the
+ * surface and to map a click back to a row. `own_body` marks a menu that
+ * declared its own widget body: then hdr_h/pad_y come from that body verbatim
+ * (0 is a real answer, not "unset"). */
+/* wants_hover: the decl carries `hover;`, so the pointer moves the selection
+ * (tray dropdowns only — keyboard menus leave it 0 so no motion-driven repaint
+ * fires, keeping idle at 0 CPU). */
+typedef struct { int width, row_h, max_vis, gap, hdr_h, pad_y, own_body, wants_hover; } WispMenuGeom;
 
 /* ============================================================ */
 /* Wayland I/O (wl.c)                                            */
@@ -78,6 +90,7 @@ void wl_dispatch(void);
 extern uint32_t id_compositor, id_shm, id_seat;
 extern uint32_t compositor_ver;      /* bound wl_compositor version (set_buffer_scale needs 3) */
 extern uint32_t id_layer_shell, id_wm_base;
+extern uint32_t layer_shell_ver;
 extern uint32_t id_pointer, id_keyboard;
 extern uint32_t id_gamma_mgr;
 extern uint32_t id_slock_mgr, id_slock;
@@ -192,6 +205,7 @@ struct Widget {
      * coordinate outside the pixel layer (layout, input, cutouts) stays
      * logical, which is what keeps the scale==1 path byte-identical. */
     int        w, h;
+    int        margin_top;           /* last set_margin top; popups anchor below it */
     int        scale120;             /* copy of the output's, in 120ths, >= 120 */
     int        sent_scale120;        /* last set_buffer_scale sent (120ths); 0 = none */
 #ifdef WISP_FRACTIONAL
@@ -280,6 +294,9 @@ struct Widget {
             /* generated renderer: the declared default, or this menu's own
              * body if its `menu NAME {}` decl carried one */
             void   (*render)(struct Widget *);
+            WispMenuGeom geom;   /* resolved at create: per-menu or MENU_* */
+            int      anchored;   /* click-anchored dropdown: dismiss on kbd-focus loss */
+            char     tag[48];    /* toggle identity: re-request of same tag closes */
         } menu;
         struct {
             Osd      items[MAX_OSDS];
@@ -351,6 +368,13 @@ void    cutout_set  (const char *target, Output *scope, int x, int y, int w, int
 void    cutout_clear(const char *target, Output *scope);
 void    cutout_drop_output(Output *o);   /* clear all cutouts scoped to a removed output */
 void    cutout_apply(const char *self,   Output *self_out, uint32_t *px, int sw, int sh);
+/* Rect of the bar cell most recently clicked, so a popup opened as a result of
+ * that click can be anchored under it instead of centered. Recorded by the
+ * generated click dispatch, consumed (and time-boxed) by menu_create. */
+typedef struct { Output *out; int x, w, below; int64_t ms; } ClickAnchor;
+extern ClickAnchor click_anchor;
+void    widget_note_click(Widget *w, int x, int cw);
+
 void    widget_set_anchor(Widget *w, uint32_t anchor_bits);
 void    widget_set_size(Widget *w, int width, int height);
 void    widget_set_margin(Widget *w, int top, int right, int bot, int left);
@@ -536,7 +560,7 @@ typedef struct { const char *item, *cmd; } WispMenuEntry;
 void render_menu_default(Widget *w);
 
 typedef struct { const char *name; const WispMenuEntry *e; int n; int emoji;
-                 void (*render)(struct Widget *); } WispMenu;
+                 void (*render)(struct Widget *); WispMenuGeom geom; } WispMenu;
 
 Widget *menu_create(const char *title, char items[][ITEM_MAX], int n,
                     int client_fd);
@@ -546,15 +570,23 @@ Widget *menu_create_action(const char *title,
 void    menu_render(Widget *w);
 void    menu_on_key(Widget *w, uint32_t key, uint32_t state);
 void    menu_on_click(Widget *w, int x, int y);
+/* Pointer moves the selection (menus with `hover;`; no-op otherwise). */
+void    menu_on_hover(Widget *w, int x, int y);
 void    menu_on_scroll(Widget *w, int dir);
 void    menu_reply_and_close(Widget *w, int picked);
 void    menu_cancel_all(void);
+int     menu_toggle(const char *tag);   /* 1 = same-tag menu was live and got closed */
 void    menu_set_ranks(Widget *w, const int *rank);
 void    menu_set_icons(Widget *w, uint32_t *const *icons, int icon_px);
 int     menu_icon_px(void);   /* icon size that fits a vertical row */
 /* Hook fired once per menu lifetime with the picked ORIGINAL item index
  * (-1 on cancel), then cleared. Used by apps.c to bump usage + free state. */
 void    menu_set_pick_hook(void (*fn)(int idx));
+/* Geometry for the NEXT menu_create only (consumed like click_anchor).
+ * Zero fields fall back to the template's MENU_* values. */
+void    menu_set_geom(const WispMenuGeom *g);
+/* Declared `menu NAME {}` by name, NULL if absent (ctl.c owns the table). */
+const WispMenu *wisp_menu_find(const char *name);
 /* Replace a live menu's item list in place (query/selection kept). */
 void    menu_update_items(Widget *w, char items[][ITEM_MAX], int n);
 void    spawn_detached(const char *shell_cmd);
@@ -663,7 +695,7 @@ void media_mic(const char *arg);       /* "mute" */
 void media_backlight(const char *arg); /* "up" | "down" */
 
 /* ============================================================ */
-/* D-Bus notification server (dbus.c) — optional                 */
+/* D-Bus transport + notification server (dbus.c + notify.c) — optional */
 /* ============================================================ */
 
 int      dbus_connect(void);                              /* fd or -1 */
@@ -677,11 +709,46 @@ extern int dbus_reconnect_fd;
 void     dbus_reconnect_init(void);
 void     dbus_reconnect_handle(void);
 
-/* Generic signal subscription (used by codegen-emitted dbus_signal sources). */
-typedef void (*dbus_sig_cb)(const uint8_t *body, int body_len, const char *sig);
+/* Generic signal subscription (used by codegen-emitted dbus_signal sources).
+ * Matching is by interface+member only — a callback that cares which peer or
+ * object emitted (mpris.c does) filters on sender/path itself. */
+typedef void (*dbus_sig_cb)(const char *sender, const char *path,
+                            const uint8_t *body, int body_len, const char *sig);
 void     dbus_subscribe(const char *iface, const char *member, dbus_sig_cb cb);
 int      dbus_signal_first_str(const uint8_t *body, int body_len, const char *sig,
                                char *out, int outcap);
+
+/* Extra well-known names to RequestName during bring-up (org.freedesktop.
+ * Notifications is always requested; tray.c adds the StatusNotifierWatcher
+ * pair). `name` must outlive the process — it is stored, not copied.
+ * Best-effort: losing the name is logged, not fatal. */
+void     dbus_own_name(const char *name);
+
+/* MPRIS2 client (mpris.c) — linked when a config declares an mpris() source.
+ * Fields are read by the generated source bindings; mpris_control() takes a
+ * Player member name ("PlayPause", "Next", "Previous"). */
+void        mpris_init(void);
+const char *mpris_title(void);
+const char *mpris_artist(void);
+const char *mpris_status(void);
+const char *mpris_player(void);
+void        mpris_control(const char *member);
+
+/* StatusNotifierItem tray (tray.c) — linked when a config declares a tray()
+ * source. We own org.kde.StatusNotifierWatcher and act as our own host; items
+ * are read by the generated `for x in <src>.items` loop. */
+#define TRAY_MAX      8    /* mirrored in wispc (codegen_internal.h) */
+#ifndef TRAY_ICON_PX       /* features.h may set it from tray(icon_size=N) */
+#define TRAY_ICON_PX 16    /* logical px; icons are box-scaled to this on arrival */
+#endif
+void            tray_init(void);
+int             tray_count(void);
+const char     *tray_title(int i);
+const char     *tray_id(int i);
+const char     *tray_status(int i);
+const uint32_t *tray_icon(int i);          /* TRAY_ICON_PX² premultiplied ARGB, or NULL */
+void            tray_click(int i, const char *member);  /* "Activate", … */
+void            tray_menu(int i);          /* dbusmenu popup, or SecondaryActivate */
 
 /* Decoded subset of org.freedesktop.Notifications/Notify body (susssasa{sv}i).
  * Populated by dbus_signal_decode_notify; used by codegen-emitted ring buffers
@@ -812,6 +879,13 @@ void msg(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 __attribute__((noreturn)) void die(const char *fmt, ...);
 
 int64_t now_ms(void);
+
+/* DSL string `==` lowers to this: a raw `==` on char* would pointer-compare.
+ * Inline (not a macro) so the operands aren't re-expanded — the macro form
+ * tripped -Waddress on array-typed source lines, which can't be NULL. */
+static inline int wisp_streq(const char *a, const char *b) {
+    return (a && b) ? strcmp(a, b) == 0 : a == b;
+}
 
 /* epoll plumbing (wisp.c) — ctl.c calls these on accept/close so the main loop
    doesn't have to rebuild client fd registrations every wakeup. */

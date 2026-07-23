@@ -126,6 +126,8 @@ static void dump_widget(FILE *o, Widget *w, int ind) {
         case WB_ONRELEASE:
         case WB_ONDRAG:
         case WB_ONCHANGE:
+        case WB_ONRCLICK:
+        case WB_ONMCLICK:
             pad(o, ind + 2); fprintf(o, "on_*(%s%s):\n",
                 b->click.plen ? "" : "", b->click.plen ? b->click.param : "");
             dump_stmt(o, b->click.body, ind + 4);

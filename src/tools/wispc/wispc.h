@@ -37,6 +37,7 @@ typedef enum {
     TK_KW_FOR, TK_KW_IN, TK_KW_CELL,
     TK_KW_TRUE, TK_KW_FALSE, TK_KW_ON_CLICK, TK_KW_ON_SCROLL,
     TK_KW_ON_PRESS, TK_KW_ON_RELEASE, TK_KW_ON_DRAG, TK_KW_ON_CHANGE,
+    TK_KW_ON_RCLICK, TK_KW_ON_MCLICK,
     TK_KW_EXEC, TK_KW_EMIT, TK_KW_SET, TK_KW_ANIMATE,
 } TokKind;
 
@@ -144,7 +145,7 @@ struct Prop {
 /* Widget body items: properties, on_click handlers, nested for. */
 typedef enum {
     WB_PROP, WB_ONCLICK, WB_FOR,
-    WB_ONPRESS, WB_ONRELEASE, WB_ONDRAG, WB_ONCHANGE,
+    WB_ONPRESS, WB_ONRELEASE, WB_ONDRAG, WB_ONCHANGE, WB_ONRCLICK, WB_ONMCLICK,
 } WBKind;
 typedef struct WBody {
     WBKind kind;
@@ -180,6 +181,9 @@ typedef struct Group {
     const char *name; size_t nlen;
     Prop **props; int nprops;
     Widget **members; int nmembers;
+    /* Parallel to members: non-NULL where the member came from a `for` block
+     * (members[k] is then that block's cell, repeated per iteration at draw). */
+    ForBlock **fors;
     const char **classes; int nclasses;
 } Group;
 
@@ -285,9 +289,10 @@ typedef struct SemaResult {
     const char **spawned_names;
     const char ***spawned_args;
     /* feature set */
-    bool has_dbus, has_osd, has_menu, has_hud, has_bar, has_lock, has_gamma, has_wallpaper, has_media, has_anim;
+    bool has_dbus, has_mpris, has_tray, has_osd, has_menu, has_hud, has_bar, has_lock, has_gamma, has_wallpaper, has_media, has_anim;
     bool has_src_cpu, has_src_mem, has_src_temp, has_src_bat, has_src_wifi, has_src_disk, has_src_vpn;
     bool has_src_exec, has_src_tags;
+    int  tray_icon_px;             /* tray(icon_size=N); 0 = runtime default */
 } SemaResult;
 
 SemaResult *sema_check(Arena *a, Unit *u);

@@ -30,6 +30,7 @@ static int  n_pending_fds = 0;
 uint32_t id_compositor, id_shm, id_seat;
 uint32_t compositor_ver;
 uint32_t id_layer_shell, id_wm_base;
+uint32_t layer_shell_ver;
 uint32_t id_pointer, id_keyboard;
 uint32_t id_gamma_mgr;
 uint32_t id_slock_mgr, id_slock;
@@ -547,7 +548,8 @@ static void handle_registry_global(uint32_t name, const char *iface, uint32_t ve
         if (globals_synced) output_init_widgets(o);
     } else if (!id_layer_shell && !strcmp(iface, "zwlr_layer_shell_v1")) {
         id_layer_shell = wl_new_id();
-        wl_registry_bind(name, iface, ver < 4 ? ver : 4, id_layer_shell);
+        layer_shell_ver = ver < 4 ? ver : 4;
+        wl_registry_bind(name, iface, layer_shell_ver, id_layer_shell);
     } else if (!id_wm_base && !strcmp(iface, "xdg_wm_base")) {
         id_wm_base = wl_new_id(); wl_registry_bind(name, iface, 1, id_wm_base);
     } else if (!id_gamma_mgr && !strcmp(iface, "zwlr_gamma_control_manager_v1")) {

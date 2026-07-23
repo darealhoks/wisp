@@ -574,6 +574,15 @@ int emit_surfaces(FILE *o, Unit *u, CGCtx *ctx) {
     for (int i = 0; i < ctx->nsrc; i++)
         if (ctx->srcs[i].drv->drv == DRV_TAGS) has_tags_src = 1;
 
+    /* `menu NAME {}` bodies inherit the template's axis (see emit_menu_render). */
+    Decl *menu_tmpl = NULL;
+    for (int i = 0; i < u->n; i++) {
+        Expr *sb = u->decls[i]->kind == D_SURFACE
+                 ? surface_prop(u->decls[i], "spawned_by") : NULL;
+        if (sb && sb->kind == EX_IDENT && sb->ident.n == 4
+            && memcmp(sb->ident.s, "menu", 4) == 0) { menu_tmpl = u->decls[i]; break; }
+    }
+
     for (int i = 0; i < u->n; i++) {
         Decl *d = u->decls[i];
         if (d->kind != D_SURFACE && d->kind != D_COMPOUND) continue;
@@ -604,7 +613,7 @@ int emit_surfaces(FILE *o, Unit *u, CGCtx *ctx) {
             int is_menu_tmpl = sb && sb->kind == EX_IDENT
                             && sb->ident.n == 4 && memcmp(sb->ident.s, "menu", 4) == 0;
             if (is_menu_tmpl && surface_has_body(d)
-                && emit_menu_render(o, d, ctx, "menu_default")) return 1;
+                && emit_menu_render(o, d, NULL, ctx, "menu_default")) return 1;
             continue;
         }
         if (d->is_menu) {
@@ -615,7 +624,7 @@ int emit_surfaces(FILE *o, Unit *u, CGCtx *ctx) {
             char *mn = malloc(d->nlen + 8);
             sprintf(mn, "menu_%.*s", (int)d->nlen, d->name);
             menu_names[nmenu++] = mn;
-            if (emit_menu_render(o, d, ctx, mn)) return 1;
+            if (emit_menu_render(o, d, menu_tmpl, ctx, mn)) return 1;
             continue;
         }
         char *nm_dup = strndup0(d->name, d->nlen);

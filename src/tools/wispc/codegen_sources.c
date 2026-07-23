@@ -30,6 +30,14 @@ static const SrcDrv DRVS[] = {
     { "gamma_warm",DRV_WISP,  {{"value", "(gamma_is_warm() ? \"1\" : \"0\")", 1}} },
     { "dnd",     DRV_WISP,    {{"value", "(dnd_on ? \"on\" : \"off\")", 1}} },
     { "ui_hidden",DRV_WISP,   {{"value", "(ui_hidden ? \"1\" : \"0\")", 1}} },
+    /* mpris rides DRV_WISP: no fd of its own, repainted via
+     * wispgen_wisp_state_changed() which mpris.c calls on every bus event. */
+    { "mpris",   DRV_WISP,    {{"title",  "mpris_title()",  1},
+                               {"artist", "mpris_artist()", 1},
+                               {"status", "mpris_status()", 1},
+                               {"player", "mpris_player()", 1}} },
+    /* tray likewise; `items` is for-only, lowered in collect_bar_items. */
+    { "tray",    DRV_WISP,    {{"count", "tray_count()", 0}} },
     { "exec_line",DRV_EXEC,   {{"value", "", 1}} },  /* lowering: see lower_member */
     { "dbus_signal",DRV_DBUS, {{"value", "", 1}} },  /* lowering: see lower_member */
 };
@@ -345,7 +353,8 @@ void emit_sources(FILE *o, SrcInst *srcs, int nsrc) {
             fputs  ("            char junk[256]; ssize_t rr = read(", o);
             fprintf(o, "src_%s_pipe", nm);
             fputs  (", junk, sizeof junk);\n", o);
-            fputs  ("            if (rr > 0) continue; if (rr < 0 && errno == EAGAIN) return;\n", o);
+            fputs  ("            if (rr > 0) continue;\n"
+                    "            if (rr < 0 && errno == EAGAIN) return;\n", o);
             fputs  ("            break;\n", o);
             fputs  ("        }\n", o);
             fprintf(o, "        ssize_t r = read(src_%s_pipe, src_%s_buf + src_%s_blen, (size_t)cap);\n", nm, nm, nm);
@@ -410,7 +419,9 @@ void emit_sources(FILE *o, SrcInst *srcs, int nsrc) {
             fprintf(o, "src_%s_hist_t src_%s_hist[SRC_%s_HIST_CAP];\n", nm, nm, NM);
             fprintf(o, "int src_%s_hist_n = 0;\n", nm);
             fprintf(o, "int src_%s_hist_head = 0;\n", nm);
-            fprintf(o, "static void src_%s_on_signal(const uint8_t *body, int body_len, const char *sig) {\n", nm);
+            fprintf(o, "static void src_%s_on_signal(const char *sender, const char *path,\n"
+                       "                             const uint8_t *body, int body_len, const char *sig) {\n", nm);
+            fputs  ("    (void)sender; (void)path;\n", o);
             fprintf(o, "    dbus_signal_first_str(body, body_len, sig, src_%s_value, sizeof src_%s_value);\n", nm, nm);
             fprintf(o, "    DbusNotifyFields __nf;\n");
             fprintf(o, "    if (dbus_signal_decode_notify(body, body_len, sig, &__nf) == 0) {\n");

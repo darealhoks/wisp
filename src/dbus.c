@@ -1,11 +1,8 @@
-/* Minimal D-Bus client implementing org.freedesktop.Notifications.
- *
- * Spec: https://specifications.freedesktop.org/notification-spec/latest/
+/* D-Bus session-bus transport: socket + SASL, marshalling, dispatch,
+ * reconnect. Interface logic lives in the consumers (notify.c serves
+ * org.freedesktop.Notifications); shared wire guts are in dbus.h.
  *
  * No libdbus / sd-bus dependency — we speak the wire protocol directly.
- * Scope is intentionally tight: just enough to receive Notify /
- * CloseNotification / GetCapabilities / GetServerInformation, post into the
- * OSD widget, and emit NotificationClosed signals.
  *
  *   ┌─ session bus
  *   │
@@ -24,6 +21,7 @@
 
 #define _GNU_SOURCE
 #include "wisp.h"
+#include "dbus.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -134,26 +132,20 @@ static int sasl_auth(int fd) {
 /* Marshalling helpers                                                  */
 /* ================================================================== */
 
-typedef struct {
-    uint8_t *b;
-    int      cap;
-    int      pos;
-} W;
-
-static void wensure(W *w, int n) {
+void wensure(W *w, int n) {
     if (w->pos + n <= w->cap) return;
     int nc = w->cap; while (nc < w->pos + n) nc = nc ? nc * 2 : 256;
     w->b = realloc(w->b, nc);
     w->cap = nc;
 }
-static void walign(W *w, int a) {
+void walign(W *w, int a) {
     int p = (w->pos + a - 1) & ~(a - 1);
     wensure(w, p - w->pos);
     while (w->pos < p) w->b[w->pos++] = 0;
 }
-static void wbyte(W *w, uint8_t v)  { wensure(w, 1); w->b[w->pos++] = v; }
-static void wu32 (W *w, uint32_t v) { walign(w, 4); wensure(w, 4); memcpy(w->b + w->pos, &v, 4); w->pos += 4; }
-static void wstr (W *w, const char *s) {
+void wbyte(W *w, uint8_t v)  { wensure(w, 1); w->b[w->pos++] = v; }
+void wu32 (W *w, uint32_t v) { walign(w, 4); wensure(w, 4); memcpy(w->b + w->pos, &v, 4); w->pos += 4; }
+void wstr (W *w, const char *s) {
     if (!s) s = "";
     uint32_t l = (uint32_t)strlen(s);
     wu32(w, l);
@@ -161,7 +153,7 @@ static void wstr (W *w, const char *s) {
     memcpy(w->b + w->pos, s, l + 1);
     w->pos += l + 1;
 }
-static void wsig (W *w, const char *s) {
+void wsig (W *w, const char *s) {
     uint8_t l = (uint8_t)strlen(s);
     wbyte(w, l);
     wensure(w, l + 1);
@@ -169,26 +161,18 @@ static void wsig (W *w, const char *s) {
     w->pos += l + 1;
 }
 
-/* Read view (read-only). */
-typedef struct {
-    const uint8_t *b;
-    int            len;
-    int            pos;
-    int            ok;
-} R;
-
-static void ralign(R *r, int a) {
+void ralign(R *r, int a) {
     int p = (r->pos + a - 1) & ~(a - 1);
     if (p > r->len) { r->ok = 0; return; }
     r->pos = p;
 }
-static uint8_t  rbyte(R *r)  { if (r->pos + 1 > r->len) { r->ok = 0; return 0; } return r->b[r->pos++]; }
-static uint16_t ru16 (R *r)  { ralign(r, 2); if (!r->ok || r->pos + 2 > r->len) { r->ok = 0; return 0; }
-                                uint16_t v; memcpy(&v, r->b + r->pos, 2); r->pos += 2; return v; }
-static uint32_t ru32 (R *r)  { ralign(r, 4); if (!r->ok || r->pos + 4 > r->len) { r->ok = 0; return 0; }
-                                uint32_t v; memcpy(&v, r->b + r->pos, 4); r->pos += 4; return v; }
-static int32_t  ri32 (R *r)  { return (int32_t)ru32(r); }
-static const char *rstr(R *r) {
+uint8_t  rbyte(R *r)  { if (r->pos + 1 > r->len) { r->ok = 0; return 0; } return r->b[r->pos++]; }
+uint16_t ru16 (R *r)  { ralign(r, 2); if (!r->ok || r->pos + 2 > r->len) { r->ok = 0; return 0; }
+                         uint16_t v; memcpy(&v, r->b + r->pos, 2); r->pos += 2; return v; }
+uint32_t ru32 (R *r)  { ralign(r, 4); if (!r->ok || r->pos + 4 > r->len) { r->ok = 0; return 0; }
+                         uint32_t v; memcpy(&v, r->b + r->pos, 4); r->pos += 4; return v; }
+int32_t  ri32 (R *r)  { return (int32_t)ru32(r); }
+const char *rstr(R *r) {
     uint32_t l = ru32(r);
     /* 64-bit compare: (int)l would go negative for l > INT_MAX and bypass the
      * bound, letting a non-terminated pointer escape to snprintf("%s") below. */
@@ -200,7 +184,7 @@ static const char *rstr(R *r) {
     r->pos += l + 1;
     return s;
 }
-static const char *rsig(R *r) {
+const char *rsig(R *r) {
     uint8_t l = rbyte(r);
     if (!r->ok || r->pos + l + 1 > r->len) { r->ok = 0; return ""; }
     const char *s = (const char *)(r->b + r->pos);
@@ -212,8 +196,6 @@ static const char *rsig(R *r) {
 /* Skip a value of the given single-type signature character. Walks containers
  * by recursing on the nested signature. Used to consume header fields and
  * variant payloads we don't care about. Returns 0 on success. */
-static int skip_val(R *r, const char **sigp, int depth);
-
 static int skip_single(R *r, char c, const char **sigp, int depth) {
     /* Variants embed a fresh signature, so nesting isn't bounded by the 255-byte
      * outer signature; cap depth like the reference impl to stop stack blowup. */
@@ -264,7 +246,7 @@ static int skip_single(R *r, char c, const char **sigp, int depth) {
     default: r->ok = 0; return -1;
     }
 }
-static int skip_val(R *r, const char **sigp, int depth) {
+int skip_val(R *r, const char **sigp, int depth) {
     while (**sigp) {
         char c = **sigp; (*sigp)++;
         if (skip_single(r, c, sigp, depth) < 0) return -1;
@@ -275,20 +257,6 @@ static int skip_val(R *r, const char **sigp, int depth) {
 /* ================================================================== */
 /* Message header                                                       */
 /* ================================================================== */
-
-#define DBUS_TYPE_METHOD_CALL   1
-#define DBUS_TYPE_METHOD_RETURN 2
-#define DBUS_TYPE_ERROR         3
-#define DBUS_TYPE_SIGNAL        4
-
-#define HF_PATH         1
-#define HF_INTERFACE    2
-#define HF_MEMBER       3
-#define HF_ERROR_NAME   4
-#define HF_REPLY_SERIAL 5
-#define HF_DESTINATION  6
-#define HF_SENDER       7
-#define HF_SIGNATURE    8
 
 static void w_header_field_str(W *w, uint8_t code, char sigc, const char *val) {
     walign(w, 8);            /* struct alignment */
@@ -308,27 +276,7 @@ static void w_header_field_u32(W *w, uint8_t code, uint32_t val) {
     wu32(w, val);
 }
 
-/* Build and send a complete D-Bus message.
- *   type   : DBUS_TYPE_*
- *   serial : 0 → auto-assign
- *   flags  : 0, or 1 = no-reply expected
- *   For each field, only non-NULL strings (and non-zero reply_serial) emit. */
-typedef struct {
-    uint8_t     type;
-    uint8_t     flags;
-    uint32_t    serial;        /* 0 = auto */
-    const char *path;
-    const char *interface;
-    const char *member;
-    const char *error_name;
-    uint32_t    reply_serial;
-    const char *destination;
-    const char *signature;     /* if NULL but body_len>0, asserts */
-    const uint8_t *body;
-    int            body_len;
-} Msg;
-
-static uint32_t send_msg(const Msg *m) {
+uint32_t send_msg(const Msg *m) {
     W h = {0};
     wbyte(&h, 'l');                   /* little-endian */
     wbyte(&h, m->type);
@@ -385,9 +333,22 @@ static int call_hello(void) {
  * sake of telling primary-owner from "in-queue" from "exists". */
 static uint32_t last_request_name_result;
 
-static int call_request_name(void) {
+/* Extra well-known names consumers asked for (tray.c: the Watcher + Host
+ * pair). Stored by pointer — callers pass string literals or static buffers. */
+#define DBUS_OWN_CAP 4
+static const char *own_names[DBUS_OWN_CAP];
+static int         own_name_n = 0;
+
+void dbus_own_name(const char *name) {
+    if (own_name_n >= DBUS_OWN_CAP) return;
+    own_names[own_name_n++] = name;
+    /* Names registered after bring-up are the caller's problem to re-request;
+     * every consumer today registers from its init(), before dbus_connect(). */
+}
+
+static int call_request_name(const char *name) {
     W b = {0};
-    wstr(&b, "org.freedesktop.Notifications");
+    wstr(&b, name);
     /* ALLOW_REPLACEMENT (1) | REPLACE_EXISTING (2) | DO_NOT_QUEUE (4).
      * mako 1.x grabs the name without ALLOW_REPLACEMENT, so REPLACE_EXISTING
      * alone won't dislodge it — the user's session must launch wisp before
@@ -406,8 +367,8 @@ static int call_request_name(void) {
     if (rc < 0) return rc;
     /* 1=primary, 2=in_queue, 3=exists (someone else owns), 4=already_owner */
     if (last_request_name_result != 1 && last_request_name_result != 4) {
-        msg("wisp: RequestName returned %u — not the primary owner",
-            last_request_name_result);
+        msg("wisp: RequestName(%s) returned %u — not the primary owner",
+            name, last_request_name_result);
         return -1;
     }
     return 0;
@@ -464,273 +425,58 @@ int dbus_signal_first_str(const uint8_t *body, int body_len, const char *sig,
     return 0;
 }
 
-/* Decode the org.freedesktop.Notifications/Notify body (signature susssasa{sv}i)
- * into a fixed-shape struct for codegen-driven ring buffers.
- *   skips:  app_name (s), replaces_id (u), app_icon (s)
- *   reads:  summary (s), body (s)
- *   skips:  actions (as)
- *   reads:  hints a{sv} — picks out urgency (y) and x-url (s); skips the rest.
- *   skips:  expire (i)
- * Returns 0 on success, -1 on truncation or signature mismatch. */
-int dbus_signal_decode_notify(const uint8_t *body, int body_len,
-                              const char *sig, DbusNotifyFields *out) {
-    if (!out) return -1;
-    memset(out, 0, sizeof *out);
-    if (!sig || strncmp(sig, "susss", 5) != 0) return -1;
-    R r = { .b = body, .len = body_len, .pos = 0, .ok = 1 };
-    rstr(&r);                /* app_name */
-    ru32(&r);                /* replaces_id */
-    rstr(&r);                /* app_icon */
-    const char *sum = rstr(&r);
-    const char *bod = rstr(&r);
-    if (!r.ok) return -1;
-    snprintf(out->summary, sizeof out->summary, "%s", sum);
-    snprintf(out->body,    sizeof out->body,    "%s", bod);
+/* ================================================================== */
+/* Async method calls                                                   */
+/* ================================================================== */
 
-    /* actions: as */
-    uint32_t alen = ru32(&r);
-    if (!r.ok) return -1;
-    ralign(&r, 4);
-    int64_t aend = (int64_t)r.pos + (int64_t)alen;
-    if (aend > r.len) return -1;
-    r.pos = (int)aend;
+/* Pending calls awaiting a reply. Fixed and lossy on purpose: a peer that
+ * never answers must not pin a slot forever, and there is no timer here to
+ * expire one (idle = 0 CPU). Slots are freed on reply and on disconnect. */
+#define DBUS_PENDING_CAP 32
+typedef struct {
+    uint32_t      serial;      /* 0 = free */
+    dbus_reply_cb cb;
+    void         *ud;
+} DbusPending;
+static DbusPending pending[DBUS_PENDING_CAP];
 
-    /* hints: a{sv} */
-    uint32_t hlen = ru32(&r);
-    if (!r.ok) return -1;
-    ralign(&r, 8);
-    int64_t hend64 = (int64_t)r.pos + (int64_t)hlen;
-    if (hend64 > r.len) return -1;
-    int hend = (int)hend64;
-    while (r.pos < hend) {
-        ralign(&r, 8);
-        const char *key = rstr(&r);
-        if (!r.ok) break;
-        const char *vsig = rsig(&r);
-        if (!r.ok) break;
-        char vc = vsig[0];
-        if (vc == 'y' && !strcmp(key, "urgency")) {
-            out->urgent = rbyte(&r);
-        } else if (vc == 's' && !strcmp(key, "x-url")) {
-            const char *s = rstr(&r);
-            if (r.ok) snprintf(out->url, sizeof out->url, "%s", s);
-        } else {
-            if (skip_val(&r, &vsig, 0) < 0) break;
-        }
-        if (!r.ok) break;
-    }
-    r.pos = hend;
-    ri32(&r);                /* expire */
-    return r.ok ? 0 : -1;
-}
-
-void dbus_emit_closed(uint32_t id, uint32_t reason) {
-    if (dbus_fd < 0) return;
-    W b = {0};
-    wu32(&b, id);
-    wu32(&b, reason);
-    Msg m = { .type = DBUS_TYPE_SIGNAL,
-              .flags = 1,
-              .path = "/org/freedesktop/Notifications",
-              .interface = "org.freedesktop.Notifications",
-              .member = "NotificationClosed",
-              .signature = "uu",
-              .body = b.b, .body_len = b.pos };
-    send_msg(&m);
-    free(b.b);
+uint32_t dbus_call(const Msg *m, dbus_reply_cb cb, void *ud) {
+    int slot = -1;
+    for (int i = 0; i < DBUS_PENDING_CAP; i++)
+        if (!pending[i].serial) { slot = i; break; }
+    /* ponytail: table full → drop the call; raise the cap if a real workload
+     * (many tray items registering at once) ever hits it. */
+    if (slot < 0) return 0;
+    uint32_t s = send_msg(m);
+    if (!s) return 0;
+    pending[slot] = (DbusPending){ .serial = s, .cb = cb, .ud = ud };
+    return s;
 }
 
 /* ================================================================== */
-/* Inbound: parse a single Notify call's payload                        */
+/* Dispatch loop                                                        */
 /* ================================================================== */
 
-/* nf-fa codepoints used as fallback when an app passes a stock icon name. */
-static uint32_t icon_from_name(const char *name) {
-    if (!name || !*name) return 0;
-    if (!strcmp(name, "audio-volume-high"))     return 0xf028;
-    if (!strcmp(name, "audio-volume-medium"))   return 0xf028;
-    if (!strcmp(name, "audio-volume-low"))      return 0xf027;
-    if (!strcmp(name, "audio-volume-muted"))    return 0xf026;
-    if (!strcmp(name, "microphone-sensitivity-muted")) return 0xf131;
-    if (!strcmp(name, "dialog-information"))    return 0xf0eb;
-    if (!strcmp(name, "dialog-warning"))        return 0xf071;
-    if (!strcmp(name, "dialog-error"))          return 0xf057;
-    return 0;
-}
-
-/* Pull one hint key + variant value, dispatching on key name.
- * Updates *urgency / *progress / *sync_id / *muted / *icon_cp as side effects. */
-static int parse_hint(R *r, int *urgency, int *progress, char *sync_id, int sync_cap,
-                      int *muted, uint32_t *icon_cp) {
-    const char *key = rstr(r);
-    if (!r->ok) return -1;
-    const char *sig = rsig(r);
-    if (!r->ok) return -1;
-    char vc = sig[0];
-
-    if (vc == 'y' && !strcmp(key, "urgency")) { *urgency = rbyte(r); return r->ok ? 0 : -1; }
-    if ((vc == 'i' || vc == 'u') && !strcmp(key, "value")) {
-        int v = (int)ri32(r); *progress = v; return r->ok ? 0 : -1;
-    }
-    if (vc == 's' && !strcmp(key, "x-canonical-private-synchronous")) {
-        const char *s = rstr(r);
-        snprintf(sync_id, sync_cap, "%s", s);
-        return r->ok ? 0 : -1;
-    }
-    if (vc == 's' && !strcmp(key, "category")) {
-        const char *s = rstr(r);
-        if (!strcmp(s, "muted")) *muted = 1;
-        return r->ok ? 0 : -1;
-    }
-    if (vc == 's' && !strcmp(key, "image-path")) {
-        const char *s = rstr(r);
-        uint32_t cp = icon_from_name(s);
-        if (cp) *icon_cp = cp;
-        return r->ok ? 0 : -1;
-    }
-    /* Unknown / unhandled — skip the variant payload. */
-    return skip_val(r, &sig, 0);
-}
-
-/* djb2; used to derive a stable replace_id from a synchronous hint string. */
-static uint32_t djb2(const char *s) {
-    uint32_t h = 5381;
-    while (*s) h = ((h << 5) + h) + (uint8_t)*s++;
-    return h ? h : 1;
-}
-
-static void handle_notify(R *r, uint32_t serial, const char *sender) {
-    /* signature: susssasa{sv}i */
-    const char *app_name   = rstr(r); (void)app_name;
-    uint32_t    replaces   = ru32(r);
-    const char *app_icon   = rstr(r);
-    const char *summary    = rstr(r);
-    const char *body       = rstr(r);
-    if (!r->ok) return;
-
-    /* actions array — skip */
-    uint32_t alen = ru32(r);
-    if (!r->ok) return;
-    ralign(r, 4);
-    /* alen is attacker-controlled; (int)alen for alen>=0x80000000 is negative
-     * and walks r->pos backwards past the bound check. 64-bit math avoids it. */
-    int64_t aend = (int64_t)r->pos + (int64_t)alen;
-    if (aend > r->len) { r->ok = 0; return; }
-    r->pos = (int)aend;
-
-    /* hints: a{sv} */
-    int urgency = 1, progress = -1, muted = 0;
-    uint32_t icon_cp = icon_from_name(app_icon);
-    char sync_id[64] = "";
-
-    uint32_t hlen = ru32(r);
-    if (!r->ok) return;
-    ralign(r, 8);                          /* dict_entry alignment */
-    int64_t hend64 = (int64_t)r->pos + (int64_t)hlen;
-    if (hend64 > r->len) { r->ok = 0; return; }
-    int hend = (int)hend64;
-    while (r->pos < hend) {
-        ralign(r, 8);
-        if (parse_hint(r, &urgency, &progress, sync_id, sizeof sync_id,
-                       &muted, &icon_cp) < 0) {
-            r->pos = hend; break;
-        }
-    }
-    r->pos = hend;
-
-    int32_t expire = ri32(r);
-    if (!r->ok) return;
-
-    uint32_t rid = replaces;
-    if (!rid && sync_id[0]) rid = djb2(sync_id);
-
-    int timeout;
-    if (expire < 0)       timeout = -1;    /* server default */
-    else if (expire == 0) timeout = 0;     /* spec: 0 = never expire (all urgencies) */
-    else                  timeout = expire;
-
-    uint32_t out_id;
-#ifdef WISP_HAS_OSD
-    if (dnd_on && urgency < 2) {
-        out_id = rid;  /* swallow silently; spec allows any non-zero id */
-        if (!out_id) out_id = 1;
-    } else {
-        out_id = osd_post(rid, summary, body, icon_cp, progress,
-                          urgency, muted, timeout);
-    }
-#else
-    /* No OSD engine linked; just acknowledge with a stable non-zero id. */
-    (void)summary; (void)body; (void)icon_cp; (void)progress;
-    (void)urgency; (void)muted; (void)timeout;
-    out_id = rid ? rid : 1;
-#endif
-
-    /* Reply: u (notification id) */
-    W rb = {0};
-    wu32(&rb, out_id);
-    Msg m = { .type = DBUS_TYPE_METHOD_RETURN,
-              .reply_serial = serial,
-              .destination = sender,
-              .signature = "u",
-              .body = rb.b, .body_len = rb.pos };
-    send_msg(&m);
-    free(rb.b);
-}
-
-static void handle_close(R *r, uint32_t serial, const char *sender) {
-    uint32_t id = ru32(r);
-    if (!r->ok) return;
-#ifdef WISP_HAS_OSD
-    osd_close(id);
-#else
-    (void)id;
-#endif
+void dbus_reply_empty(uint32_t serial, const char *sender) {
     Msg m = { .type = DBUS_TYPE_METHOD_RETURN,
               .reply_serial = serial,
               .destination = sender };
     send_msg(&m);
 }
 
-static void handle_get_caps(uint32_t serial, const char *sender) {
-    /* reply signature: as. Body: u32 array_bytes + array of strings.
-     * Advertise just "body" and "icon-static" to keep it honest. */
+void dbus_reply_error(uint32_t serial, const char *sender,
+                      const char *name, const char *msg) {
     W b = {0};
-    int len_pos = b.pos;
-    wu32(&b, 0);                         /* placeholder */
-    int start = b.pos;
-    walign(&b, 4);
-    wstr(&b, "body");
-    wstr(&b, "icon-static");
-    wstr(&b, "persistence");
-    uint32_t alen = (uint32_t)(b.pos - start);
-    memcpy(b.b + len_pos, &alen, 4);
-    Msg m = { .type = DBUS_TYPE_METHOD_RETURN,
+    wstr(&b, msg);
+    Msg m = { .type = DBUS_TYPE_ERROR,
               .reply_serial = serial,
               .destination = sender,
-              .signature = "as",
+              .error_name = name,
+              .signature = "s",
               .body = b.b, .body_len = b.pos };
     send_msg(&m);
     free(b.b);
 }
-
-static void handle_get_info(uint32_t serial, const char *sender) {
-    W b = {0};
-    wstr(&b, "wisp");
-    wstr(&b, "wisp");
-    wstr(&b, "0.1");
-    wstr(&b, "1.2");
-    Msg m = { .type = DBUS_TYPE_METHOD_RETURN,
-              .reply_serial = serial,
-              .destination = sender,
-              .signature = "ssss",
-              .body = b.b, .body_len = b.pos };
-    send_msg(&m);
-    free(b.b);
-}
-
-/* ================================================================== */
-/* Dispatch loop                                                        */
-/* ================================================================== */
 
 static void dispatch_one(const uint8_t *msg, int msg_len) {
     R r = { .b = msg, .len = msg_len, .pos = 0, .ok = 1 };
@@ -738,7 +484,7 @@ static void dispatch_one(const uint8_t *msg, int msg_len) {
     /* fixed header */
     rbyte(&r);                            /* endian — always 'l' here */
     uint8_t type = rbyte(&r);
-    rbyte(&r);                            /* flags */
+    uint8_t flags = rbyte(&r);
     rbyte(&r);                            /* version */
     uint32_t body_len = ru32(&r);
     uint32_t serial   = ru32(&r);
@@ -773,25 +519,50 @@ static void dispatch_one(const uint8_t *msg, int msg_len) {
     }
     r.pos = fend;
     ralign(&r, 8);                        /* body alignment */
-    (void)body_len; (void)reply_serial;
+    (void)body_len;
     (void)dest;
 
+    if (type == DBUS_TYPE_METHOD_RETURN || type == DBUS_TYPE_ERROR) {
+        for (int i = 0; reply_serial && i < DBUS_PENDING_CAP; i++) {
+            if (pending[i].serial != reply_serial) continue;
+            DbusPending p = pending[i];
+            pending[i].serial = 0;   /* free before the cb, it may call again */
+            p.cb(sender, &r, body_sig, type == DBUS_TYPE_ERROR, p.ud);
+            break;
+        }
+        return;
+    }
     if (type == DBUS_TYPE_SIGNAL) {
         for (int i = 0; i < dbus_sub_n; i++) {
             if (!strcmp(dbus_subs[i].iface,  iface) &&
                 !strcmp(dbus_subs[i].member, member)) {
-                dbus_subs[i].cb(msg + r.pos, msg_len - r.pos, body_sig);
+                dbus_subs[i].cb(sender, path, msg + r.pos, msg_len - r.pos, body_sig);
             }
         }
         return;
     }
     if (type != DBUS_TYPE_METHOD_CALL) return;
-    if (strcmp(iface, "org.freedesktop.Notifications") != 0) return;
-    if (!strcmp(member, "Notify"))                  handle_notify(&r, serial, sender);
-    else if (!strcmp(member, "CloseNotification"))  handle_close(&r, serial, sender);
-    else if (!strcmp(member, "GetCapabilities"))    handle_get_caps(serial, sender);
-    else if (!strcmp(member, "GetServerInformation")) handle_get_info(serial, sender);
-    /* Unknown member → silently drop (most callers ignore missing reply). */
+    int handled = 0;
+    if (!strcmp(iface, "org.freedesktop.Notifications")) {
+        notify_method_call(&r, member, serial, sender);
+        handled = 1;
+#ifdef WISP_HAS_TRAY
+    } else if (!strcmp(iface, "org.kde.StatusNotifierWatcher") ||
+               !strcmp(iface, "org.freedesktop.DBus.Properties") ||
+               !strcmp(iface, "org.freedesktop.DBus.Introspectable")) {
+        handled = tray_method_call(&r, iface, member, path, serial, sender);
+#endif
+    } else if (!strcmp(iface, "org.freedesktop.DBus.Peer") &&
+               !strcmp(member, "Ping")) {
+        dbus_reply_empty(serial, sender);
+        handled = 1;
+    }
+    /* Never leave a call unanswered: Qt builds a proxy by introspecting first
+     * and blocks on it, so a dropped reply freezes the caller's GUI for the
+     * full 25 s timeout instead of failing fast. */
+    if (!handled && !(flags & 1))
+        dbus_reply_error(serial, sender, "org.freedesktop.DBus.Error.UnknownMethod",
+                         "wisp: no such method");
 }
 
 /* Ensure rbuf has at least `need` bytes of capacity. Returns 0 on success.
@@ -896,6 +667,8 @@ static void arm_reconnect(int delay_ms) {
 static void dbus_drop(int delay_ms) {
     if (dbus_fd >= 0) { close(dbus_fd); dbus_fd = -1; }
     rlen = 0; rskip = 0;
+    /* Serials restart per connection — replies can never arrive now. */
+    memset(pending, 0, sizeof pending);
     rbuf_maybe_shrink();
     arm_reconnect(delay_ms);
 }
@@ -1012,13 +785,23 @@ int dbus_connect(void) {
         msg("wisp: dbus Hello failed");
         close(fd); dbus_fd = -1; arm_reconnect(5000); return -1;
     }
-    if (call_request_name() < 0) {
+    if (call_request_name("org.freedesktop.Notifications") < 0) {
         msg("wisp: dbus RequestName failed (mako still running?)");
         close(fd); dbus_fd = -1; arm_reconnect(5000); return -1;
     }
+    /* Best-effort: another tray host already owning the Watcher just means we
+     * never receive items — not a reason to tear down the notification server. */
+    for (int i = 0; i < own_name_n; i++) call_request_name(own_names[i]);
     int fl = fcntl(fd, F_GETFL); fcntl(fd, F_SETFL, fl | O_NONBLOCK);
     for (int i = 0; i < dbus_sub_n; i++)
         call_add_match(dbus_subs[i].iface, dbus_subs[i].member);
+    /* Consumers that must issue a call the moment the bus is up (mpris.c
+     * enumerates players). Weak: absent unless that object is linked in. */
+    extern void mpris_on_bus_up(void) __attribute__((weak));
+    if (mpris_on_bus_up) mpris_on_bus_up();
+#ifdef WISP_HAS_TRAY
+    tray_on_bus_up();
+#endif
     msg("wisp: dbus connected, owning org.freedesktop.Notifications");
     return fd;
 }

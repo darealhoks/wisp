@@ -124,6 +124,33 @@ CE lower_member(CGCtx *c, Expr *e) {
         }
         return r;
     }
+    if (L && L->kind == LB_TRAY_IT) {
+        const char *it = L->c_expr;
+        CE r = { .type = T_UNK };
+        if (flen == 4 && memcmp(fld, "icon", 4) == 0) {
+            snprintf(r.text, sizeof r.text, "tray_icon(%s)", it);
+            r.type = T_PIXMAP;
+            /* Collapse the reserved square when the item has no pixmap — an
+             * icon-less item would otherwise render as a hole in the row. */
+            static char pms[64];   /* consumed by the caller's fprintf at once */
+            snprintf(pms, sizeof pms, "(tray_icon(%s) ? TRAY_ICON_PX : 0)", it);
+            r.pm_size = pms;
+        } else if (flen == 8 && memcmp(fld, "has_icon", 8) == 0) {
+            snprintf(r.text, sizeof r.text, "(tray_icon(%s) != 0)", it); r.type = T_BOOL;
+        } else if (flen == 5 && memcmp(fld, "title", 5) == 0) {
+            snprintf(r.text, sizeof r.text, "tray_title(%s)", it); r.type = T_STR;
+        } else if (flen == 2 && memcmp(fld, "id", 2) == 0) {
+            snprintf(r.text, sizeof r.text, "tray_id(%s)", it); r.type = T_STR;
+        } else if (flen == 6 && memcmp(fld, "status", 6) == 0) {
+            snprintf(r.text, sizeof r.text, "tray_status(%s)", it); r.type = T_STR;
+        } else if (flen == 5 && memcmp(fld, "index", 5) == 0) {
+            snprintf(r.text, sizeof r.text, "(%s)", it); r.type = T_INT;
+        } else {
+            diag_error(e->loc, "codegen: tray item has no field '%.*s'", (int)flen, fld);
+            c->failed = 1;
+        }
+        return r;
+    }
     if (L && L->kind == LB_MENU_SELF) {
         const char *wv = c->widget_var ? c->widget_var : "w";
         CE r = { .type = T_UNK };
@@ -412,10 +439,8 @@ CE lower(CGCtx *c, Expr *e) {
             && (l.type == T_STR || rr.type == T_STR)) {
             CE ls = (l.type  == T_STR) ? l  : coerce_to_str(c, l,  e->bin.l->loc);
             CE rs = (rr.type == T_STR) ? rr : coerce_to_str(c, rr, e->bin.r->loc);
-            const char *eq = (e->bin.op == OP_EQ) ? "==" : "!=";
-            snprintf(r.text, sizeof r.text,
-                "(((%s) && (%s)) ? (strcmp((%s),(%s)) %s 0) : ((%s) %s (%s)))",
-                ls.text, rs.text, ls.text, rs.text, eq, ls.text, eq, rs.text);
+            snprintf(r.text, sizeof r.text, "(%swisp_streq((%s),(%s)))",
+                     (e->bin.op == OP_EQ) ? "" : "!", ls.text, rs.text);
             r.type = T_BOOL;
             return r;
         }

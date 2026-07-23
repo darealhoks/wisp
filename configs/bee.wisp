@@ -11,6 +11,7 @@ source temp_s = temp();
 source wifi_s = wifi("wlan0");
 /* SUPER+b (mango) → `wispctl hide toggle`: bar + HUD gate on this. */
 source hid    = ui_hidden();
+source tray_s = tray(icon_size=20);
 source vol_s  = exec_line("v=$(wpctl get-volume @DEFAULT_AUDIO_SINK@ 2>/dev/null); case x$v in x) echo err;; *MUTED*) echo mute;; *) p=$(echo $v | tr -cd 0-9); if [ 0$p -lt 34 ]; then echo low; elif [ 0$p -lt 67 ]; then echo med; else echo high; fi;; esac", every="2s");
 
 const TEXT   = #ffe9e6dd;
@@ -26,6 +27,7 @@ const RED    = #ffe0603f;
 const GREEN  = #ff97bb90;
 const PRIM   = #ff64799c;
 const TERT   = #ff92aed2;
+const TRAY_ICONS_ONLY = true;   // icon-less tray items vanish instead of showing their id
 const SOLID  = #ff0e131c;   // opaque: translucent CRUST must not leak through the lock
 
 surface bar {
@@ -43,6 +45,20 @@ surface bar {
   group distrogrp {
     align = left;
     widget distro { icon = 0xf32e; }
+  }
+  group batgrp {
+    align = left;
+    widget bat { icon = bat_s.charging  ? 0xf0084
+                      : bat_s.pct >= 75 ? 0xf240
+                      : bat_s.pct >= 50 ? 0xf241
+                      : bat_s.pct >= 25 ? 0xf242
+                      : bat_s.pct >= 10 ? 0xf243
+                      :                   0xf244;
+                 text = " {bat_s.pct}%";
+                 fg   = bat_s.charging ? GREEN
+                      : bat_s.pct < 15 ? RED
+                      : bat_s.pct < 25 ? ORANGE
+                      : bat_s.pct < 40 ? YELLOW : TEXT; }
   }
   group clockgrp {
     align = left;
@@ -80,21 +96,6 @@ surface bar {
                    on_click() = exec("foot -T ws-hud-vol --app-id=ws-hud-vol -e wiremix"); }
   }
 
-  group batgrp {
-    align = right;
-    widget bat { icon = bat_s.charging  ? 0xf0084
-                      : bat_s.pct >= 75 ? 0xf240
-                      : bat_s.pct >= 50 ? 0xf241
-                      : bat_s.pct >= 25 ? 0xf242
-                      : bat_s.pct >= 10 ? 0xf243
-                      :                   0xf244;
-                 text = " {bat_s.pct}%";
-                 fg   = bat_s.charging ? GREEN
-                      : bat_s.pct < 15 ? RED
-                      : bat_s.pct < 25 ? ORANGE
-                      : bat_s.pct < 40 ? YELLOW : TEXT; }
-  }
-
   group sysgrp {
     align = right;
     widget cpu    { icon = 0xf4bc;  text = " {cpu_s.pct}%";
@@ -115,12 +116,33 @@ surface bar {
                        : mem_s.pct >= 75 ? ORANGE
                        : mem_s.pct >= 60 ? YELLOW : TEXT; }
   }
+
+  /* Systray. Empty until an app registers a StatusNotifierItem. Icons come
+     from IconPixmap or the hicolor theme; TRAY_ICONS_ONLY drops the id-text
+     fallback for the (rare) item that resolves to neither. */
+  /* No height → fills the bar row like every other group, so the icons sit in
+     the same pill geometry as the text widgets. */
+  group traygrp {
+    align = right;
+    for tray_item in tray_s.items {
+      cell.tray {
+        icon       = tray_item.icon;
+        text       = tray_item.has_icon || TRAY_ICONS_ONLY ? "" : tray_item.id;
+        visible    = tray_item.status != "Passive"
+                     && (tray_item.has_icon || !TRAY_ICONS_ONLY);
+        on_click()       = exec("wispctl tray activate {tray_item.index}");
+        on_right_click()  = exec("wispctl tray menu {tray_item.index}");
+        on_middle_click() = exec("wispctl tray secondary {tray_item.index}");
+      }
+    }
+  }
 }
 
 group      { bg = CRUST; border = BORD; border_width = 2; radius = 8;
              pad = 8; pad_x = 12; gap = 14; }   // no height → fills the bar row
 #distrogrp { pad_x = 18; gap = 0; }
 #clockgrp  { gap = 10; }
+#traygrp   { pad_x = 4; gap = 0; }   // pills already carry 4px around their 20px icon, so gap 0 keeps icon-to-icon spacing equal to icon-to-border
 #conngrp   { pad_x = 18; }
 
 widget { fg = TEXT; }
@@ -133,6 +155,13 @@ widget { fg = TEXT; }
              transition_size = 160ms;
              enter_anim = 160ms; exit_anim = 160ms; }
 .ws:active { fg = TEXT; border = BORD; width = 34; height = 34; }
+
+/* One pill for the whole tray (group traygrp) — members are bare icons in it. */
+/* Bigger than the 20px icon, or the :pressed highlight hides entirely
+   underneath it. */
+.tray         { align = right; fg = TEXT; radius = 6; width = 28; height = 26;
+                enter_anim = 160ms; exit_anim = 160ms; }
+.tray:pressed { bg = REST; }
 
 
 // ============================================================================
@@ -308,7 +337,7 @@ surface menu {
   keyboard = exclusive;
 
   axis        = vertical;      // top-centered launcher float, query row on top
-  width       = 560;
+  width       = 320;
   margin      = 6;
   max_visible = 5;
   row_h       = 34;
@@ -337,6 +366,7 @@ surface menu {
       bg     = row.selected ? REST : #00000000;
       radius = 4;
       pad_x  = 8;
+      elide;
     }
   }
 }
@@ -352,3 +382,34 @@ menu power {
 }
 
 menu emoji { preset = emoji; }
+
+/* The tray right-click popup (dbusmenu). Reserved name: no items of its own —
+   tray.c fills the rows and borrows this decl's look + geometry. A dropdown,
+   not a launcher: no query group, so nothing looks searchable (typing still
+   filters, it just isn't drawn), max_visible >= any real tray menu so it never
+   scrolls, and `elide` cuts a long label at the width. anchor_gap matches the
+   bar's own 6px screen inset, so the popup sits off the module the same way
+   the bar sits off the screen edge. */
+menu tray {
+  width       = 200;
+  row_h       = 24;
+  max_visible = 24;
+  anchor_gap  = 6;
+  hover;   // pointer moves the selection (one indicator, mouse or keyboard)
+  font_size   = 12;
+
+  bg = CRUST; border = BORD; border_width = 2; radius = 8;
+  pad_x = 6; pad_y = 6;
+
+  for row in rows {
+    cell {
+      height = 24;
+      text   = row.label;
+      fg     = TEXT;
+      bg     = row.selected ? BORD : #00000000;
+      radius = 4;
+      pad_x  = 8;
+      elide;
+    }
+  }
+}

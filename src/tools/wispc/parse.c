@@ -497,7 +497,8 @@ static Widget *parse_widget_or_cell(P *p, bool is_cell) {
         Tok t = cur(p);
         if (t.kind == TK_KW_ON_CLICK   || t.kind == TK_KW_ON_SCROLL ||
             t.kind == TK_KW_ON_PRESS   || t.kind == TK_KW_ON_RELEASE ||
-            t.kind == TK_KW_ON_DRAG    || t.kind == TK_KW_ON_CHANGE) {
+            t.kind == TK_KW_ON_DRAG    || t.kind == TK_KW_ON_CHANGE ||
+            t.kind == TK_KW_ON_RCLICK  || t.kind == TK_KW_ON_MCLICK) {
             lex_next(&p->L);
             expect(p, TK_LPAREN, "'('");
             switch (t.kind) {
@@ -505,6 +506,8 @@ static Widget *parse_widget_or_cell(P *p, bool is_cell) {
             case TK_KW_ON_RELEASE: b->kind = WB_ONRELEASE; break;
             case TK_KW_ON_DRAG:    b->kind = WB_ONDRAG;    break;
             case TK_KW_ON_CHANGE:  b->kind = WB_ONCHANGE;  break;
+            case TK_KW_ON_RCLICK:  b->kind = WB_ONRCLICK;  break;
+            case TK_KW_ON_MCLICK:  b->kind = WB_ONMCLICK;  break;
             default:               b->kind = WB_ONCLICK;   break;
             }
             b->click.loc = t.loc;
@@ -646,11 +649,18 @@ static Group *parse_group(P *p) {
     else { lex_next(&p->L); g->name = arena_strn(p->a, n.s, n.len); g->nlen = n.len; }
     parse_classes(p, n.s + n.len, &g->classes, &g->nclasses);
     expect(p, TK_LBRACE, "'{'");
-    VList props = {0}, members = {0};
+    VList props = {0}, members = {0}, fors = {0};
     while (!at(p, TK_RBRACE) && !at(p, TK_EOF)) {
         Tok t = cur(p);
         if (t.kind == TK_KW_WIDGET || t.kind == TK_KW_CELL) {
             vl_push(&members, parse_widget_or_cell(p, t.kind == TK_KW_CELL));
+            vl_push(&fors, NULL);
+        } else if (t.kind == TK_KW_FOR) {
+            /* A for-block member is one cell repeated at runtime — it becomes a
+             * single member slot that draws N times inside the container. */
+            ForBlock *f = parse_for(p);
+            if (f->ncells != 1) diag_error(f->loc, "for inside a group needs exactly one cell");
+            else { vl_push(&members, f->cells[0]); vl_push(&fors, f); }
         } else if (t.kind == TK_IDENT) {
             vl_push(&props, parse_prop(p));
         } else {
@@ -667,6 +677,9 @@ static Group *parse_group(P *p) {
     g->members = NEW_ARR(p, Widget*, nm);
     for (int i = 0; i < nm; i++) g->members[i] = ma[i];
     g->nmembers = nm;
+    int nf; ForBlock **fa = (ForBlock**)vl_freeze(p, &fors, &nf);
+    g->fors = NEW_ARR(p, ForBlock*, nm ? nm : 1);
+    for (int i = 0; i < nm; i++) g->fors[i] = i < nf ? fa[i] : NULL;
     return g;
 }
 

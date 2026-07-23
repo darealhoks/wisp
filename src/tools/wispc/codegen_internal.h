@@ -27,6 +27,7 @@ Expr       *surface_prop(Decl *sur, const char *name);
 Expr       *widget_prop(Widget *w, const char *name);
 WBody      *widget_onclick(Widget *w);
 WBody      *widget_handler(Widget *w, WBKind k);
+int         widget_clickable(Widget *w);
 int         widget_is_slider(Widget *w);
 int         transition_dur(Widget *wd, const char *which);
 const char *transition_easing_id(Widget *wd);
@@ -112,6 +113,8 @@ typedef enum {
     LB_DBUS_HIST_IT,
     /* menu row: c_expr indexes s.menu.filtered[] */
     LB_MENU_ROW,
+    /* tray item: c_expr is the 0-based index into tray.c's compacted list */
+    LB_TRAY_IT,
     /* the menu itself (`menu.query` / `.prompt` / `.count`); c_expr is the
      * fallback prompt literal declared on the surface. */
     LB_MENU_SELF,
@@ -160,6 +163,8 @@ const char *op_C(Op o);
 
 /* Rows a menu can have on screen at once; sizes the per-row st[]/anim slots. */
 #define MENU_ROWS_CAP 32
+/* Mirrors TRAY_MAX in src/wisp.h — the for-block unroll cap for tray items. */
+#define TRAY_ITEMS_CAP 8
 
 typedef struct {
     Widget *w;
@@ -228,7 +233,7 @@ typedef struct {
 
 /* ---------- codegen_surface.c / _spawned.c / _compound.c ---------- */
 
-int  emit_menu_render(FILE *o, Decl *sur, CGCtx *ctx, const char *nm);
+int  emit_menu_render(FILE *o, Decl *sur, Decl *tmpl, CGCtx *ctx, const char *nm);
 int  emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm);
 int  emit_surface_life(FILE *o, Decl *sur, CGCtx *ctx, const char *nm,
                        BarItem *items, int nitems, const SurGeom *g);

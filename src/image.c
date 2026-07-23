@@ -61,6 +61,49 @@ uint8_t *image_load(const char *path, int *w, int *h) {
     return px;
 }
 
+/* Resolve a freedesktop icon *name* to a PNG path. Absolute paths pass
+ * through; names are looked up under `extra` (an app-supplied theme dir, may
+ * be NULL) and then the XDG data dirs' hicolor apps/ dirs and /usr/share/pixmaps.
+ * ponytail: no theme-index parsing, no SVG — hicolor+pixmaps PNGs cover the
+ * installed apps here; extend to the full icon-theme spec if misses annoy. */
+int image_find_icon(const char *name, const char *extra, char *out, size_t sz) {
+    if (!name || !name[0]) return 0;
+    struct stat st;
+    if (name[0] == '/') {
+        if (stat(name, &st) < 0) return 0;
+        snprintf(out, sz, "%s", name);
+        return 1;
+    }
+    static const int sizes[] = { 48, 64, 32, 128, 256, 24, 16 };
+    if (extra && extra[0]) {
+        snprintf(out, sz, "%.200s/%.100s.png", extra, name);
+        if (stat(out, &st) == 0) return 1;
+        for (size_t si = 0; si < sizeof sizes / sizeof *sizes; si++) {
+            snprintf(out, sz, "%.160s/hicolor/%dx%d/apps/%.100s.png",
+                     extra, sizes[si], sizes[si], name);
+            if (stat(out, &st) == 0) return 1;
+        }
+    }
+    char dirs[8][256];
+    int nd = 0;
+    char buf[1024];
+    const char *dh = getenv("XDG_DATA_HOME"), *home = getenv("HOME");
+    if (dh)        snprintf(dirs[nd++], 256, "%.240s", dh);
+    else if (home) snprintf(dirs[nd++], 256, "%.220s/.local/share", home);
+    const char *dd = getenv("XDG_DATA_DIRS");
+    snprintf(buf, sizeof buf, "%s", dd && dd[0] ? dd : "/usr/local/share:/usr/share");
+    for (char *p = buf, *tok; nd < 8 && (tok = strsep(&p, ":")); )
+        if (tok[0]) snprintf(dirs[nd++], 256, "%.240s", tok);
+    for (size_t si = 0; si < sizeof sizes / sizeof *sizes; si++)
+        for (int d = 0; d < nd; d++) {
+            snprintf(out, sz, "%.160s/icons/hicolor/%dx%d/apps/%.100s.png",
+                     dirs[d], sizes[si], sizes[si], name);
+            if (stat(out, &st) == 0) return 1;
+        }
+    snprintf(out, sz, "/usr/share/pixmaps/%.100s.png", name);
+    return stat(out, &st) == 0;
+}
+
 uint8_t *image_decode_png(const uint8_t *buf, int len, int *w, int *h) {
     int c = 0;
     return stbi_load_from_memory(buf, len, w, h, &c, 4);

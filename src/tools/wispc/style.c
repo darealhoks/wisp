@@ -65,7 +65,8 @@ static void collect_sbody(Arena *a, Nodes *ns, SBody *items, int nitems, Node *p
         case SB_GROUP: {
             Group *g = b->group;
             Node *n = mk(a, ns, N_GROUP, g->name, g->classes, g->nclasses, parent, g);
-            for (int m = 0; m < g->nmembers; m++) collect_widget(a, ns, g->members[m], n, NULL);
+            for (int m = 0; m < g->nmembers; m++)
+                collect_widget(a, ns, g->members[m], n, g->fors ? g->fors[m] : NULL);
             break;
         }
         }
@@ -303,7 +304,7 @@ void style_apply(Arena *a, Unit *u) {
             for (int k = 0; k < ncand; k++) apply_pseudo(a, n, PSEUDOS[ps], cand[k].p);
         }
         if (resolve(u, n, "hover", &cand, &ccap))
-            diag_error(cand[0].rule, "':hover' is not supported — the runtime tracks hover per surface, not per widget");
+            diag_error(cand[0].rule, "':hover' is not supported — put `hover;` on the menu decl and the selection follows the pointer");
     }
 
     free(cand); free(add); free(ns.v);

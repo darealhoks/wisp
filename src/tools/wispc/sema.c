@@ -14,13 +14,12 @@ typedef struct {
 enum {
     F_NONE = 0,
     F_CLOCK, F_CPU, F_MEM, F_TEMP, F_BAT, F_WIFI, F_DISK, F_VPN,
-    F_TAGS, F_EXEC, F_DBUS,
+    F_TAGS, F_EXEC, F_DBUS, F_MPRIS, F_TRAY,
 };
 
 /* A row here without a driver in codegen_sources.c makes --check pass and
  * --emit die — add the row in the same commit as the driver, never before.
- * Wanted but undriven: mpris (dbus.c already speaks the wire), inotify (a
- * poll-free file source, unlike exec_line). */
+ * Wanted but undriven: inotify (a poll-free file source, unlike exec_line). */
 static const SrcDef SOURCES[] = {
     {"clock",                "value",  "value", F_CLOCK },
     {"cpu",                  "pct",    "pct load1", F_CPU },
@@ -36,6 +35,8 @@ static const SrcDef SOURCES[] = {
     {"ui_hidden",            "value",  "value", F_NONE },
     {"exec_line",            "value",  "value", F_EXEC },
     {"dbus_signal",          "value",  "value history", F_DBUS },
+    {"mpris",                "title",  "title artist status player", F_MPRIS },
+    {"tray",                 "count",  "count items", F_TRAY },
 };
 
 static const SrcDef *find_src(const char *name, size_t n) {
@@ -132,7 +133,26 @@ static void set_flag(SemaResult *r, int f) {
     case F_TAGS:  r->has_src_tags = 1; break;
     case F_EXEC: r->has_src_exec = 1; break;
     case F_DBUS: r->has_dbus = 1; break;
+    /* mpris.c is a pure client, but it needs the transport. */
+    case F_MPRIS: r->has_mpris = 1; r->has_dbus = 1; break;
+    /* Same shape as mpris, except tray.c also owns a name on the bus. */
+    case F_TRAY:  r->has_tray = 1; r->has_dbus = 1; break;
     default: break;
+    }
+}
+
+/* `tray(icon_size=N)` — the decoded-icon square, baked into features.h. It
+ * sizes a per-item buffer, so it stays compile-time; 8..64 keeps that sane. */
+static void read_tray_icon_size(SemaResult *r, Expr *c) {
+    for (int i = 0; i < c->call.nargs; i++) {
+        const char *kn = c->call.argnames ? c->call.argnames[i] : NULL;
+        if (!kn || c->call.anlen[i] != 9 || memcmp(kn, "icon_size", 9)) continue;
+        if (c->call.args[i]->kind != EX_INT) {
+            diag_error(c->loc, "tray icon_size takes an integer"); return;
+        }
+        long v = (long)c->call.args[i]->i;
+        if (v < 8 || v > 64) { diag_error(c->loc, "tray icon_size must be 8..64"); return; }
+        r->tray_icon_px = (int)v;
     }
 }
 
@@ -320,6 +340,8 @@ static void walk_widget(S *s, Widget *w) {
         case WB_ONRELEASE:
         case WB_ONDRAG:
         case WB_ONCHANGE:
+        case WB_ONRCLICK:
+        case WB_ONMCLICK:
             if (b->click.param && b->click.plen) push_local(s, b->click.param, b->click.plen);
             if (b->click.param2 && b->click.plen2) push_local(s, b->click.param2, b->click.plen2);
             walk_stmt(s, b->click.body);
@@ -437,7 +459,10 @@ static void analyze_surface(S *s, Decl *d) {
         case SB_GROUP: {
             Group *g = b->group;
             for (int k = 0; k < g->nprops; k++) walk_expr(s, g->props[k]->val);
-            for (int k = 0; k < g->nmembers; k++) walk_widget(s, g->members[k]);
+            for (int k = 0; k < g->nmembers; k++) {
+                if (g->fors && g->fors[k]) walk_for(s, g->fors[k]);
+                else walk_widget(s, g->members[k]);
+            }
             break;
         }
         case SB_REGION: {
@@ -507,7 +532,10 @@ SemaResult *sema_check(Arena *a, Unit *u) {
                 const SrcDef *sd = find_src(d->source.call->call.name, d->source.call->call.nlen);
                 if (!sd) diag_error(d->source.call->loc, "unknown built-in source '%.*s'",
                                     (int)d->source.call->call.nlen, d->source.call->call.name);
-                else set_flag(s.r, sd->flag);
+                else {
+                    set_flag(s.r, sd->flag);
+                    if (sd->flag == F_TRAY) read_tray_icon_size(s.r, d->source.call);
+                }
             }
             break;
         case D_SURFACE:

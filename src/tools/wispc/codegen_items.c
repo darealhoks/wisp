@@ -18,7 +18,7 @@ void assign_handler_idx(BarItem *items, int nitems) {
     int hidx = 0;
     for (int i = 0; i < nitems; i++) {
         items[i].handler_idx = 0;
-        if (!widget_onclick(items[i].w)) continue;
+        if (!widget_clickable(items[i].w)) continue;
         if (items[i].is_for_cell || items[i].is_runtime_for_cell) continue;
         items[i].handler_idx = hidx++;
     }
@@ -30,33 +30,13 @@ void assign_handler_idx(BarItem *items, int nitems) {
  * Takes a slice of body items rather than a Decl so it can be reused for both
  * surface bodies (Decl->surface.items) and compound region bodies
  * (Region->items). SBody is the common element type. */
-int collect_bar_items(SBody *body, int nbody, BarItem *out, int max,
+/* Lower one for-block into items, appending at out[n]; returns the new n. */
+static int collect_for_items(ForBlock *f, BarItem *out, int n, int max,
                              CGCtx *ctx, int *err) {
-    int n = 0;
-    int gid_counter = 0;
-    for (int i = 0; i < nbody; i++) {
-        SBody *b = &body[i];
-        if (b->kind == SB_WIDGET) {
-            if (n >= max) { *err = 1; return n; }
-            out[n] = (BarItem){0}; out[n].slider_idx = -1; out[n].group_id = -1;
-            out[n].w = b->widget; n++;
-        } else if (b->kind == SB_GROUP) {
-            Group *g = b->group;
-            if (g->nmembers == 0) continue;
-            int gid = gid_counter++;
-            for (int k = 0; k < g->nmembers; k++) {
-                if (n >= max) { *err = 1; return n; }
-                out[n] = (BarItem){0}; out[n].slider_idx = -1;
-                out[n].w = g->members[k];
-                out[n].group_id = gid;
-                out[n].group_first = (k == 0);
-                out[n].grp = (k == 0) ? g : NULL;
-                n++;
-            }
-        } else if (b->kind == SB_FOR) {
-            ForBlock *f = b->forb;
+        {
             /* iter must be IDENT.list (tags) or IDENT.history (dbus_signal). */
             const char *tags_src = NULL, *dbus_src = NULL;
+            int tray_src = 0;
             /* `for row in rows` — a menu's visible filtered rows. Not a
              * declared source: the rows live in the surface's own state. */
             int menu_rows = f->iter && f->iter->kind == EX_IDENT &&
@@ -75,9 +55,15 @@ int collect_bar_items(SBody *body, int nbody, BarItem *out, int max,
                          memcmp(f->iter->member.field, "history", 7) == 0 &&
                          si->drv->drv == DRV_DBUS)
                     dbus_src = sname(si->decl->name, si->decl->nlen);
+                /* tray rides DRV_WISP alongside dnd/gamma_warm, so the driver
+                 * kind can't tell them apart — match the driver name. */
+                else if (si && f->iter->member.flen == 5 &&
+                         memcmp(f->iter->member.field, "items", 5) == 0 &&
+                         strcmp(si->drv->name, "tray") == 0)
+                    tray_src = 1;
             }
-            if (!tags_src && !dbus_src && !menu_rows) {
-                diag_error(f->loc, "codegen: for-iter must be `rows`, <tags-src>.list or <dbus_signal-src>.history");
+            if (!tags_src && !dbus_src && !menu_rows && !tray_src) {
+                diag_error(f->loc, "codegen: for-iter must be `rows`, <tags-src>.list, <dbus_signal-src>.history or <tray-src>.items");
                 *err = 1; return n;
             }
             if (f->ncells != 1) {
@@ -95,6 +81,17 @@ int collect_bar_items(SBody *body, int nbody, BarItem *out, int max,
                 out[n].runtime_for_iter = "(w->s.menu.view_top + it)";
                 out[n].runtime_for_kind = LB_MENU_ROW;
                 out[n].runtime_for_cap = MENU_ROWS_CAP;
+                out[n].for_var = f->var; out[n].for_var_n = f->vlen;
+                n++;
+            } else if (tray_src) {
+                if (n >= max) { *err = 1; return n; }
+                out[n] = (BarItem){0}; out[n].slider_idx = -1; out[n].group_id = -1;
+                out[n].w = f->cells[0];
+                out[n].is_runtime_for_cell = true;
+                out[n].runtime_for_count = "tray_count()";
+                out[n].runtime_for_iter = "it";
+                out[n].runtime_for_kind = LB_TRAY_IT;
+                out[n].runtime_for_cap = TRAY_ITEMS_CAP;
                 out[n].for_var = f->var; out[n].for_var_n = f->vlen;
                 n++;
             } else if (tags_src) {
@@ -125,6 +122,47 @@ int collect_bar_items(SBody *body, int nbody, BarItem *out, int max,
                 out[n].for_var = f->var; out[n].for_var_n = f->vlen;
                 n++;
             }
+        }
+    return n;
+}
+
+int collect_bar_items(SBody *body, int nbody, BarItem *out, int max,
+                             CGCtx *ctx, int *err) {
+    int n = 0;
+    int gid_counter = 0;
+    for (int i = 0; i < nbody; i++) {
+        SBody *b = &body[i];
+        if (b->kind == SB_WIDGET) {
+            if (n >= max) { *err = 1; return n; }
+            out[n] = (BarItem){0}; out[n].slider_idx = -1; out[n].group_id = -1;
+            out[n].w = b->widget; n++;
+        } else if (b->kind == SB_GROUP) {
+            Group *g = b->group;
+            if (g->nmembers == 0) continue;
+            int gid = gid_counter++;
+            int gstart = n;
+            for (int k = 0; k < g->nmembers; k++) {
+                ForBlock *f = g->fors ? g->fors[k] : NULL;
+                if (f) {
+                    n = collect_for_items(f, out, n, max, ctx, err);
+                    if (*err) return n;
+                } else {
+                    if (n >= max) { *err = 1; return n; }
+                    out[n] = (BarItem){0}; out[n].slider_idx = -1;
+                    out[n].w = g->members[k];
+                    n++;
+                }
+            }
+            /* Stamp membership after the fact: a for-block member expands to
+             * several items and they all belong to this container. */
+            for (int k = gstart; k < n; k++) {
+                out[k].group_id = gid;
+                out[k].group_first = (k == gstart);
+                out[k].grp = (k == gstart) ? g : NULL;
+            }
+        } else if (b->kind == SB_FOR) {
+            n = collect_for_items(b->forb, out, n, max, ctx, err);
+            if (*err) return n;
         } /* SB_PROP handled separately */
     }
     return n;
@@ -327,7 +365,7 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
         fprintf(o, "%s        char __tmp[256]; int __L = (int)(__nl - __p); if (__L > 255) __L = 255;\n", indent);
         fprintf(o, "%s        memcpy(__tmp, __p, __L); __tmp[__L] = 0;\n", indent);
         fprintf(o, "%s        int __lw = text_width(f, __tmp); if (__lw > __w) __w = __lw;\n", indent);
-        fprintf(o, "%s        if (!*__nl) break; __p = __nl + 1;\n", indent);
+        fprintf(o, "%s        if (!*__nl) break;\n%s        __p = __nl + 1;\n", indent, indent);
         fprintf(o, "%s    }\n", indent);
         fprintf(o, "%s    tw += __w;\n", indent);
         fprintf(o, "%s}\n", indent);
@@ -530,7 +568,7 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
         fprintf(o, "    }\n");
         return;
     }
-    WBody *clk = widget_onclick(it->w);
+    int clk = widget_clickable(it->w);
     char idx_expr[32];
     const char *indent = "        ";
     int kind;
@@ -579,7 +617,11 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
         int shy = eval_int(widget_prop(wd, "shadow_y"), 2);
         int shblur = eval_int(widget_prop(wd, "shadow_blur"), 0);
         int shspread = eval_int(widget_prop(wd, "shadow_spread"), 0);
-        fprintf(o, "%s    int cx = __reg_x + pad;\n", indent);
+        /* Main axis is Y, so the slab already spans the region width and
+         * pad_x can't grow it — it insets the content instead (both sides,
+         * the elide clamp below takes the trailing one). */
+        fprintf(o, "%s    int cx = __reg_x + pad + %d;\n",
+                indent, eval_int(widget_prop(wd, "pad_x"), 0));
         fprintf(o, "%s    int cy = pos + (__adv - f->line_h * body_lines) / 2; if (cy < pos) cy = pos;\n", indent);
         if (shc & 0xff000000u)
             fprintf(o, "%s    fill_rounded_shadow(sl->px, w->w, w->h, __reg_x + %d, pos + %d, __reg_w + %d, __adv + %d, %d, %d, 0x%08xu);\n",
@@ -606,8 +648,14 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
         fprintf(o, "%s            const char *__nl = __p; while (*__nl && *__nl != '\\n') __nl++;\n", indent);
         fprintf(o, "%s            char __tmp[256]; int __L = (int)(__nl - __p); if (__L > 255) __L = 255;\n", indent);
         fprintf(o, "%s            memcpy(__tmp, __p, __L); __tmp[__L] = 0;\n", indent);
-        fprintf(o, "%s            draw_text(sl->px, w->w, w->h, cx, cy + __ln * f->line_h, f, __tmp, fg);\n", indent);
-        fprintf(o, "%s            __ln++; if (!*__nl) break; __p = __nl + 1;\n", indent);
+        /* Same as the horizontal path: `elide` clamps to the room left in the
+         * row and appends '…', instead of running past the slab. */
+        if (widget_flag(wd, "elide"))
+            fprintf(o, "%s            draw_text_elided(sl->px, w->w, w->h, cx, cy + __ln * f->line_h, f, __tmp, __reg_x + __reg_w - cx - %d, fg);\n",
+                    indent, eval_int(widget_prop(wd, "pad_x"), 0));
+        else
+            fprintf(o, "%s            draw_text(sl->px, w->w, w->h, cx, cy + __ln * f->line_h, f, __tmp, fg);\n", indent);
+        fprintf(o, "%s            __ln++;\n%s            if (!*__nl) break;\n%s            __p = __nl + 1;\n", indent, indent, indent);
         fprintf(o, "%s        }\n", indent);
         fprintf(o, "%s    }\n", indent);
     } else {
@@ -727,7 +775,7 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
                     indent, pad_x > 0 ? pad_x : 0);
         else
             fprintf(o, "%s            draw_text(sl->px, w->w, w->h, x, __ty + __ln * f->line_h, f, __tmp, fg);\n", indent);
-        fprintf(o, "%s            __ln++; if (!*__nl) break; __p = __nl + 1;\n", indent);
+        fprintf(o, "%s            __ln++;\n%s            if (!*__nl) break;\n%s            __p = __nl + 1;\n", indent, indent, indent);
         fprintf(o, "%s        }\n", indent);
         fprintf(o, "%s    }\n", indent);
     }
@@ -845,12 +893,17 @@ int emit_surface_click_dispatch(FILE *o, BarItem *items, int nitems,
     fprintf(o, "        if (wx < __%s_hit[__wi][i].x || wx >= __%s_hit[__wi][i].x + __%s_hit[__wi][i].w) continue;\n", nm, nm, nm);
     fprintf(o, "        if (__%s_hit[__wi][i].slider_idx >= 0) continue;  /* sliders handle press, not click */\n", nm);
     fprintf(o, "        int kind = __%s_hit[__wi][i].kind; int arg = __%s_hit[__wi][i].arg;\n", nm, nm);
+    /* Remember the clicked cell so a popup this handler opens (possibly via
+     * exec → wispctl → ctl) can anchor under it. */
+    fprintf(o, "        widget_note_click(w, __%s_hit[__wi][i].x, __%s_hit[__wi][i].w);\n", nm, nm);
     /* Find each unique (widget, is_for) and emit a branch. */
     int handler_idx = 0;
     for (int it = 0; it < nitems; it++) {
         Widget *wd = items[it].w;
-        WBody *clk = widget_onclick(wd);
-        if (!clk) continue;
+        WBody *clk  = widget_onclick(wd);
+        WBody *rclk = widget_handler(wd, WB_ONRCLICK);
+        WBody *mclk = widget_handler(wd, WB_ONMCLICK);
+        if (!clk && !rclk && !mclk) continue;
         if (items[it].is_for_cell && items[it].cell_idx > 0) continue;  /* one handler per for */
         int kind_val = items[it].is_runtime_for_cell ? 2 :
                        items[it].is_for_cell ? 1 : 0;
@@ -865,25 +918,49 @@ int emit_surface_click_dispatch(FILE *o, BarItem *items, int nitems,
             push_local(ctx, items[it].for_var, items[it].for_var_n,
                        items[it].runtime_for_kind, "arg", items[it].runtime_for_src);
         }
-        if (clk->click.param && clk->click.plen) {
-            push_local(ctx, clk->click.param, clk->click.plen, LB_CLICK_PARAM, "((const char*)0)", NULL);
-            /* No real string param plumbing yet — keep as TODO. */
+        /* Right button (BTN_RIGHT) splits off first; a widget with only
+         * on_click must not fire it on a right-click. */
+        if (rclk) {
+            fputs("            if (btn == 0x111) {\n", o);
+            if (rclk->click.param && rclk->click.plen)
+                push_local(ctx, rclk->click.param, rclk->click.plen, LB_CLICK_PARAM, "((const char*)0)", NULL);
+            emit_stmt(o, ctx, rclk->click.body, "                ", r);
+            if (rclk->click.param && rclk->click.plen) pop_local(ctx);
+            fputs("                return;\n            }\n", o);
+        } else {
+            fputs("            if (btn == 0x111) return;\n", o);
         }
-        /* Lower stmt — exec/set/emit/block. */
-        emit_stmt(o, ctx, clk->click.body, "            ", r);
-        if (clk->click.param && clk->click.plen) pop_local(ctx);
+        if (mclk) {
+            fputs("            if (btn == 0x112) {\n", o);
+            if (mclk->click.param && mclk->click.plen)
+                push_local(ctx, mclk->click.param, mclk->click.plen, LB_CLICK_PARAM, "((const char*)0)", NULL);
+            emit_stmt(o, ctx, mclk->click.body, "                ", r);
+            if (mclk->click.param && mclk->click.plen) pop_local(ctx);
+            fputs("                return;\n            }\n", o);
+        } else {
+            fputs("            if (btn == 0x112) return;\n", o);
+        }
+        if (clk) {
+            if (clk->click.param && clk->click.plen) {
+                push_local(ctx, clk->click.param, clk->click.plen, LB_CLICK_PARAM, "((const char*)0)", NULL);
+                /* No real string param plumbing yet — keep as TODO. */
+            }
+            /* Lower stmt — exec/set/emit/block. */
+            emit_stmt(o, ctx, clk->click.body, "            ", r);
+            if (clk->click.param && clk->click.plen) pop_local(ctx);
+            /* Auto-refresh polled exec_line sources after a click — but ONLY for
+             * sources the handler didn't already set() directly. An optimistic
+             * set(src, ...) writes the predicted value into src_<n>_line; a parallel
+             * refresh would race the user's exec() and frequently overwrite the
+             * optimistic value with a stale probe read. */
+            for (int si = 0; si < ctx->nsrc; si++) {
+                if (ctx->srcs[si].drv->drv != DRV_EXEC) continue;
+                const char *sn = sname(ctx->srcs[si].decl->name, ctx->srcs[si].decl->nlen);
+                if (stmt_sets_name(clk->click.body, sn)) continue;
+                fprintf(o, "            src_%s_refresh();\n", sn);
+            }
+        }
         if (items[it].is_for_cell || items[it].is_runtime_for_cell) pop_local(ctx);
-        /* Auto-refresh polled exec_line sources after a click — but ONLY for
-         * sources the handler didn't already set() directly. An optimistic
-         * set(src, ...) writes the predicted value into src_<n>_line; a parallel
-         * refresh would race the user's exec() and frequently overwrite the
-         * optimistic value with a stale probe read. */
-        for (int si = 0; si < ctx->nsrc; si++) {
-            if (ctx->srcs[si].drv->drv != DRV_EXEC) continue;
-            const char *sn = sname(ctx->srcs[si].decl->name, ctx->srcs[si].decl->nlen);
-            if (stmt_sets_name(clk->click.body, sn)) continue;
-            fprintf(o, "            src_%s_refresh();\n", sn);
-        }
         fputs("            return;\n        }\n", o);
         if (!items[it].is_for_cell && !items[it].is_runtime_for_cell) handler_idx++;
     }
@@ -911,22 +988,34 @@ static Expr *group_prop(Group *g, const char *name) {
  * container height, push its click rect. Advances the local cursor __gx. */
 static void emit_group_member(FILE *o, BarItem *it, const char *nm, int gap) {
     Widget *wd = it->w;
-    int sb = it->st_base;
+    char sbuf[32]; const char *sb = sbuf;
+    /* A for-block member is one cell drawn N times: loop the runtime count and
+     * slide the st[] index, exactly like the top-level runtime-for draw does. */
+    if (it->is_runtime_for_cell) {
+        snprintf(sbuf, sizeof sbuf, "(%d + it)", it->st_base);
+        fprintf(o, "        for (int it = 0; it < %s && it < %d; it++) {\n",
+                it->runtime_for_count, it->runtime_for_cap);
+    } else {
+        snprintf(sbuf, sizeof sbuf, "%d", it->st_base);
+    }
     int mr = eval_int(widget_prop(wd, "radius"), 0);
     int mbw = eval_int(widget_prop(wd, "border_width"), 1);
     int any_round = mr > 0;
-    WBody *clk = widget_onclick(wd);
-    fprintf(o, "        if (st[%d].vis) {\n", sb);
-    fprintf(o, "            int __ma = (st[%d].h>0?st[%d].h:st[%d].tw);\n", sb, sb, sb);
-    fprintf(o, "            const char *txt = st[%d].txt; uint32_t cp = st[%d].cp; const uint32_t *pm = st[%d].pm; int pms = st[%d].pms;\n", sb, sb, sb, sb);
-    fprintf(o, "            uint32_t fg = st[%d].fg, bg = st[%d].bg, bdr = st[%d].border;\n", sb, sb, sb);
-    fprintf(o, "            if (st[%d].press_bg & 0xff000000u && __%s_pressed_st == %d && __%s_pressed_w == w) bg = st[%d].press_bg;\n",
+    int clk = widget_clickable(wd);
+    fprintf(o, "        if (st[%s].vis) {\n", sb);
+    fprintf(o, "            int __ma = (st[%s].h>0?st[%s].h:st[%s].tw);\n", sb, sb, sb);
+    fprintf(o, "            const char *txt = st[%s].txt; uint32_t cp = st[%s].cp; const uint32_t *pm = st[%s].pm; int pms = st[%s].pms;\n", sb, sb, sb, sb);
+    fprintf(o, "            uint32_t fg = st[%s].fg, bg = st[%s].bg, bdr = st[%s].border;\n", sb, sb, sb);
+    fprintf(o, "            if (st[%s].press_bg & 0xff000000u && __%s_pressed_st == (%s) && __%s_pressed_w == w) bg = st[%s].press_bg;\n",
             sb, nm, sb, nm, sb);
+    /* A member's declared height sizes its own bg/border; without one it fills
+     * the group band. Otherwise a 20px icon cell got a full-band-tall pill. */
+    fprintf(o, "            int __mh = st[%s].ch > 0 ? st[%s].ch : __gh, __my = __gy + (__gh - __mh)/2;\n", sb, sb);
     if (any_round) {
-        fprintf(o, "            if (bg  & 0xff000000u) fill_rect_rounded(sl->px,w->w,w->h, __gx,__gy,__ma,__gh, %d,%d,%d,%d, bg);\n", mr, mr, mr, mr);
-        fprintf(o, "            if (bdr & 0xff000000u) fill_rect_rounded_border(sl->px,w->w,w->h, __gx,__gy,__ma,__gh, %d,%d,%d,%d, %d,1,1,1,1,0, bdr);\n", mr, mr, mr, mr, mbw);
+        fprintf(o, "            if (bg  & 0xff000000u) fill_rect_rounded(sl->px,w->w,w->h, __gx,__my,__ma,__mh, %d,%d,%d,%d, bg);\n", mr, mr, mr, mr);
+        fprintf(o, "            if (bdr & 0xff000000u) fill_rect_rounded_border(sl->px,w->w,w->h, __gx,__my,__ma,__mh, %d,%d,%d,%d, %d,1,1,1,1,0, bdr);\n", mr, mr, mr, mr, mbw);
     } else {
-        fprintf(o, "            if (bg  & 0xff000000u) fill_rect(sl->px,w->w,w->h, __gx,__gy,__ma,__gh, bg);\n");
+        fprintf(o, "            if (bg  & 0xff000000u) fill_rect(sl->px,w->w,w->h, __gx,__my,__ma,__mh, bg);\n");
     }
     fprintf(o, "            int __ty = __gy + (__gh - f->line_h)/2;\n");
     fprintf(o, "            int __cw = 0; if (cp || pms) __cw += cp_width(f, cp, pm, pms); if ((cp || pms) && txt && txt[0]) __cw += 2;\n");
@@ -934,11 +1023,17 @@ static void emit_group_member(FILE *o, BarItem *it, const char *nm, int gap) {
     fprintf(o, "            int __cx = __gx + (__ma - __cw)/2; if (__cx < __gx) __cx = __gx;\n");
     fprintf(o, "            if ((cp || pms) && (!txt || !txt[0])) draw_cp_centered(sl->px,w->w,w->h,__gx,__gy,__ma,__gh,f,cp,fg,pm,pms);\n");
     fprintf(o, "            else { if (cp || pms) { __cx += draw_cp(sl->px,w->w,w->h,__cx,__ty,f,cp,fg,pm,pms); if (txt&&txt[0]) { draw_text(sl->px,w->w,w->h,__cx,__ty,f,\" \",fg); __cx+=2; } } if (txt) draw_text(sl->px,w->w,w->h,__cx,__ty,f,txt,fg); }\n");
-    if (clk)
-        fprintf(o, "            { int __i = __%s_nhit++; __%s_hits_buf[__i].x=__gx; __%s_hits_buf[__i].y=__gy; __%s_hits_buf[__i].w=__ma; __%s_hits_buf[__i].h=__gh; __%s_hits_buf[__i].kind=0; __%s_hits_buf[__i].arg=%d; __%s_hits_buf[__i].slider_idx=-1; __%s_hits_buf[__i].st_idx=%d; }\n",
-                nm, nm, nm, nm, nm, nm, nm, it->handler_idx, nm, nm, sb);
+    if (clk) {
+        int kind = it->is_runtime_for_cell ? 2 : it->is_for_cell ? 1 : 0;
+        char arg[16];
+        if (it->is_runtime_for_cell) snprintf(arg, sizeof arg, "it");
+        else snprintf(arg, sizeof arg, "%d", it->is_for_cell ? it->cell_idx : it->handler_idx);
+        fprintf(o, "            { int __i = __%s_nhit++; __%s_hits_buf[__i].x=__gx; __%s_hits_buf[__i].y=__gy; __%s_hits_buf[__i].w=__ma; __%s_hits_buf[__i].h=__gh; __%s_hits_buf[__i].kind=%d; __%s_hits_buf[__i].arg=%s; __%s_hits_buf[__i].slider_idx=-1; __%s_hits_buf[__i].st_idx=%s; }\n",
+                nm, nm, nm, nm, nm, nm, kind, nm, arg, nm, nm, sb);
+    }
     fprintf(o, "            if (__ma) __gx += __ma + %d;\n", gap);
     fputs("        }\n", o);
+    if (it->is_runtime_for_cell) fputs("        }\n", o);
 }
 
 /* On a vertical surface a group is a *band*: it takes one row of the stack
@@ -965,18 +1060,31 @@ int emit_group_draw(FILE *o, BarItem *items, int first, int nitems,
     fputs("    {\n", o);
     fprintf(o, "        int __gw = %d, __gn = 0;\n", 2 * padx);
     for (int k = 0; k < cnt; k++) {
-        int sb = items[first + k].st_base;
+        BarItem *it = &items[first + k];
+        char sbuf[32]; const char *sb = sbuf;
+        if (it->is_runtime_for_cell) {
+            snprintf(sbuf, sizeof sbuf, "(%d + it)", it->st_base);
+            fprintf(o, "        for (int it = 0; it < %s && it < %d; it++)\n",
+                    it->runtime_for_count, it->runtime_for_cap);
+        } else {
+            snprintf(sbuf, sizeof sbuf, "%d", it->st_base);
+        }
         /* zero-extent members (e.g. an empty menu.query cell) consume no gap */
-        fprintf(o, "        if (st[%d].vis && (st[%d].h>0?st[%d].h:st[%d].tw) > 0) { __gw += (st[%d].h>0?st[%d].h:st[%d].tw); if (__gn) __gw += %d; __gn++; }\n",
+        fprintf(o, "        if (st[%s].vis && (st[%s].h>0?st[%s].h:st[%s].tw) > 0) { __gw += (st[%s].h>0?st[%s].h:st[%s].tw); if (__gn) __gw += %d; __gn++; }\n",
                 sb, sb, sb, sb, sb, sb, sb, gap);
     }
     /* Vertical: the band advances the stack by its own height and spans the
      * region's width; horizontal: it advances by the members' total width. */
+    /* A horizontal group with nothing visible (an empty tray) collapses whole —
+     * no pill, no pad. Vertical bands keep their row: a menu's prompt line must
+     * hold its place even when the query is empty. */
+    if (!vertical) fprintf(o, "        if (!__gn) __gw = 0;\n");
     fprintf(o, "        int __adv = %s, pos;\n", vertical ? (ch > 0 ? "0" : "f->line_h") : "__gw");
     if (vertical && ch > 0) fprintf(o, "        __adv = %d;\n", ch);
+    fprintf(o, "        int __gpad = %s ? %d : 0;\n", vertical ? "1" : "__gn", pad);
     fprintf(o, "        switch (%d) {\n", (int)al);
-    fprintf(o, "            case 1:  end_pos -= __adv + %d; pos = end_pos; break;\n", pad);
-    fprintf(o, "            default: pos = start_pos; start_pos += __adv + %d; break;\n", pad);
+    fprintf(o, "            case 1:  end_pos -= __adv + __gpad; pos = end_pos; break;\n");
+    fprintf(o, "            default: pos = start_pos; start_pos += __adv + __gpad; break;\n");
     fprintf(o, "        }\n");
     if (vertical)
         fprintf(o, "        int __gy = pos, __gh = __adv, __bx = __reg_x, __bw = __reg_w;\n");
@@ -984,11 +1092,12 @@ int emit_group_draw(FILE *o, BarItem *items, int first, int nitems,
         fprintf(o, "        int __gy = __reg_y + (__reg_h - %d)/2, __gh = %d, __bx = pos, __bw = __gw;\n", ch, ch);
     else
         fprintf(o, "        int __gy = __reg_y, __gh = __reg_h, __bx = pos, __bw = __gw;\n");
+    const char *gg = vertical ? "" : "if (__gn) ";
     if (r > 0) {
-        if (cbg  & 0xff000000u) fprintf(o, "        fill_rect_rounded(sl->px,w->w,w->h, __bx,__gy,__bw,__gh, %d,%d,%d,%d, 0x%08xu);\n", r, r, r, r, cbg);
-        if (cbor & 0xff000000u) fprintf(o, "        fill_rect_rounded_border(sl->px,w->w,w->h, __bx,__gy,__bw,__gh, %d,%d,%d,%d, %d,1,1,1,1,0, 0x%08xu);\n", r, r, r, r, bw, cbor);
+        if (cbg  & 0xff000000u) fprintf(o, "        %sfill_rect_rounded(sl->px,w->w,w->h, __bx,__gy,__bw,__gh, %d,%d,%d,%d, 0x%08xu);\n", gg, r, r, r, r, cbg);
+        if (cbor & 0xff000000u) fprintf(o, "        %sfill_rect_rounded_border(sl->px,w->w,w->h, __bx,__gy,__bw,__gh, %d,%d,%d,%d, %d,1,1,1,1,0, 0x%08xu);\n", gg, r, r, r, r, bw, cbor);
     } else {
-        if (cbg & 0xff000000u) fprintf(o, "        fill_rect(sl->px,w->w,w->h, __bx,__gy,__bw,__gh, 0x%08xu);\n", cbg);
+        if (cbg & 0xff000000u) fprintf(o, "        %sfill_rect(sl->px,w->w,w->h, __bx,__gy,__bw,__gh, 0x%08xu);\n", gg, cbg);
     }
     fprintf(o, "        int __gx = __bx + %d; (void)__gw;\n", padx);
     for (int k = 0; k < cnt; k++)

@@ -314,7 +314,7 @@ int emit_spawned_osd_skeleton(FILE *o, Decl *sur, CGCtx *ctx, const char *nm, in
  * a bar's — all this adds is the body fill and the pool handling that menu.c
  * used to open-code. Lifecycle (create, size, filter, keys, scroll, reply)
  * stays in menu.c, which is why this emits no create_on/apply_visibility. */
-int emit_menu_render(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
+int emit_menu_render(FILE *o, Decl *sur, Decl *tmpl, CGCtx *ctx, const char *nm) {
     BarItem items[64]; int err = 0;
     /* `menu.prompt` falls back to the surface's declared prompt when the
      * caller passed no title. */
@@ -366,7 +366,17 @@ int emit_menu_render(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     }
     fputs("#endif\n", o);
 
-    int vert        = surface_is_vertical(sur);
+    /* A `menu NAME {}` body inherits the template's axis unless it names its
+     * own: `axis` is what menu.c's sizing/scroll assume, and it is declared
+     * once on the template. `tmpl` is NULL when sur IS the template. */
+    Expr *ax = surface_prop(sur, "axis");
+    /* menu.c sizes and scrolls every menu from the template's axis alone
+     * (MENU_VERTICAL), so a per-menu axis that disagrees would draw rows on one
+     * axis and size the surface on the other. Reject it instead. */
+    if (ax && tmpl && surface_is_vertical(sur) != surface_is_vertical(tmpl))
+        diag_error(sur->loc, "menu '%s': axis must match the `spawned_by = menu` "
+                             "template's axis", sur->name);
+    int vert        = surface_is_vertical(!ax && tmpl ? tmpl : sur);
     uint32_t bg     = eval_color_ctx(ctx, surface_prop(sur, "bg"), 0xff000000);
     uint32_t bord   = eval_color_ctx(ctx, surface_prop(sur, "border"), 0);
     int bord_w      = eval_int(surface_prop(sur, "border_width"), 0);

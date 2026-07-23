@@ -86,12 +86,20 @@ static void rebuild_filtered(Widget *w) {
     if (w->s.menu.sel < 0)  w->s.menu.sel = 0;
 }
 
-static int menu_row_h(const Font *f) {
-    return MENU_ROW_H ? MENU_ROW_H : f->line_h + 10;
+static int menu_row_h(const Widget *w, const Font *f) {
+    int rh = w->s.menu.geom.row_h;
+    return rh ? rh : (MENU_ROW_H ? MENU_ROW_H : f->line_h + 10);
 }
-#define MENU_VPAD 6   /* vertical mode: top/bottom body inset */
 
-int menu_icon_px(void) { return menu_row_h(&font_small) - 12; }
+/* Set by ctl.c from the WispMenu entry just before menu_create; one menu is
+ * live at a time, so a single pending slot is enough. */
+static WispMenuGeom pend_geom;
+void menu_set_geom(const WispMenuGeom *g) { pend_geom = *g; }
+
+int menu_icon_px(void) {
+    int rh = MENU_ROW_H ? MENU_ROW_H : font_small.line_h + 10;
+    return rh - 12;
+}
 
 /* Layout lives in the .wisp: `render` is the generated renderer for this
  * menu's declared body (or the `spawned_by = menu` template's). menu.c owns
@@ -100,15 +108,16 @@ int menu_icon_px(void) { return menu_row_h(&font_small) - 12; }
 void menu_render(Widget *w) {
     if (!w->configured) return;
     const Font *f = &font_small;
-    int rh = menu_row_h(f);
+    int rh = menu_row_h(w, f);
+    const WispMenuGeom *g = &w->s.menu.geom;
     if (MENU_VERTICAL) {
         /* Height from the TOTAL item count, not the filtered count: a
          * per-keystroke resize costs a commit + configure round-trip + pool
          * realloc, which reads as lag. Empty rows just show background. */
-        int slots = w->s.menu.n_items < MENU_MAX_VIS ? w->s.menu.n_items : MENU_MAX_VIS;
-        int want_h = rh + slots * rh + 2 * MENU_VPAD;
-        if (w->w != MENU_W || w->h != want_h) {
-            widget_set_size(w, MENU_W, want_h);
+        int slots = w->s.menu.n_items < g->max_vis ? w->s.menu.n_items : g->max_vis;
+        int want_h = g->hdr_h + slots * rh + 2 * g->pad_y;
+        if (w->w != g->width || w->h != want_h) {
+            widget_set_size(w, g->width, want_h);
             wl_req(w->surface, SURFACE_REQ_COMMIT, NULL, 0, -1);
             return;
         }
@@ -141,18 +150,35 @@ void menu_render(Widget *w) {
     w->s.menu.render(w);
 }
 
-/* Click→pick: rows are a fixed grid, so the row under the pointer is
+/* Filtered-row index under a pointer, or -1. Rows are a fixed grid, so it's
  * arithmetic. Horizontal menus have variable-width items and no hit grid of
- * their own, so only the vertical layout is clickable. */
+ * their own, so only the vertical layout is hit-tested. */
+static int menu_row_at(const Widget *w, int px_y) {
+    if (!MENU_VERTICAL) return -1;
+    int rh = menu_row_h(w, &font_small);
+    int top = w->s.menu.geom.pad_y + w->s.menu.geom.hdr_h;
+    int r = (px_y - top) / rh;
+    if (px_y < top || r < 0) return -1;
+    int i = w->s.menu.view_top + r;
+    return i < w->s.menu.n_filtered ? i : -1;
+}
+
 void menu_on_click(Widget *w, int px_x, int px_y) {
     (void)px_x;
-    if (!MENU_VERTICAL) return;
-    int rh = menu_row_h(&font_small);
-    int r = (px_y - MENU_VPAD - rh) / rh;
-    if (px_y < MENU_VPAD + rh || r < 0) return;
-    int i = w->s.menu.view_top + r;
-    if (i < w->s.menu.n_filtered)
-        menu_reply_and_close(w, w->s.menu.filtered[i]);
+    int i = menu_row_at(w, px_y);
+    if (i >= 0) menu_reply_and_close(w, w->s.menu.filtered[i]);
+}
+
+/* Menus with `hover;` (tray dropdowns): the pointer moves the same selection
+ * the arrow keys do — one indicator, either input. Selection stays put on
+ * leave. Gated so keyboard-driven menus never repaint on motion. */
+void menu_on_hover(Widget *w, int px_x, int px_y) {
+    (void)px_x;
+    if (!w->s.menu.geom.wants_hover) return;
+    int i = menu_row_at(w, px_y);
+    if (i < 0 || i == w->s.menu.sel) return;
+    w->s.menu.sel = i;
+    menu_render(w);
 }
 
 void menu_on_scroll(Widget *w, int dir) {
@@ -232,6 +258,18 @@ void menu_reply_and_close(Widget *w, int picked) {
     }
     action_set = 0;
     widget_destroy(w);
+}
+
+/* Every open-a-menu entry point calls this first: hitting the same keybind
+ * again toggles the menu shut instead of respawning it. */
+int menu_toggle(const char *tag) {
+    if (!tag[0]) return 0;   /* titleless ad-hoc menus have no toggle identity */
+    for (int i = 0; i < MAX_WIDGETS; i++)
+        if (widgets[i].kind == W_MENU && !strcmp(widgets[i].s.menu.tag, tag)) {
+            menu_cancel_all();
+            return 1;
+        }
+    return 0;
 }
 
 void menu_cancel_all(void) {
@@ -319,8 +357,29 @@ Widget *menu_create(const char *title, char items[][ITEM_MAX], int n, int client
     w->s.menu.icon_px = 0;
     w->s.menu.render = render_menu_default;
 
+    /* Per-menu geometry, else the template's. Consumed here so a later
+     * `wispctl menu` / apps launcher can't inherit a dropdown's size. */
+    w->s.menu.geom = pend_geom;
+    pend_geom = (WispMenuGeom){0};
+    WispMenuGeom *g = &w->s.menu.geom;
+    if (!g->width)   g->width   = MENU_W;
+    if (!g->max_vis) g->max_vis = MENU_MAX_VIS;
+    if (!g->gap)     g->gap     = MENU_GAP;
+    if (!g->own_body) { g->pad_y = MENU_PAD_Y; g->hdr_h = MENU_HDR_H; }
+
+    /* A menu opened as a result of a bar click hangs under the cell that was
+     * clicked. The rect can't ride the exec() → wispctl → ctl round trip, so
+     * it's picked up from the last click instead, time-boxed so an unrelated
+     * `wispctl menu` later doesn't inherit it.
+     * ponytail: 500 ms window; give ctl an explicit --at x,w if a second,
+     * non-click caller ever needs to place a popup. */
+    int anchored = click_anchor.ms && now_ms() - click_anchor.ms < 500
+                   && click_anchor.out && MENU_VERTICAL;
+    click_anchor.ms = 0;
+    w->s.menu.anchored = anchored;
+
     /* Menu sits on the user's current monitor — wherever dwl says focus is. */
-    Output *o = focused_output;
+    Output *o = anchored ? click_anchor.out : focused_output;
     if (!o) {
         for (int i = 0; i < MAX_OUTPUTS; i++)
             if (outputs[i].active) { o = &outputs[i]; break; }
@@ -328,11 +387,22 @@ Widget *menu_create(const char *title, char items[][ITEM_MAX], int n, int client
     widget_setup_surface(w, LAYER_OVERLAY, "wisp-menu", o);
     if (MENU_VERTICAL) {
         const Font *f = &font_small;
-        int rh = menu_row_h(f);
-        int vis = n < MENU_MAX_VIS ? n : MENU_MAX_VIS;
-        widget_set_size(w, MENU_W, rh + vis * rh + 2 * MENU_VPAD);
-        widget_set_anchor(w, LS_ANCHOR_TOP);   /* top-only anchor auto-centers */
-        widget_set_margin(w, MENU_MARGIN, 0, 0, 0);
+        int rh = menu_row_h(w, f);
+        int vis = n < g->max_vis ? n : g->max_vis;
+        widget_set_size(w, g->width, g->hdr_h + vis * rh + 2 * g->pad_y);
+        if (anchored) {
+            /* Centered on the cell, kept fully on-screen. mode_w is physical;
+             * layer-shell margins are logical. */
+            int ow = o->scale120 > 0 ? o->mode_w * 120 / o->scale120 : o->mode_w;
+            int mx = click_anchor.x + click_anchor.w / 2 - g->width / 2;
+            if (mx > ow - g->width) mx = ow - g->width;
+            if (mx < 0) mx = 0;
+            widget_set_anchor(w, LS_ANCHOR_TOP | LS_ANCHOR_LEFT);
+            widget_set_margin(w, click_anchor.below + g->gap, 0, 0, mx);
+        } else {
+            widget_set_anchor(w, LS_ANCHOR_TOP);   /* top-only anchor auto-centers */
+            widget_set_margin(w, MENU_MARGIN, 0, 0, 0);
+        }
     } else {
         widget_set_size(w, 0, MENU_HEIGHT);
         widget_set_anchor(w, LS_ANCHOR_TOP | LS_ANCHOR_LEFT | LS_ANCHOR_RIGHT);
@@ -340,7 +410,11 @@ Widget *menu_create(const char *title, char items[][ITEM_MAX], int n, int client
     /* exclusive_zone = -1 → sit at y=0 ignoring the bar's claim, so the menu
        visually replaces the bar instead of stacking under it. */
     widget_set_exclusive_zone(w, -1);
-    widget_set_kbd_interactive(w, 1);
+    /* Dropdowns take on_demand (v4+) so the compositor can move focus away on
+     * click-off, which the keyboard-leave handler treats as dismissal. Full
+     * menus take exclusive: on focus-follows-mouse compositors on_demand lets
+     * mere hover steal kbd focus, leaving the menu deaf to Enter/Esc. */
+    widget_set_kbd_interactive(w, anchored && layer_shell_ver >= 4 ? 2 : 1);
     wl_req(w->surface, SURFACE_REQ_COMMIT, NULL, 0, -1);
     return w;
 }

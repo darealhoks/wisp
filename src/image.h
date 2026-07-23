@@ -4,6 +4,7 @@
  * daemon nor the lock binary grows a libpng dependency. */
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
 
 /* Decode a PNG file at `path` (a leading "~/" is expanded against $HOME) into
@@ -15,6 +16,11 @@ void     image_free(uint8_t *px);
 /* Same decode from an in-memory PNG (a CBDT emoji strike, via src/tt/color.c).
  * Returns malloc'd RGBA8 or NULL; free with image_free. */
 uint8_t *image_decode_png(const uint8_t *buf, int len, int *w, int *h);
+
+/* Resolve a freedesktop icon name (or absolute path) to an existing PNG file,
+ * written to `out`. `extra` is an app-supplied theme dir searched first (SNI's
+ * IconThemePath), or NULL. Returns non-zero on a hit. */
+int      image_find_icon(const char *name, const char *extra, char *out, size_t sz);
 
 /* Non-zero if `path` starts with the PNG signature (the only format the
  * vendored stb decodes) — cheap synchronous validity check. */

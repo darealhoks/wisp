@@ -22,6 +22,8 @@ static const struct { const char *kw; TokKind k; } KWS[] = {
     {"true",     TK_KW_TRUE},
     {"false",    TK_KW_FALSE},
     {"on_click", TK_KW_ON_CLICK},
+    {"on_right_click", TK_KW_ON_RCLICK},
+    {"on_middle_click", TK_KW_ON_MCLICK},
     {"on_scroll",TK_KW_ON_SCROLL},
     {"on_press", TK_KW_ON_PRESS},
     {"on_release",TK_KW_ON_RELEASE},

@@ -77,6 +77,11 @@ void on_pointer_event(uint16_t op, uint8_t *body, uint32_t bodylen) {
 #ifdef WISP_HAS_HUD
         if (w && w->kind == W_HUD) hud_on_pointer_enter(w, ptr_x, ptr_y);
 #endif
+#ifdef WISP_HAS_MENU
+        /* Seed hover from the enter coords: a stationary cursor gets no
+         * motion event when the popup maps beneath it. */
+        if (w && w->kind == W_MENU) menu_on_hover(w, ptr_x, ptr_y);
+#endif
         break;
     }
     case 1: {  /* leave */
@@ -101,6 +106,9 @@ void on_pointer_event(uint16_t op, uint8_t *body, uint32_t bodylen) {
         if (w && (w->kind == W_BAR || w->kind == W_HUD))
             bar_input_motion(w, ptr_x, ptr_y);
 #endif
+#ifdef WISP_HAS_MENU
+        if (w && w->kind == W_MENU) menu_on_hover(w, ptr_x, ptr_y);
+#endif
         break;
     }
     case 3: {  /* button */
@@ -110,6 +118,10 @@ void on_pointer_event(uint16_t op, uint8_t *body, uint32_t bodylen) {
         Widget *w = widget_by_surface(ptr_focus);
         if (!w) return;
         (void)button; (void)state;
+#ifdef WISP_HAS_MENU
+        /* Click-off: a press on any non-menu surface dismisses an open menu. */
+        if (state == 1 && w->kind != W_MENU) menu_cancel_all();
+#endif
 #ifdef WISP_HAS_HUD
         if (w->kind == W_HUD) { hud_on_pointer_button(w, button, state); break; }
 #endif
@@ -124,6 +136,12 @@ void on_pointer_event(uint16_t op, uint8_t *body, uint32_t bodylen) {
         }
 #endif
 #ifdef WISP_HAS_BAR
+        /* BTN_RIGHT/BTN_MIDDLE only ever click: no press/release, so they
+         * can't start a slider drag or paint press_bg. */
+        if (w->kind == W_BAR && (button == 0x111 || button == 0x112)) {
+            if (state == 1) bar_input_click(w, ptr_x, ptr_y, (int)button);
+            break;
+        }
         if (w->kind == W_BAR && button == 0x110) {
             if (state == 1) {
                 bar_input_press(w, ptr_x, ptr_y, (int)button);
@@ -174,7 +192,27 @@ void on_keyboard_event(uint16_t op, uint8_t *body, uint32_t bodylen) {
         break;
     }
     case 1: if (bodylen < 8) return; kbd_focus = *(uint32_t *)(body + 4); break;
-    case 2: kbd_focus = 0; key_rep_cancel(); break;
+    case 2: {  /* leave: serial, surface */
+#ifdef WISP_HAS_MENU
+        /* Click-off on another app's window: the compositor moves keyboard
+         * focus away (menu is kbd-on_demand where supported) — treat losing
+         * focus as dismissal. A menu closing itself is already destroyed by
+         * the time its leave arrives, so widget_by_surface misses it. */
+        if (bodylen >= 8) {
+            Widget *lw = widget_by_surface(*(uint32_t *)(body + 4));
+            /* Not a dismissal if the pointer sits on the menu itself: mango's
+             * focuslayer bounces kbd focus (leave+enter) on every press over an
+             * on_demand layer, and closing here would eat the click. */
+            /* Only dropdowns dismiss on focus loss: full menus have their own
+             * closers (pick/esc/closed), and pointer-follows-focus compositors
+             * bounce kbd focus on mere hover, which would kill them. */
+            if (lw && lw->kind == W_MENU && lw->s.menu.anchored
+                && lw->surface != ptr_focus)
+                menu_reply_and_close(lw, -1);
+        }
+#endif
+        kbd_focus = 0; key_rep_cancel(); break;
+    }
     case 3: {
         if (bodylen < 16) return;
         uint32_t key   = *(uint32_t *)(body + 8);

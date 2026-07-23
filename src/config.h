@@ -46,6 +46,15 @@
 #ifndef MENU_ROW_H
 #define MENU_ROW_H      0             /* 0 = font line_h + 10 */
 #endif
+#ifndef MENU_PAD_Y
+#define MENU_PAD_Y      6             /* top/bottom body inset (mirrors the template's pad_y) */
+#endif
+#ifndef MENU_GAP
+#define MENU_GAP        0             /* gap between the clicked bar cell and the popup */
+#endif
+#ifndef MENU_HDR_H
+#define MENU_HDR_H      0             /* body height above the rows (query line); 0 = rows start at pad_y */
+#endif
 #ifndef MENU_TERMINAL
 #define MENU_TERMINAL   "foot -e"     /* prefix for .desktop Terminal=true apps */
 #endif

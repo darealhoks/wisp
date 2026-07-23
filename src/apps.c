@@ -227,30 +227,6 @@ static void save_cache(void) {
     rename(tmp, path);
 }
 
-/* Resolve an Icon= value to a PNG path. Absolute paths pass through; names
- * are looked up in hicolor apps dirs (preferred sizes first) and pixmaps.
- * ponytail: no theme-index parsing, no SVG — hicolor+pixmaps PNGs cover the
- * installed apps here; extend to the full icon-theme spec if misses annoy. */
-static int resolve_icon(const char *name, char *out, size_t sz) {
-    if (!name[0]) return 0;
-    struct stat st;
-    if (name[0] == '/') {
-        if (stat(name, &st) == 0) { scpy(out, sz, name); return 1; }
-        return 0;
-    }
-    char dirs[8][256];
-    int nd = data_dirs(dirs, 8);
-    static const int sizes[] = { 48, 64, 32, 128, 256 };
-    for (size_t si = 0; si < sizeof sizes / sizeof *sizes; si++)
-        for (int d = 0; d < nd; d++) {
-            snprintf(out, sz, "%.240s/icons/hicolor/%dx%d/apps/%.100s.png",
-                     dirs[d], sizes[si], sizes[si], name);
-            if (stat(out, &st) == 0) return 1;
-        }
-    snprintf(out, sz, "/usr/share/pixmaps/%.100s.png", name);
-    return stat(out, &st) == 0;
-}
-
 /* Box-filter downscale RGBA8 → premultiplied ARGB ds×ds. Averaging happens
  * premultiplied, which is the correct filter for translucent edges. */
 static uint32_t *icon_scale(const uint8_t *rgba, int sw, int sh, int ds) {
@@ -293,7 +269,7 @@ static void load_icons(void) {
     icon_sz = menu_icon_px();
     char path[512];
     for (int i = 0; i < n_apps; i++) {
-        if (!resolve_icon(apps[i].icon, path, sizeof path)) continue;
+        if (!image_find_icon(apps[i].icon, NULL, path, sizeof path)) continue;
         int w, h;
         uint8_t *px = image_load(path, &w, &h);
         if (!px) continue;
@@ -340,6 +316,7 @@ static Widget *apps_push(Widget *w) {
     else   w = menu_create(NULL, items, n_apps, -1);
     free(items);
     if (w) {
+        snprintf(w->s.menu.tag, sizeof w->s.menu.tag, "apps");
         menu_set_ranks(w, ranks);
         load_icons();
         menu_set_icons(w, icons, icon_sz);

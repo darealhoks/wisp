@@ -188,11 +188,20 @@ static int fail(Client *c, const char *fmt, ...) {
 #ifdef WISP_HAS_MENU
 #include "gen_menus.h"   /* -iquote, not -I: GENDIR holds a features.h that would shadow glibc's */
 
+/* ctl.c owns the gen_menus.h include, so the lookup lives here: tray.c asks
+ * for the reserved `menu tray {}` decl to borrow its look + geometry. */
+const WispMenu *wisp_menu_find(const char *name) {
+    for (const WispMenu *m = wisp_menus; m->name; m++)
+        if (!strcmp(m->name, name)) return m;
+    return NULL;
+}
+
 /* Open a menu declared in the .wisp. Entries are pre-rendered by wispc
  * (icon already UTF-8); the emoji preset expands the baked gemoji table. */
 static int open_declared_menu(Client *c, const char *name) {
     for (const WispMenu *m = wisp_menus; m->name; m++) {
         if (strcmp(m->name, name)) continue;
+        if (menu_toggle(m->name)) { (void)!write(c->fd, "ok\n", 3); return 0; }
         char items[MAX_ITEMS][ITEM_MAX], cmds[MAX_ITEMS][ITEM_MAX];
         int n = 0;
 #ifdef WISP_MENU_EMOJI
@@ -210,17 +219,24 @@ static int open_declared_menu(Client *c, const char *name) {
             snprintf(items[n], ITEM_MAX, "%s", m->e[i].item);
             snprintf(cmds[n],  ITEM_MAX, "%s", m->e[i].cmd);
         }
+        /* A look-only decl (`menu tray {}`) has no rows of its own. */
+        if (n == 0) return fail(c, "menu '%s' declares no items", name);
         char title[64];
-        snprintf(title, sizeof title, "%s:", name);
+        /* trailing space: the query cell hugs the prompt cell (gap = 0) */
+        snprintf(title, sizeof title, "%s: ", name);
+        menu_set_geom(&m->geom);
         Widget *mw = menu_create_action(title, items, cmds, n);
         if (!mw)
             return fail(c, "menu: no free widget slot or out of memory");
         if (m->render) mw->s.menu.render = m->render;
+        snprintf(mw->s.menu.tag, sizeof mw->s.menu.tag, "%s", m->name);
         (void)!write(c->fd, "ok\n", 3);
         return 0;
     }
     return fail(c, "no menu '%s' declared in the config", name);
 }
+#else
+const WispMenu *wisp_menu_find(const char *name) { (void)name; return NULL; }
 #endif
 
 
@@ -299,6 +315,8 @@ static int dispatch(Client *c, char *cmd) {
         if (argc == 2) return open_declared_menu(c, argv[1]);
         if (argc < 3) return fail(c, "usage: menu <title> <item>... | menu <name>");
         const char *title = argv[1];
+        /* Same-title re-invocation toggles; the first client got its -1. */
+        if (menu_toggle(title)) { (void)!write(c->fd, "-1\t\n", 4); return 0; }
         int n = argc - 2;
         if (n > MAX_ITEMS) n = MAX_ITEMS;
         /* 40 KB scratch — declared inside the branch so non-menu commands
@@ -310,11 +328,12 @@ static int dispatch(Client *c, char *cmd) {
         }
         Widget *w = menu_create(title[0] ? title : NULL, items, n, c->fd);
         if (!w) return fail(c, "menu: no free widget slot or out of memory");
+        snprintf(w->s.menu.tag, sizeof w->s.menu.tag, "%s", title);
         return 1;  /* fd handed off; reply on pick/cancel */
     }
     /* App launcher: daemon owns items + exec; reply immediately. */
     if (!strcmp(op, "apps")) {
-        if (apps_open()) (void)!write(c->fd, "ok\n", 3);
+        if (menu_toggle("apps") || apps_open()) (void)!write(c->fd, "ok\n", 3);
         else             return fail(c, "apps: no free widget slot or out of memory");
         return 0;
     }
@@ -376,6 +395,28 @@ static int dispatch(Client *c, char *cmd) {
     }
     if (!strcmp(op, "backlight")) {
         media_backlight(argc >= 2 ? argv[1] : "");
+        (void)!write(c->fd, "ok\n", 3); return 0;
+    }
+#endif
+#ifdef WISP_HAS_MPRIS
+    if (!strcmp(op, "mpris")) {
+        if (argc < 2) return fail(c, "usage: mpris play-pause|next|prev");
+        const char *sub = argv[1];
+        if (!strcmp(sub, "play-pause"))  mpris_control("PlayPause");
+        else if (!strcmp(sub, "next"))   mpris_control("Next");
+        else if (!strcmp(sub, "prev"))   mpris_control("Previous");
+        else return fail(c, "unknown mpris subcommand: %s", sub);
+        (void)!write(c->fd, "ok\n", 3); return 0;
+    }
+#endif
+#ifdef WISP_HAS_TRAY
+    if (!strcmp(op, "tray")) {
+        if (argc < 3) return fail(c, "usage: tray activate|secondary|menu <index>");
+        int idx = atoi(argv[2]);
+        if (!strcmp(argv[1], "activate"))  tray_click(idx, "Activate");
+        else if (!strcmp(argv[1], "secondary")) tray_click(idx, "SecondaryActivate");
+        else if (!strcmp(argv[1], "menu")) tray_menu(idx);
+        else return fail(c, "unknown tray subcommand: %s", argv[1]);
         (void)!write(c->fd, "ok\n", 3); return 0;
     }
 #endif
