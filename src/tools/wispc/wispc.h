@@ -289,7 +289,7 @@ typedef struct SemaResult {
     const char **spawned_names;
     const char ***spawned_args;
     /* feature set */
-    bool has_dbus, has_mpris, has_tray, has_osd, has_menu, has_hud, has_bar, has_lock, has_gamma, has_wallpaper, has_media, has_anim;
+    bool has_dbus, has_mpris, has_tray, has_osd, has_menu, has_hud, has_bar, has_lock, has_gamma, has_wallpaper, has_media, has_anim, has_pipewire;
     bool has_src_cpu, has_src_mem, has_src_temp, has_src_bat, has_src_wifi, has_src_disk, has_src_vpn;
     bool has_src_exec, has_src_tags;
     int  tray_icon_px;             /* tray(icon_size=N); 0 = runtime default */

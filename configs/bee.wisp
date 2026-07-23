@@ -12,7 +12,8 @@ source wifi_s = wifi("wlan0");
 /* SUPER+b (mango) → `wispctl hide toggle`: bar + HUD gate on this. */
 source hid    = ui_hidden();
 source tray_s = tray(icon_size=20);
-source vol_s  = exec_line("v=$(wpctl get-volume @DEFAULT_AUDIO_SINK@ 2>/dev/null); case x$v in x) echo err;; *MUTED*) echo mute;; *) p=$(echo $v | tr -cd 0-9); if [ 0$p -lt 34 ]; then echo low; elif [ 0$p -lt 67 ]; then echo med; else echo high; fi;; esac", every="2s");
+/* Event-driven native PipeWire client — no poll, no fork. */
+source vol_s  = pipewire();
 
 const TEXT   = #ffe9e6dd;
 const SUBTXT = #ffa5adbb;
@@ -86,13 +87,13 @@ surface bar {
                   fg = wifi_s.signal >= 1 ? TEXT : RED;
                   on_click() = exec("foot -T ws-hud-wifi --app-id=ws-hud-wifi -e impala"); }
     widget sep_conn.sep { text = "/"; }
-    widget audio { icon = vol_s.value == "mute" ? 0xf0581
-                        : vol_s.value == "err"  ? 0xf0581
-                        : vol_s.value == "low"  ? 0xf026
-                        : vol_s.value == "med"  ? 0xf027
-                        :                         0xf028;
-                   fg = vol_s.value == "err"  ? RED
-                      : vol_s.value == "mute" ? YELLOW : TEXT;
+    widget audio { icon = !vol_s.ok      ? 0xf0581
+                        : vol_s.mute     ? 0xf0581
+                        : vol_s.vol < 34 ? 0xf026
+                        : vol_s.vol < 67 ? 0xf027
+                        :                  0xf028;
+                   fg = !vol_s.ok  ? RED
+                      : vol_s.mute ? YELLOW : TEXT;
                    on_click() = exec("foot -T ws-hud-vol --app-id=ws-hud-vol -e wiremix"); }
   }
 

@@ -182,6 +182,7 @@ static void emit_main(FILE *o, SrcInst *srcs, int nsrc, SemaResult *r) {
     if ((has_dbus_src(srcs, nsrc) || r->has_dbus))
         fputs("    dbus_reconnect_init();\n"
               "    dbus_connect();\n", o);
+    if (r->has_pipewire) fputs("    pw_init();\n", o);
 
     fputs("    tags_init();\n", o);
     fputs("    ep_fd = epoll_create1(EPOLL_CLOEXEC);\n", o);
@@ -193,6 +194,9 @@ static void emit_main(FILE *o, SrcInst *srcs, int nsrc, SemaResult *r) {
     if ((has_dbus_src(srcs, nsrc) || r->has_dbus))
         fputs("    if (dbus_fd >= 0) epoll_add_fd(dbus_fd);\n"
               "    epoll_add_fd(dbus_reconnect_fd);\n", o);
+    if (r->has_pipewire)
+        fputs("    if (pw_fd >= 0) epoll_add_fd(pw_fd);\n"
+              "    epoll_add_fd(pw_reconnect_fd);\n", o);
     if (r->has_gamma && !has_status_src(srcs, nsrc))
         fputs("    epoll_add_fd(wispgen_gamma_tfd);\n", o);
     for (int i = 0; i < nsrc; i++)
@@ -253,6 +257,11 @@ static void emit_main(FILE *o, SrcInst *srcs, int nsrc, SemaResult *r) {
               "                dbus_dispatch();\n"
               "            } else if (fd == dbus_reconnect_fd) {\n"
               "                dbus_reconnect_handle();\n", o);
+    if (r->has_pipewire)
+        fputs("            } else if (pw_fd >= 0 && fd == pw_fd) {\n"
+              "                pw_dispatch();\n"
+              "            } else if (fd == pw_reconnect_fd) {\n"
+              "                pw_reconnect();\n", o);
     if (r->has_anim)
         fputs("            } else if (fd == anim_fd()) {\n"
               "                anim_on_tfd();\n", o);

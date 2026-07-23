@@ -80,6 +80,7 @@ These are the sources that work:
 | `ui_hidden()` | `value` | "1" or "0", driven by `wispctl hide` |
 | `exec_line(cmd, every=)` | `value` | first line of stdout, 256 bytes max |
 | `dbus_signal(iface, member)` | `value`, `history` | `history` is for `for` only |
+| `pipewire()` | `vol` `mute` `mic_vol` `mic_mute` `ok` | live sink/source volume; event-driven, no poll |
 
 The status sources share one timer that fires once a second, and each compares
 its fields against the last sample before dirtying anything. An idle bar does
@@ -102,6 +103,20 @@ after 120 ms, which is usually enough for the external tool to have applied the
 change. `refresh="instant"` makes that re-poll synchronous. A `set()` on the
 source inside the handler suppresses the re-poll entirely, so you can update the
 display optimistically.
+
+### pipewire
+
+    source vol = pipewire();
+
+A native-protocol PipeWire client (`src/pipewire.c`, libc-only, same shape as
+the raw Wayland/D-Bus wire code) that subscribes to the default sink and source.
+No fork, no poll: `vol`/`mic_vol` are 0..150 percentages (cubic-mapped like
+wpctl), `mute`/`mic_mute` are 0/1, and `ok` is 0 until the defaults resolve — a
+widget should read `!vol.ok` as "audio dead" (server gone) and show it, since
+that is the loud failure mode. External changes (mixers, media keys, other
+clients) repaint the bar the instant they land. Still needs wireplumber running
+to populate the default-device metadata. A `media {}` block pulls this source in
+implicitly for the volume/mic keys.
 
 ## const and mut
 
@@ -451,6 +466,7 @@ not using it leaves the code out of the binary entirely.
 |---|---|
 | `exec_line(...)` | the exec runner |
 | `dbus_signal(...)` | the D-Bus client |
+| `pipewire()` | the native PipeWire client (`pipewire.c`) |
 | `tags()` | the workspace backends (mango IPC + ext-workspace) |
 | a surface with `reveal_on_hover` | `hud.c` |
 | `surface osd { spawned_by = osd }` | `osd.c` and D-Bus |
@@ -459,7 +475,7 @@ not using it leaves the code out of the binary entirely.
 | `lock {}` | the lock IPC |
 | `gamma {}` | gamma control |
 | `wallpaper {}` | `wall.c` |
-| `media {}` | MPRIS and media keys |
+| `media {}` | MPRIS and media keys (pulls in `pipewire.c`) |
 | any `transition_*`, `enter_anim`, `exit_anim`, `animate()` | `anim.c` |
 
 This is why binary size and memory depend on your config, and why a stripped

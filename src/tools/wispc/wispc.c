@@ -54,6 +54,7 @@ static void emit_features(FILE *o, SemaResult *r) {
     P(has_src_bat, "SRC_BAT");   P(has_src_wifi, "SRC_WIFI"); P(has_src_disk, "SRC_DISK");
     P(has_src_vpn, "SRC_VPN");   P(has_src_tags, "SRC_TAGS");
     P(has_src_exec, "SRC_EXEC");
+    P(has_pipewire, "PIPEWIRE");
     #undef P
     fputs("\n#endif\n", o);
 }
@@ -96,6 +97,7 @@ static void emit_objects_mk(FILE *o, SemaResult *r) {
     if (r->has_dbus)             fputs("    $(BUILD)/dbus.o \\\n    $(BUILD)/notify.o \\\n", o);
     if (r->has_mpris)            fputs("    $(BUILD)/mpris.o \\\n", o);
     if (r->has_tray)             fputs("    $(BUILD)/tray.o \\\n", o);
+    if (r->has_pipewire)         fputs("    $(BUILD)/pipewire.o \\\n", o);
     if (r->has_anim)             fputs("    $(BUILD)/anim.o \\\n", o);
     fputs("    $(BUILD)/gen_main.o \\\n", o);
     fputs("    $(BUILD)/gen_sources.o \\\n", o);

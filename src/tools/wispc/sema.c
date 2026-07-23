@@ -14,7 +14,7 @@ typedef struct {
 enum {
     F_NONE = 0,
     F_CLOCK, F_CPU, F_MEM, F_TEMP, F_BAT, F_WIFI, F_DISK, F_VPN,
-    F_TAGS, F_EXEC, F_DBUS, F_MPRIS, F_TRAY,
+    F_TAGS, F_EXEC, F_DBUS, F_MPRIS, F_TRAY, F_PIPEWIRE,
 };
 
 /* A row here without a driver in codegen_sources.c makes --check pass and
@@ -37,6 +37,7 @@ static const SrcDef SOURCES[] = {
     {"dbus_signal",          "value",  "value history", F_DBUS },
     {"mpris",                "title",  "title artist status player", F_MPRIS },
     {"tray",                 "count",  "count items", F_TRAY },
+    {"pipewire",             "vol",    "vol mute mic_vol mic_mute ok", F_PIPEWIRE },
 };
 
 static const SrcDef *find_src(const char *name, size_t n) {
@@ -137,6 +138,8 @@ static void set_flag(SemaResult *r, int f) {
     case F_MPRIS: r->has_mpris = 1; r->has_dbus = 1; break;
     /* Same shape as mpris, except tray.c also owns a name on the bus. */
     case F_TRAY:  r->has_tray = 1; r->has_dbus = 1; break;
+    /* Native PipeWire client — its own transport, does NOT imply has_dbus. */
+    case F_PIPEWIRE: r->has_pipewire = 1; break;
     default: break;
     }
 }

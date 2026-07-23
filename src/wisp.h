@@ -734,6 +734,23 @@ const char *mpris_status(void);
 const char *mpris_player(void);
 void        mpris_control(const char *member);
 
+/* PipeWire native-protocol client (pipewire.c) — linked when a config declares
+ * a pipewire() source. Event-driven sink/source volume + mute; getters feed the
+ * DSL fields, setters drive media keys. Declared unconditionally like mpris. */
+void pw_init(void);
+void pw_dispatch(void);
+void pw_reconnect(void);
+extern int pw_fd;
+extern int pw_reconnect_fd;
+int  pw_ok(void);
+int  pw_vol_pct(void);
+int  pw_vol_muted(void);
+int  pw_mic_vol_pct(void);
+int  pw_mic_muted(void);
+void pw_set_volume(int pct);
+void pw_set_mute(int on);       /* -1 = toggle */
+void pw_set_mic_mute(int on);   /* -1 = toggle */
+
 /* StatusNotifierItem tray (tray.c) — linked when a config declares a tray()
  * source. We own org.kde.StatusNotifierWatcher and act as our own host; items
  * are read by the generated `for x in <src>.items` loop. */

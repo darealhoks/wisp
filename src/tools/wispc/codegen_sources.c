@@ -38,6 +38,13 @@ static const SrcDrv DRVS[] = {
                                {"player", "mpris_player()", 1}} },
     /* tray likewise; `items` is for-only, lowered in collect_bar_items. */
     { "tray",    DRV_WISP,    {{"count", "tray_count()", 0}} },
+    /* pipewire rides DRV_WISP: no fd registered by gen code (pipewire.c owns
+     * pw_fd/pw_reconnect_fd), repainted via wispgen_wisp_state_changed(). */
+    { "pipewire",DRV_WISP,    {{"vol",      "pw_vol_pct()",   0},
+                               {"mute",     "pw_vol_muted()", 0},
+                               {"mic_vol",  "pw_mic_vol_pct()", 0},
+                               {"mic_mute", "pw_mic_muted()", 0},
+                               {"ok",       "pw_ok()",        0}} },
     { "exec_line",DRV_EXEC,   {{"value", "", 1}} },  /* lowering: see lower_member */
     { "dbus_signal",DRV_DBUS, {{"value", "", 1}} },  /* lowering: see lower_member */
 };
