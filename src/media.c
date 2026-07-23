@@ -1,12 +1,14 @@
-/* media.c — wispctl volume / mic / backlight. Replaces dwl-osd shell.
+/* media.c — volume / mic / backlight media keys. Replaces dwl-osd shell.
  *
- *   volume up|down|mute → wpctl @DEFAULT_AUDIO_SINK@   + OSD slot 1
- *   mic mute            → wpctl @DEFAULT_AUDIO_SOURCE@ + OSD slot 2
+ *   volume up|down|mute → pipewire() sink   + OSD slot 1
+ *   mic mute            → pipewire() source + OSD slot 2
  *   backlight up|down   → /sys/class/backlight/<dev>/brightness + OSD slot 3
  *
- * wpctl is part of wireplumber (already mandatory). Backlight is a direct
- * sysfs write; brightnessctl ships a udev rule that makes that file group-
- * writable by `video`, which dwlarp users already need to be in. */
+ * Audio state is read/written live through the native-protocol pipewire client
+ * (src/pipewire.c) — no wpctl fork, no poll, no cache: pw_vol_pct() et al. are
+ * plain reads of the event-driven subscription. Backlight is a direct sysfs
+ * write; brightnessctl ships a udev rule that makes that file group-writable by
+ * `video`, which dwlarp users already need to be in. */
 
 #include "wisp.h"
 
@@ -31,59 +33,11 @@
 #define VOL_CAP  150
 #define BRI_STEP 5
 
-static int popen_read(const char *cmd, char *out, int cap) {
-    FILE *f = popen(cmd, "r");
-    if (!f) return -1;
-    int n = (int)fread(out, 1, cap - 1, f);
-    out[n > 0 ? n : 0] = 0;
-    /* main() sets SIGCHLD=SIG_IGN, so pclose()'s waitpid() returns -1/ECHILD
-     * even on success — trust bytes read, not the exit status. */
-    pclose(f);
-    return n > 0 ? 0 : -1;
-}
-
-/* Parses `wpctl get-volume <target>` output:
- *   "Volume: 0.42 [MUTED]\n" */
-static int wp_get(const char *target, int *pct, int *muted) {
-    char cmd[160]; snprintf(cmd, sizeof cmd, "wpctl get-volume %s 2>/dev/null", target);
-    char out[160]; if (popen_read(cmd, out, sizeof out) < 0) return -1;
-    float v = 0;
-    if (sscanf(out, "Volume: %f", &v) != 1) return -1;
-    *pct   = (int)(v * 100 + 0.5f);
-    *muted = strstr(out, "MUTED") != NULL;
-    return 0;
-}
-static void wp_set_vol(const char *target, int pct) {
-    char cmd[160]; snprintf(cmd, sizeof cmd, "wpctl set-volume %s %d%% 2>/dev/null", target, pct);
-    int rc = system(cmd); (void)rc;
-}
-static void wp_set_mute(const char *target, const char *arg) {
-    char cmd[160]; snprintf(cmd, sizeof cmd, "wpctl set-mute %s %s 2>/dev/null", target, arg);
-    int rc = system(cmd); (void)rc;
-}
-
-/* Held-key repeats fire faster than wpctl can fork+exec+read, so caching the
- * volume state across calls cuts the per-press cost from two wpctl spawns to
- * one. Cache invalidates after VOL_CACHE_MS so external changes (mixers,
- * other clients) reconcile within a beat of going idle. Mute path still
- * re-reads — a missed external mute toggle is worse than a missed level. */
-#define VOL_CACHE_MS 1500
-static int     vol_cache_have = 0;
-static int     vol_cache_pct, vol_cache_muted;
-static int64_t vol_cache_ms;
-
 void media_volume(const char *arg) {
-    const char *T = "@DEFAULT_AUDIO_SINK@";
-    int pct = 0, muted = 0;
-    int64_t now = now_ms();
-    int is_mute = !strcmp(arg, "mute");
-    int fresh = vol_cache_have && !is_mute && (now - vol_cache_ms) < VOL_CACHE_MS;
-    if (fresh) {
-        pct = vol_cache_pct; muted = vol_cache_muted;
-    } else if (wp_get(T, &pct, &muted) < 0) return;
-
-    if (is_mute) {
-        wp_set_mute(T, "toggle");
+    if (!pw_ok()) return;              /* no default sink resolved → keys dead, loudly */
+    int pct = pw_vol_pct(), muted = pw_vol_muted();
+    if (!strcmp(arg, "mute")) {
+        pw_set_mute(-1);
         muted = !muted;
     } else {
         int dir = !strcmp(arg, "up") ? 1 : !strcmp(arg, "down") ? -1 : 0;
@@ -91,23 +45,18 @@ void media_volume(const char *arg) {
         int n = pct + dir * VOL_STEP;
         if (n < 0) n = 0;
         if (n > VOL_CAP) n = VOL_CAP;
-        if (muted) { wp_set_mute(T, "0"); muted = 0; }
-        wp_set_vol(T, n);
-        pct = n;
+        pw_set_volume(n);              /* unmutes as a side effect */
+        pct = n; muted = 0;
     }
-    vol_cache_have = 1;
-    vol_cache_pct = pct; vol_cache_muted = muted; vol_cache_ms = now;
     osd_post(SLOT_VOL, muted ? "Volume muted" : "Volume", "",
              muted ? ICON_VOL_X : ICON_VOL, pct, 1, muted, OSD_TIMEOUT_OSD);
 }
 
 void media_mic(const char *arg) {
-    const char *T = "@DEFAULT_AUDIO_SOURCE@";
     if (strcmp(arg, "mute") != 0) return;
-    int pct = 0, muted = 0;
-    wp_get(T, &pct, &muted);
-    wp_set_mute(T, "toggle");
-    muted = !muted;
+    if (!pw_ok()) return;
+    int muted = !pw_mic_muted();
+    pw_set_mic_mute(-1);
     osd_post(SLOT_MIC, muted ? "Microphone muted" : "Microphone", "",
              muted ? ICON_MIC_X : ICON_MIC, -1, 1, muted, OSD_TIMEOUT_OSD);
 }

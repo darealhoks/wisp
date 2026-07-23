@@ -560,7 +560,7 @@ SemaResult *sema_check(Arena *a, Unit *u) {
         case D_LOCK:      if (s.s.lock)  diag_error(d->loc, "duplicate lock block");      s.s.lock = d;  s.r->has_lock = 1;     break;
         case D_GAMMA:     if (s.s.gamma) diag_error(d->loc, "duplicate gamma block");     s.s.gamma = d; s.r->has_gamma = 1;    break;
         case D_WALLPAPER: if (s.s.wall)  diag_error(d->loc, "duplicate wallpaper block"); s.s.wall = d;  s.r->has_wallpaper = 1; break;
-        case D_MEDIA:     s.r->has_media = 1; break;
+        case D_MEDIA:     s.r->has_media = 1; s.r->has_pipewire = 1; break;   /* media keys read/write via pipewire.c */
         case D_STYLE:     break;   /* stripped by style_apply */
         }
     }
