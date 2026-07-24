@@ -1,4 +1,4 @@
-# wisp <img src="wisp.png" width="28" height="28" align="top" alt="">
+# wisp <img src="wisp.png" width="32" height="32" align="middle" alt="">
 
 **W**idget **I**nterface, **S**ingle **P**rocess — one Wayland daemon that draws
 a whole desktop shell. All it needs is `wlr-layer-shell-unstable-v1`, plus
