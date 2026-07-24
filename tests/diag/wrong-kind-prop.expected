@@ -1,0 +1,4 @@
+tests/diag/wrong-kind-prop.wisp:3:5: error: unknown widget property 'layer'
+      layer = top;
+      ^
+  help: 'layer' is a surface property

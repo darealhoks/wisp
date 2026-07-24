@@ -1,27 +1,15 @@
-#include "wispc.h"
+#include "sema_internal.h"
 #include <string.h>
 #include <stdlib.h>
 
-/* Built-in source schema: name → feature macro to enable + valid fields. */
-typedef struct {
-    const char *name;
-    const char *primary;            /* default field (for bare-ident access) */
-    const char *fields;             /* space-separated list of valid fields */
-    /* which SemaResult flag(s) to set */
-    int flag;                       /* see F_* below */
-} SrcDef;
-
-enum {
-    F_NONE = 0,
-    F_CLOCK, F_CPU, F_MEM, F_TEMP, F_BAT, F_NET, F_DISK, F_VPN,
-    F_TAGS, F_EXEC, F_DBUS, F_MPRIS, F_TRAY, F_PIPEWIRE, F_TOPLEVEL,
-    F_BACKLIGHT, F_POWER, F_BLUEZ,
-};
+/* SrcDef + F_* live in sema_internal.h (shared with sema_types.c). */
 
 /* A row here without a driver in codegen_sources.c makes --check pass and
  * --emit die — add the row in the same commit as the driver, never before. */
 static const SrcDef SOURCES[] = {
-    {"clock",                "value",  "value", F_CLOCK },
+    /* clock has no drv_field_expr template — it's only used bare ("{time}"),
+     * so its member set is empty; primary still types the bare ident. */
+    {"clock",                "value",  "", F_CLOCK },
     {"cpu",                  "pct",    "pct load1", F_CPU },
     {"mem",                  "pct",    "pct used_mb", F_MEM },
     {"temp",                 "c",      "c", F_TEMP },
@@ -45,7 +33,7 @@ static const SrcDef SOURCES[] = {
     {"toplevel",             "exists", "exists count title", F_TOPLEVEL },
 };
 
-static const SrcDef *find_src(const char *name, size_t n) {
+const SrcDef *find_src(const char *name, size_t n) {
     for (size_t i = 0; i < sizeof SOURCES / sizeof SOURCES[0]; i++) {
         if (strlen(SOURCES[i].name) == n && memcmp(SOURCES[i].name, name, n) == 0)
             return &SOURCES[i];
@@ -64,41 +52,129 @@ static bool field_ok(const SrcDef *s, const char *f, size_t n) {
     return false;
 }
 
-/* ---------- symbol table ---------- */
-typedef struct {
-    Decl **src;     int nsrc;
-    Decl **sur;     int nsur;
-    Decl **kon;     int nkon;    /* const + mut */
-    Decl *lock, *gamma, *wall;
-} Syms;
+/* ---------- property schema ----------
+ * One authoritative set of accepted prop names per container kind, derived from
+ * every widget_prop()/surface_prop()/group_prop() lookup and the OSD/menu/lock/
+ * gamma/wallpaper override tables in codegen*.c, plus the marker props read
+ * inline (`slider;` `elide` `hover;`). Codegen is pull-based: a name it never
+ * looks up was silently dropped. This table turns that typo into an error.
+ *
+ * The surface set is a UNION across surface flavours (plain / osd / menu / pill
+ * templates / compound region) — a valid prop is never rejected for sitting on
+ * the "wrong" surface flavour; only genuinely-unknown names are caught. Every
+ * name here is space-delimited with a leading+trailing space for cheap search. */
+typedef struct { const char *kind; const char *human; const char *props; } PropSchema;
 
-typedef struct ScopeEnt {
-    const char *name; size_t nlen;
-    struct ScopeEnt *next;
-} ScopeEnt;
+static const PropSchema SCHEMAS[] = {
+    { "widget", "widget",
+      " align bg body_lines border border_bottom border_left border_right"
+      " border_top border_width elide enter_anim enter_easing exit_anim"
+      " exit_easing fg height icon orientation pad pad_x pad_y press_bg radius"
+      " radius_bl radius_br radius_tl radius_tr shadow shadow_blur shadow_spread"
+      " shadow_x shadow_y show_value slider text thumb_border thumb_border_width"
+      " thumb_color thumb_radius thumb_shape thumb_size track_bg track_fg"
+      " track_radius transition_bg transition_border transition_easing"
+      " transition_fg transition_size value value_align value_fg value_format"
+      " value_gap value_max value_scale visible width x_offset y_offset " },
+    { "surface", "surface",
+      " anchor anchor_gap armpit_bl armpit_br armpit_color armpit_inner"
+      " armpit_outer armpit_tl armpit_tr axis bg bg_bottom body_lines body_max"
+      " border border_bottom border_left border_right border_top border_width"
+      " clip_top clip_widgets cutout_height cutout_into cutout_width cutout_x"
+      " cutout_y dbus_close dismiss_on_click edge exclusive_zone fg fillet_bl"
+      " fillet_br fillet_inner_bottom fillet_inner_left fillet_inner_right"
+      " fillet_inner_top fillet_offset_y fillet_outer_bottom fillet_outer_left"
+      " fillet_outer_right fillet_outer_top fillet_r fillet_tl fillet_tr"
+      " focus_follow font_size gap height hover icon_gap icons input keyboard"
+      " layer margin max max_visible pad pad_x pad_y prog_fg prog_h prog_track"
+      " prompt radius radius_bl radius_br radius_inner radius_outer radius_tl"
+      " radius_tr reveal_anim_ms reveal_easing reveal_gutter reveal_on_hover"
+      " row_h separator separator_frac size slide_ms sort spawned_by terminal"
+      " timeout timeout_low timeout_normal visible width " },
+    { "group", "group",
+      " align bg border border_width gap height pad pad_x radius " },
+    { "lock", "lock block",
+      /* scrim/road: shipped in the dwlarp preset's lock block; wisp-lock does
+       * not consume them today, but they are accepted names, not typos. */
+      " pam prompt bg ring ring_bad fg dim caps clock_size font_size wrong_ms"
+      " scrim road " },
+    { "gamma", "gamma block",
+      " day_k night_k flat_k day_hour night_hour " },
+    { "wallpaper", "wallpaper block",
+      " path bg fade_ms transition dither_px wipe_dir wipe_soft " },
+    { "media", "media block", " " },
+};
 
-typedef struct {
-    SemaResult *r;
-    Syms s;
-    Arena *a;
-    Unit *u;
-    /* current analysis scope */
-    Decl *cur_surface;
-    bool  in_template;       /* inside a spawned_by surface */
-    ScopeEnt *locals;        /* for-vars, in scope */
-    /* deps for current surface, dedup */
-    const char **deps; int ndeps, capdeps;
-    /* spawned-by template args for current template, dedup, first-seen order */
-    const char **targs; int ntargs, captargs;
-    /* set of source decl-names allowed (for resolution) */
-} S;
+static bool word_in(const char *list, const char *w, size_t n) {
+    for (const char *p = list; *p;) {
+        while (*p == ' ') p++;
+        const char *e = p; while (*e && *e != ' ') e++;
+        if ((size_t)(e - p) == n && memcmp(p, w, n) == 0) return true;
+        p = e;
+    }
+    return false;
+}
+
+/* Levenshtein, capped — words this long never fuzzy-match a real prop name. */
+static int edit_dist(const char *a, size_t an, const char *b, size_t bn) {
+    if (an > 40 || bn > 40) return 99;
+    int prev[41], cur[41];
+    for (size_t j = 0; j <= bn; j++) prev[j] = (int)j;
+    for (size_t i = 1; i <= an; i++) {
+        cur[0] = (int)i;
+        for (size_t j = 1; j <= bn; j++) {
+            int c = a[i-1] == b[j-1] ? 0 : 1;
+            int m = prev[j] + 1;
+            if (cur[j-1] + 1 < m) m = cur[j-1] + 1;
+            if (prev[j-1] + c < m) m = prev[j-1] + c;
+            cur[j] = m;
+        }
+        for (size_t j = 0; j <= bn; j++) prev[j] = cur[j];
+    }
+    return prev[bn];
+}
+
+/* Error on a prop name not in `kind`'s accepted set. did-you-mean via edit
+ * distance within the kind; if the name is valid on another kind, say which. */
+static void check_prop(const char *kind, Prop *p) {
+    const PropSchema *sc = NULL;
+    for (size_t i = 0; i < sizeof SCHEMAS / sizeof SCHEMAS[0]; i++)
+        if (strcmp(SCHEMAS[i].kind, kind) == 0) { sc = &SCHEMAS[i]; break; }
+    if (!sc || word_in(sc->props, p->name, p->nlen)) return;
+
+    diag_error(p->loc, "unknown %s property '%.*s'", sc->human, (int)p->nlen, p->name);
+
+    /* Valid on a different kind? name it — beats a fuzzy guess. */
+    for (size_t i = 0; i < sizeof SCHEMAS / sizeof SCHEMAS[0]; i++) {
+        if (&SCHEMAS[i] == sc) continue;
+        if (word_in(SCHEMAS[i].props, p->name, p->nlen)) {
+            diag_hint(p->loc, "'%.*s' is a %s property", (int)p->nlen, p->name, SCHEMAS[i].human);
+            return;
+        }
+    }
+    /* Otherwise nearest accepted name within this kind. */
+    char best[64]; int bd = 3;
+    for (const char *q = sc->props; *q;) {
+        while (*q == ' ') q++;
+        const char *e = q; while (*e && *e != ' ') e++;
+        size_t wn = (size_t)(e - q);
+        if (wn && wn < sizeof best) {
+            int d = edit_dist(p->name, p->nlen, q, wn);
+            if (d < bd) { bd = d; memcpy(best, q, wn); best[wn] = 0; }
+        }
+        q = e;
+    }
+    if (bd < 3) diag_hint(p->loc, "did you mean '%s'?", best);
+}
+
+/* Syms / ScopeEnt / S live in sema_internal.h (shared with sema_types.c). */
 
 static bool nameq(const char *a, size_t an, const char *b) {
     size_t bn = strlen(b);
     return an == bn && memcmp(a, b, an) == 0;
 }
 
-static Decl *find_decl_in(Decl **arr, int n, const char *name, size_t nlen) {
+Decl *find_decl_in(Decl **arr, int n, const char *name, size_t nlen) {
     for (int i = 0; i < n; i++)
         if (arr[i]->nlen == nlen && memcmp(arr[i]->name, name, nlen) == 0)
             return arr[i];
@@ -111,7 +187,7 @@ static void push_local(S *s, const char *name, size_t n) {
     s->locals = e;
 }
 static void pop_local(S *s) { s->locals = s->locals->next; }
-static bool is_local(S *s, const char *name, size_t n) {
+bool is_local(S *s, const char *name, size_t n) {
     for (ScopeEnt *e = s->locals; e; e = e->next)
         if (e->nlen == n && memcmp(e->name, name, n) == 0) return true;
     return false;
@@ -176,10 +252,6 @@ static void read_tray_icon_size(SemaResult *r, Expr *c) {
 /* ---------- expression walk ---------- */
 static void walk_expr(S *s, Expr *e);
 
-static void walk_call(S *s, Expr *e) {
-    for (int i = 0; i < e->call.nargs; i++) walk_expr(s, e->call.args[i]);
-}
-
 static void walk_expr(S *s, Expr *e) {
     if (!e) return;
     switch (e->kind) {
@@ -212,7 +284,13 @@ static void walk_expr(S *s, Expr *e) {
         }
         return;
     case EX_CALL:
-        walk_call(s, e);
+        /* A call in a value position (prop RHS, interp, ternary, emit/set/animate
+         * arg) has no lowering — codegen used to reject it late. Source RHS and
+         * animate easing are handled elsewhere and never reach here. */
+        diag_error(e->loc, "'%.*s(...)' is a call, not a value — calls are only allowed as a `source` right-hand side",
+                   (int)e->call.nlen, e->call.name);
+        diag_hint(e->loc, "read a source's field instead, e.g. `source x = %.*s(...);` then use `x` or `x.field`",
+                  (int)e->call.nlen, e->call.name);
         return;
     case EX_BIN: walk_expr(s, e->bin.l); walk_expr(s, e->bin.r); return;
     case EX_UN:  walk_expr(s, e->un.e); return;
@@ -260,8 +338,26 @@ static void walk_expr(S *s, Expr *e) {
             /* Validate field against source schema. */
             if (d->source.call && d->source.call->kind == EX_CALL) {
                 const SrcDef *sd = find_src(d->source.call->call.name, d->source.call->call.nlen);
-                if (sd && !field_ok(sd, e->member.field, e->member.flen))
+                if (sd && !field_ok(sd, e->member.field, e->member.flen)) {
                     diag_error(e->loc, "source '%s' has no field '%.*s'", d->name, (int)e->member.flen, e->member.field);
+                    if (sd->fields[0])
+                        diag_hint(e->loc, "%s exposes: %s", sd->name, sd->fields);
+                    else
+                        diag_hint(e->loc, "%s has no fields — use it bare: \"{%s}\"", sd->name, d->name);
+                } else if (sd) {
+                    /* list/history/items are list fields — only an iterable in a
+                     * `for` head, never a scalar value. Codegen's lower_member
+                     * rejects them (e.g. dbus history is post-v0); catch it here
+                     * so --check and --emit agree. */
+                    const char *f = e->member.field; size_t fl = e->member.flen;
+                    if (!s->in_for_iter &&
+                        ((fl == 4 && memcmp(f, "list", 4) == 0) ||
+                         (fl == 7 && memcmp(f, "history", 7) == 0) ||
+                         (fl == 5 && memcmp(f, "items", 5) == 0))) {
+                        diag_error(e->loc, "'%s.%.*s' is a list — use it only in `for x in %s.%.*s`",
+                                   d->name, (int)fl, f, d->name, (int)fl, f);
+                    }
+                }
                 /* net rates are the one polled thing in an otherwise
                  * event-driven source: only a config that actually reads
                  * them puts net() on the shared tick (idle = 0 CPU). */
@@ -291,7 +387,10 @@ static void walk_stmt(S *s, Stmt *st) {
              * direct overwrite of the polled line buffer (optimistic update). */
             Decl *src = find_decl_in(s->s.src, s->s.nsrc, st->set.name, st->set.nlen);
             if (!src) diag_error(st->loc, "undefined identifier '%s' in set()", st->set.name);
-        } else if (d->kind != D_MUT) diag_error(st->loc, "'%s' is const, not mut", st->set.name);
+        } else if (d->kind != D_MUT) {
+            diag_error(st->loc, "'%s' is const, not mut", st->set.name);
+            diag_hint(d->loc, "declare it `mut %s = ...` to allow set()", st->set.name);
+        }
         walk_expr(s, st->set.val);
         return;
     }
@@ -300,6 +399,20 @@ static void walk_stmt(S *s, Stmt *st) {
         Decl *tgt = find_decl_in(s->s.sur, s->s.nsur, st->emit.name, st->emit.nlen);
         if (!tgt && !nameq(st->emit.name, st->emit.nlen, "menu_reply"))
             diag_error(st->loc, "emit target surface '%s' not declared", st->emit.name);
+        else if (tgt) {
+            /* Only a spawned_by template has a spawn_<name>() to call; emitting
+             * to a plain surface used to fail at link, not --check. */
+            bool tmpl = false;
+            for (int k = 0; k < tgt->surface.n; k++) {
+                SBody *sb = &tgt->surface.items[k];
+                if (sb->kind == SB_PROP && nameq(sb->prop->name, sb->prop->nlen, "spawned_by"))
+                    { tmpl = true; break; }
+            }
+            if (!tmpl) {
+                diag_error(st->loc, "emit target '%s' is not a spawned_by template", st->emit.name);
+                diag_hint(st->loc, "only osd/menu templates (surfaces with `spawned_by = ...`) can be emit()ed");
+            }
+        }
         for (int i = 0; i < st->emit.n; i++) walk_expr(s, st->emit.val[i]);
         return;
     }
@@ -309,7 +422,10 @@ static void walk_stmt(S *s, Stmt *st) {
     case ST_ANIMATE: {
         Decl *d = find_decl_in(s->s.kon, s->s.nkon, st->anim.name, st->anim.nlen);
         if (!d) diag_error(st->loc, "undefined identifier '%s' in animate()", st->anim.name);
-        else if (d->kind != D_MUT) diag_error(st->loc, "animate target '%s' is const, not mut", st->anim.name);
+        else if (d->kind != D_MUT) {
+            diag_error(st->loc, "animate target '%s' is const, not mut", st->anim.name);
+            diag_hint(d->loc, "only `mut` values animate; declare `mut %s = ...`", st->anim.name);
+        }
         walk_expr(s, st->anim.to);
         walk_expr(s, st->anim.duration);
         /* easing is bare ident or a call (cubic_bezier(...)); allow without normal undef-check */
@@ -326,7 +442,22 @@ static void walk_stmt(S *s, Stmt *st) {
 static void walk_widget(S *s, Widget *w);
 
 static void walk_for(S *s, ForBlock *f) {
+    /* Only `rows` and a source's list/history/items field iterate; anything
+     * else was a codegen-only error before, so --check missed it. */
+    Expr *it = f->iter;
+    bool iter_ok =
+        (it && it->kind == EX_IDENT && nameq(it->ident.s, it->ident.n, "rows")) ||
+        (it && it->kind == EX_MEMBER && it->member.base->kind == EX_IDENT &&
+         find_decl_in(s->s.src, s->s.nsrc, it->member.base->ident.s, it->member.base->ident.n) &&
+         (nameq(it->member.field, it->member.flen, "list") ||
+          nameq(it->member.field, it->member.flen, "history") ||
+          nameq(it->member.field, it->member.flen, "items")));
+    if (it && !iter_ok)
+        diag_error(it->loc, "for-iter must be `rows`, <tags-src>.list, "
+                   "<dbus_signal-src>.history or <tray-src>.items");
+    s->in_for_iter = true;
     walk_expr(s, f->iter);
+    s->in_for_iter = false;
     push_local(s, f->var, f->vlen);
     for (int i = 0; i < f->ncells; i++) walk_widget(s, f->cells[i]);
     pop_local(s);
@@ -338,6 +469,8 @@ static void walk_widget(S *s, Widget *w) {
         WBody *b = &w->items[i];
         switch (b->kind) {
         case WB_PROP:
+            check_prop("widget", b->prop);
+            typecheck_prop(s, "widget", b->prop);
             /* transition_easing accepts a bare easing ident (ease_in/ease_out/
              * ease_in_out/linear); don't run the undef-ident check on it. */
             if (b->prop->nlen == 17 && memcmp(b->prop->name, "transition_easing", 17) == 0) {
@@ -470,6 +603,8 @@ static void analyze_surface(S *s, Decl *d) {
         SBody *b = &d->surface.items[i];
         switch (b->kind) {
         case SB_PROP:
+            check_prop("surface", b->prop);
+            typecheck_prop(s, "surface", b->prop);
             /* reveal_easing accepts a bare easing ident (Step 6.2). */
             if (b->prop->nlen == 13 && memcmp(b->prop->name, "reveal_easing", 13) == 0)
                 break;
@@ -482,7 +617,7 @@ static void analyze_surface(S *s, Decl *d) {
         case SB_FOR:    walk_for(s, b->forb); break;
         case SB_GROUP: {
             Group *g = b->group;
-            for (int k = 0; k < g->nprops; k++) walk_expr(s, g->props[k]->val);
+            for (int k = 0; k < g->nprops; k++) { check_prop("group", g->props[k]); typecheck_prop(s, "group", g->props[k]); walk_expr(s, g->props[k]->val); }
             for (int k = 0; k < g->nmembers; k++) {
                 if (g->fors && g->fors[k]) walk_for(s, g->fors[k]);
                 else walk_widget(s, g->members[k]);
@@ -494,7 +629,7 @@ static void analyze_surface(S *s, Decl *d) {
             for (int k = 0; k < rg->nitems; k++) {
                 SBody *rb = &rg->items[k];
                 switch (rb->kind) {
-                case SB_PROP:   walk_expr(s, rb->prop->val); break;
+                case SB_PROP:   check_prop("surface", rb->prop); typecheck_prop(s, "surface", rb->prop); walk_expr(s, rb->prop->val); break;
                 case SB_WIDGET: walk_widget(s, rb->widget); break;
                 case SB_FOR:    walk_for(s, rb->forb); break;
                 case SB_REGION: case SB_GROUP: break;
@@ -554,10 +689,20 @@ SemaResult *sema_check(Arena *a, Unit *u) {
             /* Validate RHS is a known built-in. */
             if (d->source.call && d->source.call->kind == EX_CALL) {
                 const SrcDef *sd = find_src(d->source.call->call.name, d->source.call->call.nlen);
-                if (!sd) diag_error(d->source.call->loc, "unknown built-in source '%.*s'",
-                                    (int)d->source.call->call.nlen, d->source.call->call.name);
+                if (!sd) {
+                    const char *nm = d->source.call->call.name;
+                    size_t nl = d->source.call->call.nlen;
+                    diag_error(d->source.call->loc, "unknown built-in source '%.*s'", (int)nl, nm);
+                    const char *best = NULL; int bd = 3;
+                    for (size_t k = 0; k < sizeof SOURCES / sizeof SOURCES[0]; k++) {
+                        int dist = edit_dist(nm, nl, SOURCES[k].name, strlen(SOURCES[k].name));
+                        if (dist < bd) { bd = dist; best = SOURCES[k].name; }
+                    }
+                    if (best) diag_hint(d->source.call->loc, "did you mean '%s'?", best);
+                }
                 else {
                     set_flag(s.r, sd->flag);
+                    check_source_args(sd, d->source.call);
                     if (sd->flag == F_TRAY) read_tray_icon_size(s.r, d->source.call);
                 }
             }
@@ -578,10 +723,36 @@ SemaResult *sema_check(Arena *a, Unit *u) {
                 diag_error(d->loc, "duplicate '%s'", d->name);
             s.s.kon[s.s.nkon++] = d;
             break;
-        case D_LOCK:      if (s.s.lock)  diag_error(d->loc, "duplicate lock block");      s.s.lock = d;  s.r->has_lock = 1;     break;
-        case D_GAMMA:     if (s.s.gamma) diag_error(d->loc, "duplicate gamma block");     s.s.gamma = d; s.r->has_gamma = 1;    break;
-        case D_WALLPAPER: if (s.s.wall)  diag_error(d->loc, "duplicate wallpaper block"); s.s.wall = d;  s.r->has_wallpaper = 1; break;
-        case D_MEDIA:     s.r->has_media = 1; s.r->has_pipewire = 1; break;   /* media keys read/write via pipewire.c */
+        case D_LOCK:
+            if (s.s.lock)  diag_error(d->loc, "duplicate lock block");
+            s.s.lock = d;  s.r->has_lock = 1;
+            for (int j = 0; j < d->block.n; j++) check_prop("lock", d->block.props[j]);
+            break;
+        case D_GAMMA:
+            if (s.s.gamma) diag_error(d->loc, "duplicate gamma block");
+            s.s.gamma = d; s.r->has_gamma = 1;
+            for (int j = 0; j < d->block.n; j++) check_prop("gamma", d->block.props[j]);
+            break;
+        case D_WALLPAPER: {
+            if (s.s.wall) diag_error(d->loc, "duplicate wallpaper block");
+            s.s.wall = d;  s.r->has_wallpaper = 1;
+            /* A crossfade is the wall's own animation — it needs anim.o linked
+             * even when no widget animates. fade_ms defaults to 300 (config.h),
+             * so a wallpaper animates unless it explicitly opts out with 0. */
+            int fade = 1;
+            for (int i = 0; i < d->block.n; i++) {
+                Prop *p = d->block.props[i];
+                check_prop("wallpaper", p);
+                if (p->nlen == 7 && memcmp(p->name, "fade_ms", 7) == 0
+                    && p->val->kind == EX_INT && p->val->i == 0) fade = 0;
+            }
+            if (fade) s.r->has_anim = true;
+            break;
+        }
+        case D_MEDIA:
+            s.r->has_media = 1; s.r->has_pipewire = 1;   /* media keys read/write via pipewire.c */
+            for (int j = 0; j < d->block.n; j++) check_prop("media", d->block.props[j]);
+            break;
         case D_STYLE:     break;   /* stripped by style_apply */
         }
     }
@@ -592,7 +763,10 @@ SemaResult *sema_check(Arena *a, Unit *u) {
     s.r->spawned_args  = arena_alloc(a, sizeof(char**) * (size_t)(s.s.nsur ? s.s.nsur : 1));
 
     /* Pass 2: walk const/mut initializers (no deps recorded — they're not per-surface). */
-    for (int i = 0; i < s.s.nkon; i++) walk_expr(&s, s.s.kon[i]->konst.val);
+    for (int i = 0; i < s.s.nkon; i++) {
+        walk_expr(&s, s.s.kon[i]->konst.val);
+        typecheck_expr(&s, s.s.kon[i]->konst.val);
+    }
 
     /* Pass 3: per-surface analysis. */
     for (int i = 0; i < s.s.nsur; i++) analyze_surface(&s, s.s.sur[i]);

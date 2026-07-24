@@ -1,0 +1,3 @@
+tests/diag/syntax-unclosed-brace.wisp:1:13: error: unclosed '{' — reached end of file with no matching '}'
+  surface bar {
+              ^

@@ -1,0 +1,4 @@
+tests/diag/animate-on-const.wisp:4:18: error: animate target 'width' is const, not mut
+      on_click() = animate(width, 100, 200ms, ease_out);
+                   ^
+  help: only `mut` values animate; declare `mut width = ...`

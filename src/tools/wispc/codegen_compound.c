@@ -507,12 +507,15 @@ int emit_surfaces(FILE *o, Unit *u, CGCtx *ctx) {
      * replaced bar.c, so re-emit minimal ones. */
     fprintf(o, "\n#define MENU_ROWS_CAP %d\n", MENU_ROWS_CAP);
     /* An icon is a codepoint or a pixmap (a decoded app icon); pm wins. */
-    fputs("\nstatic int cp_width(const Font *f, uint32_t cp, const uint32_t *pm, int pms) {\n"
+    /* unused when a config has no text-drawing widget (widgetless surfaces). */
+    fputs("\n__attribute__((unused))\n"
+          "static int cp_width(const Font *f, uint32_t cp, const uint32_t *pm, int pms) {\n"
           "    if (pms) return pms;\n"
           "    const Glyph *g = font_find(f, cp);\n"
           "    return g ? g->adv : f->px_size / 2;\n"
           "}\n", o);
-    fputs("static int draw_cp(uint32_t *px, int sw, int sh, int x, int y,\n"
+    fputs("__attribute__((unused))\n"
+          "static int draw_cp(uint32_t *px, int sw, int sh, int x, int y,\n"
           "                   const Font *f, uint32_t cp, uint32_t fg,\n"
           "                   const uint32_t *pm, int pms) {\n"
           "    if (pms) { if (pm) blit_argb(px, sw, sh, x, y + (f->line_h - pms) / 2, pm, pms); return pms; }\n"

@@ -1,0 +1,4 @@
+tests/diag/bad-source-field.wisp:4:12: error: source 'c' has no field 'bogus'
+      text = c.bogus;
+             ^
+  help: cpu exposes: pct load1

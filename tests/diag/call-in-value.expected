@@ -1,0 +1,4 @@
+tests/diag/call-in-value.wisp:3:12: error: 'cpu(...)' is a call, not a value — calls are only allowed as a `source` right-hand side
+      text = cpu();
+             ^
+  help: read a source's field instead, e.g. `source x = cpu(...);` then use `x` or `x.field`

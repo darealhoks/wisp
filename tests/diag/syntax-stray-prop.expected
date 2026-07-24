@@ -1,0 +1,4 @@
+tests/diag/syntax-stray-prop.wisp:1:1: error: property 'anchor' is not inside any block
+  anchor = top;
+  ^
+  help: properties live inside a surface/widget/group/... block, not at top level

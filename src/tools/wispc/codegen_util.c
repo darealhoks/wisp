@@ -1,8 +1,72 @@
 /* wispc codegen — common helpers (split from codegen.c). */
+#define _GNU_SOURCE   /* fopencookie: track the generated file's own line count */
 #include "codegen_internal.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* ============================================================ */
+/* #line source mapping (Phase 4)                                */
+/* ------------------------------------------------------------ */
+/* So a residual gcc/-Werror error on generated C points at the  */
+/* .wisp line, not gen_surfaces.c:NNN. cg_line() re-bases the     */
+/* next emitted line onto the .wisp source; cg_line_reset() puts  */
+/* it back onto the generated file so glue-code errors still name */
+/* the generated file. The reset needs the generated file's own  */
+/* current line number, which nothing else tracks — so gen files  */
+/* are opened through cg_open(), a fopencookie stream that counts  */
+/* newlines as they flush. Only one gen file is emitted at a time  */
+/* (codegen.c open→emit→close, serially), so a single active-      */
+/* stream pointer suffices.                                        */
+/* ponytail: single active stream; if codegen ever emits two gen  */
+/* files concurrently this needs a FILE*→state map instead.        */
+int cg_line_map = 1;   /* --no-line-map clears it */
+
+typedef struct { FILE *raw; FILE *wrap; long nl; char path[1024]; } CgStream;
+static CgStream *cg_cur;
+
+static ssize_t cg_cookie_write(void *c, const char *buf, size_t n) {
+    CgStream *s = c;
+    for (size_t i = 0; i < n; i++) if (buf[i] == '\n') s->nl++;
+    return (ssize_t)fwrite(buf, 1, n, s->raw);
+}
+static int cg_cookie_close(void *c) {
+    CgStream *s = c;
+    int r = fclose(s->raw);
+    if (cg_cur == s) cg_cur = NULL;
+    free(s);
+    return r;
+}
+
+FILE *cg_open(const char *path) {
+    FILE *raw = fopen(path, "w");
+    if (!raw) return NULL;
+    if (!cg_line_map) return raw;   /* no tracking wanted → plain stream */
+    CgStream *s = calloc(1, sizeof *s);
+    if (!s) return raw;
+    s->raw = raw;
+    snprintf(s->path, sizeof s->path, "%s", path);
+    cookie_io_functions_t io = { NULL, cg_cookie_write, NULL, cg_cookie_close };
+    s->wrap = fopencookie(s, "w", io);
+    if (!s->wrap) { free(s); return raw; }
+    /* Unbuffered so cg_cur->nl is current whenever cg_line_reset() reads it,
+     * without an fflush dance. Gen output is small; speed is a non-issue. */
+    setvbuf(s->wrap, NULL, _IONBF, 0);
+    cg_cur = s;
+    return s->wrap;
+}
+
+void cg_line(FILE *o, Loc loc) {
+    if (!cg_line_map || !cg_cur || cg_cur->wrap != o || !loc.file || loc.line <= 0)
+        return;
+    fprintf(o, "#line %d \"%s\"\n", loc.line, loc.file);
+}
+void cg_line_reset(FILE *o) {
+    if (!cg_line_map || !cg_cur || cg_cur->wrap != o) return;
+    /* This directive lands on physical line nl+1; the code after it on nl+2,
+     * which is the number it must report. */
+    fprintf(o, "#line %ld \"%s\"\n", cg_cur->nl + 2, cg_cur->path);
+}
 
 /* ============================================================ */
 /* Common helpers                                                */

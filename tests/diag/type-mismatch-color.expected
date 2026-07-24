@@ -1,0 +1,3 @@
+tests/diag/type-mismatch-color.wisp:3:10: error: widget property 'bg' expects a color, got 'int'
+      bg = 42;
+           ^

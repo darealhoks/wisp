@@ -572,9 +572,8 @@ CE coerce_to_int(CGCtx *c, CE e) {
 
 /* Recursive statement emitter used from event handlers (on_click bodies).
  * Handles ST_EXEC / ST_SET / ST_EMIT / ST_BLOCK. */
-void emit_stmt(FILE *o, CGCtx *ctx, Stmt *st, const char *indent,
+static void emit_stmt_inner(FILE *o, CGCtx *ctx, Stmt *st, const char *indent,
                       SemaResult *r) {
-    if (!st) return;
     switch (st->kind) {
     case ST_BLOCK:
         for (int i = 0; i < st->block.n; i++)
@@ -721,4 +720,16 @@ void emit_stmt(FILE *o, CGCtx *ctx, Stmt *st, const char *indent,
         return;
     }
     }
+}
+
+/* Wraps each leaf statement in a #line map so a residual gcc error on the
+ * emitted C points at the handler's .wisp line (Phase 4). Blocks recurse so
+ * each leaf gets its own loc; no-op unless --emit line-mapping is on. */
+void emit_stmt(FILE *o, CGCtx *ctx, Stmt *st, const char *indent,
+               SemaResult *r) {
+    if (!st) return;
+    if (st->kind == ST_BLOCK) { emit_stmt_inner(o, ctx, st, indent, r); return; }
+    cg_line(o, st->loc);
+    emit_stmt_inner(o, ctx, st, indent, r);
+    cg_line_reset(o);
 }

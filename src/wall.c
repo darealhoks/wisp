@@ -192,7 +192,9 @@ static void wall_compose(uint32_t *dst, const uint32_t *a, const uint32_t *b,
 
 void wall_fade_cancel(Widget *w) {
     if (!w->s.wall.fade_from && !w->s.wall.fade_to) return;
+#if WALL_FADE_MS > 0
     anim_cancel_for(&w->s.wall.fade);
+#endif
     free(w->s.wall.fade_from); free(w->s.wall.fade_to);
     w->s.wall.fade_from = w->s.wall.fade_to = NULL;
 }
@@ -285,7 +287,9 @@ static void wall_fade_prepare(Widget *w, const char *oldpath) {
     if (!to) {   /* validated in wall_set, so only a truly corrupt file */
         msg("wisp: wallpaper decode failed (%s)", wall_path());
         free(from); w->s.wall.fade_from = NULL;
+#if WALL_FADE_MS > 0
         anim_cancel_for(&w->s.wall.fade);
+#endif
         return;
     }
     if (!from) {   /* nothing to fade from: hard cut via the normal path */
@@ -307,8 +311,12 @@ static void wall_fade_arm(Widget *w) {
     w->s.wall.fade_u_last = -1;
     widget_ensure_pool(w, 2);
     w->want_pool_free = 0;
+#if WALL_FADE_MS > 0
     anim_start_num(&w->s.wall.fade, ANIM_T_FLOAT, 0, 1, WALL_FADE_MS,
                    EASE_IN_OUT, NULL, w, wall_fade_done, w);
+#else
+    wall_fade_done(w);   /* fade disabled: attach the target frame immediately */
+#endif
 }
 
 int wall_set(const char *path) {

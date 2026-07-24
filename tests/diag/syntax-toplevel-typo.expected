@@ -1,0 +1,4 @@
+tests/diag/syntax-toplevel-typo.wisp:1:1: error: unknown declaration keyword 'srface'
+  srface bar {
+  ^
+  help: did you mean 'surface'?

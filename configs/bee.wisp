@@ -1,6 +1,10 @@
 //! font = ~/.local/share/fonts/MapleMono-NF-Bold.ttf
 //! font_fallback = /usr/share/fonts/noto-emoji/NotoColorEmoji.ttf
 
+// ==================================
+//               BAR
+// ==================================
+
 source time   = clock("%H:%M");
 source date_s = clock("%b %-d");
 source tags   = tags();
@@ -9,11 +13,10 @@ source mem_s  = mem(every="2s");
 source bat_s  = bat("BAT0");
 source temp_s = temp(every="2s");
 source wifi_s = net("");
-/* SUPER+b (mango) → `wispctl hide toggle`: bar + HUD gate on this. */
-source hid    = ui_hidden();
 source tray_s = tray(icon_size=20);
-/* Event-driven native PipeWire client — no poll, no fork. */
 source vol_s  = pipewire();
+
+source hid    = ui_hidden();
 
 const TEXT   = #ffe9e6dd;
 const SUBTXT = #ffa5adbb;
@@ -28,393 +31,590 @@ const RED    = #ffe0603f;
 const GREEN  = #ff97bb90;
 const PRIM   = #ff64799c;
 const TERT   = #ff92aed2;
-const TRAY_ICONS_ONLY = true;   // icon-less tray items vanish instead of showing their id
-const SOLID  = #ff0e131c;   // opaque: translucent CRUST must not leak through the lock
+
+const TRAY_ICONS_ONLY = true; // icon-less tray items aren't shown
+const BLACK  = #ff000000;
 
 surface bar {
-  layer = top;
-  anchor = top | left | right;
-  height = 34;
-  margin = 6;
-  exclusive_zone = 34;         // reserve strip + top gap
-  visible = hid.value == "0";  // destroy releases the zone
+	layer = top;
+	anchor = top | left | right;
+	height = 34;
+	margin = 6;
+	exclusive_zone = 34;
+	visible = hid.value == "0";
 
-  bg = #00000000;
-  radius = 0;
+	bg = #00000000;
+	radius = 0;
 
-  widget edge_l { align = left; pad = 2; }
-  group distrogrp {
-    align = left;
-    widget distro { icon = 0xf32e; }
-  }
-  group batgrp {
-    align = left;
-    widget bat { icon = bat_s.charging  ? 0xf0084
-                      : bat_s.pct >= 75 ? 0xf240
-                      : bat_s.pct >= 50 ? 0xf241
-                      : bat_s.pct >= 25 ? 0xf242
-                      : bat_s.pct >= 10 ? 0xf243
-                      :                   0xf244;
-                 text = " {bat_s.pct}%";
-                 fg   = bat_s.charging ? GREEN
-                      : bat_s.pct < 15 ? RED
-                      : bat_s.pct < 25 ? ORANGE
-                      : bat_s.pct < 40 ? YELLOW : TEXT; }
-  }
-  group clockgrp {
-    align = left;
-    widget time { text = time; }
-    widget date.dim { text = date_s; }
-  }
+	/* left side, left > right */
 
-  for tag in tags.list {
-    cell.ws {
-      text         = tag.label;
-      visible      = tag.pinned || tag.occupied || tag.active || tag.urgent;
-      on_click() = exec("wispctl tag {tag.index} {tag.output}");
-    }
-  }
+		widget edge_l {
+		align = left;
+		pad = 2;
+	}
 
-  /* Right side is declared right-to-left → first group is rightmost. */
-  widget edge_r { align = right; pad = 2; }
+	group distrogrp {
+		align = left;
+		widget distro {
+			icon = 0xf32e;
+		}
+	}
+	group batgrp {
+		align = left;
+		widget bat {
+			icon = bat_s.charging  ? 0xf0084
+				: bat_s.pct >= 75 ? 0xf240
+				: bat_s.pct >= 50 ? 0xf241
+				: bat_s.pct >= 25 ? 0xf242
+				: bat_s.pct >= 10 ? 0xf243
+				:                   0xf244;
+			text = " {bat_s.pct}%";
+			fg   = bat_s.charging ? GREEN
+				: bat_s.pct < 15 ? RED
+				: bat_s.pct < 25 ? ORANGE
+				: bat_s.pct < 40 ? YELLOW : TEXT;
+		}
+	}
+	group clockgrp {
+		align = left;
+		widget time {
+			text = time;
+		}
+		widget date.dim {
+			text = date_s;
+		}
+	}
 
-  group conngrp {
-    align = right;
-    widget wifi { icon = wifi_s.signal >= 3 ? 0xf0928
-                       : wifi_s.signal >= 2 ? 0xf0925
-                       : wifi_s.signal >= 1 ? 0xf0922
-                       :                      0xf091f;
-                  fg = wifi_s.signal >= 1 ? TEXT : RED;
-                  on_click() = exec("foot -T ws-hud-wifi --app-id=ws-hud-wifi -e impala"); }
-    widget sep_conn.sep { text = "/"; }
-    widget audio { icon = !vol_s.ok      ? 0xf0581
-                        : vol_s.mute     ? 0xf0581
-                        : vol_s.vol < 34 ? 0xf026
-                        : vol_s.vol < 67 ? 0xf027
-                        :                  0xf028;
-                   fg = !vol_s.ok  ? RED
-                      : vol_s.mute ? YELLOW : TEXT;
-                   on_click() = exec("foot -T ws-hud-vol --app-id=ws-hud-vol -e wiremix"); }
-  }
+	for tag in tags.list {
+		cell.ws {
+			text         = tag.label;
+			visible      = tag.pinned || tag.occupied || tag.active || tag.urgent;
+			on_click()   = exec("wispctl tag {tag.index} {tag.output}");
+		}
+	}
 
-  group sysgrp {
-    align = right;
-    widget cpu    { icon = 0xf4bc;  text = " {cpu_s.pct}%";
-                    fg = cpu_s.pct >= 90 ? RED
-                       : cpu_s.pct >= 75 ? ORANGE
-                       : cpu_s.pct >= 50 ? YELLOW : TEXT; }
-    widget sep_ct.sep { text = "/"; }
-    widget temp   { icon = 0xf06d;  text = " {temp_s.c}°C";
-                    fg = temp_s.c >= 85 ? RED
-                       : temp_s.c >= 70 ? ORANGE
-                       : temp_s.c >= 55 ? YELLOW : TEXT; }
-    widget sep_tr.sep { text = "/"; }
-    widget mem    { icon = 0xefc5;
-                    text = mem_s.used_mb >= 1024
-                         ? " {mem_s.used_mb / 1024}.{mem_s.used_mb * 10 / 1024 % 10} GB"
-                         : " {mem_s.used_mb} MB";
-                    fg = mem_s.pct >= 90 ? RED
-                       : mem_s.pct >= 75 ? ORANGE
-                       : mem_s.pct >= 60 ? YELLOW : TEXT; }
-  }
+	/* right side, right > left */
+		widget edge_r {
+		align = right;
+		pad = 2;
+	}
 
-  /* Systray. Empty until an app registers a StatusNotifierItem. Icons come
-     from IconPixmap or the hicolor theme; TRAY_ICONS_ONLY drops the id-text
-     fallback for the (rare) item that resolves to neither. */
-  /* No height → fills the bar row like every other group, so the icons sit in
-     the same pill geometry as the text widgets. */
-  group traygrp {
-    align = right;
-    for tray_item in tray_s.items {
-      cell.tray {
-        icon       = tray_item.icon;
-        bg         = tray_item.menu_open ? REST : #00000000;   // stays lit while the popup is up
-        text       = tray_item.has_icon || TRAY_ICONS_ONLY ? "" : tray_item.id;
-        visible    = tray_item.status != "Passive"
-                     && (tray_item.has_icon || !TRAY_ICONS_ONLY);
-        on_click()       = exec("wispctl tray activate {tray_item.index}");
-        on_right_click()  = exec("wispctl tray menu {tray_item.index}");
-        on_middle_click() = exec("wispctl tray secondary {tray_item.index}");
-      }
-    }
-  }
+	group conngrp {
+		align = right;
+		widget wifi {
+			icon = wifi_s.signal >= 3 ? 0xf0928
+				: wifi_s.signal >= 2 ? 0xf0925
+				: wifi_s.signal >= 1 ? 0xf0922
+				:                      0xf091f;
+			fg = wifi_s.signal >= 1 ? TEXT : RED;
+			on_click() = exec("foot -T ws-hud-wifi --app-id=ws-hud-wifi -e impala");
+		}
+		widget sep_conn.sep {
+			text = "/";
+		}
+		widget audio {
+			icon = !vol_s.ok   ? 0xf0581
+				: vol_s.mute     ? 0xf0581
+				: vol_s.vol < 34 ? 0xf026
+				: vol_s.vol < 67 ? 0xf027
+				:                  0xf028;
+			fg = !vol_s.ok     ? RED
+				: vol_s.mute     ? YELLOW : TEXT;
+			on_click() = exec("foot -T ws-hud-vol --app-id=ws-hud-vol -e wiremix");
+		}
+	}
+
+	group sysgrp {
+		align = right;
+		widget cpu    {
+			icon = 0xf4bc;
+			text = " {cpu_s.pct}%";
+			fg = cpu_s.pct >= 90 ? RED
+				: cpu_s.pct >= 75 ? ORANGE
+				: cpu_s.pct >= 50 ? YELLOW : TEXT;
+		}
+		widget sep_ct.sep {
+			text = "/";
+		}
+		widget temp   {
+			icon = 0xf06d;
+			text = " {temp_s.c}°C";
+			fg = temp_s.c >= 85 ? RED
+				: temp_s.c >= 70 ? ORANGE
+				: temp_s.c >= 55 ? YELLOW : TEXT;
+		}
+		widget sep_tr.sep {
+			text = "/";
+		}
+		widget mem    {
+			icon = 0xefc5;
+			text = mem_s.used_mb >= 1024
+				? " {mem_s.used_mb / 1024}.{mem_s.used_mb * 10 / 1024 % 10} GB"
+				: " {mem_s.used_mb} MB";
+			fg = mem_s.pct >= 90 ? RED
+				: mem_s.pct >= 75 ? ORANGE
+				: mem_s.pct >= 60 ? YELLOW : TEXT;
+		}
+	}
+
+	group traygrp {
+		align = right;
+		for tray_item in tray_s.items {
+			cell.tray {
+				icon       = tray_item.icon;
+				bg         = tray_item.menu_open ? REST : #00000000;
+				text       = tray_item.has_icon || TRAY_ICONS_ONLY ? "" : tray_item.id;
+				visible    = tray_item.status != "Passive"
+					&& (tray_item.has_icon || !TRAY_ICONS_ONLY);
+				on_click()       = exec("wispctl tray activate {tray_item.index}");
+				on_right_click()  = exec("wispctl tray menu {tray_item.index}");
+				on_middle_click() = exec("wispctl tray secondary {tray_item.index}");
+			}
+		}
+	}
 }
 
-group      { bg = CRUST; border = BORD; border_width = 2; radius = 8;
-             pad = 8; pad_x = 12; gap = 14; }   // no height → fills the bar row
-#distrogrp { pad_x = 18; gap = 0; }
-#clockgrp  { gap = 10; }
-#traygrp   { pad_x = 4; gap = 0; }   // pills already carry 4px around their 20px icon, so gap 0 keeps icon-to-icon spacing equal to icon-to-border
-#conngrp   { pad_x = 18; }
+group {
+	bg = CRUST;
+	border = BORD;
+	border_width = 2;
+	radius = 8;
+	pad = 8;
+	pad_x = 12;
+	gap = 14;
+} // no height → fills the bar row
+#distrogrp {
+	pad_x = 18;
+	gap = 0;
+}
+#clockgrp  {
+	gap = 10;
+}
+#traygrp   {
+	pad_x = 4;
+	gap = 0;
+}
+#conngrp   {
+	pad_x = 18;
+}
 
-widget { fg = TEXT; }
-.dim   { fg = SUBTXT; }
-.sep   { fg = BORD; }
+widget {
+	fg = TEXT;
+}
+.dim   {
+	fg = SUBTXT;
+}
+.sep   {
+	fg = BORD;
+}
 
-/* Active tag grows 4px */
-.ws        { align = left; fg = TEXT; bg = CRUST; border = BORD; border_width = 2;
-             radius = 8; pad = 6; width = 28; height = 28;
-             transition_size = 160ms;
-             enter_anim = 160ms; exit_anim = 160ms; }
-.ws:active { fg = TEXT; border = BORD; width = 34; height = 34; }
+.ws {
+	align = left;
+	fg = TEXT;
+	bg = CRUST;
+	border = BORD;
+	border_width = 2;
+	radius = 8;
+	pad = 6;
+	width = 28;
+	height = 28;
+	transition_size = 160ms;
+	enter_anim = 160ms;
+	exit_anim = 160ms;
+}
+.ws:active {
+	fg = TEXT;
+	border = BORD;
+	width = 34;
+	height = 34;
+}
 
-/* One pill for the whole tray (group traygrp) — members are bare icons in it. */
-/* Bigger than the 20px icon, or the :pressed highlight hides entirely
-   underneath it. */
-.tray         { align = right; fg = TEXT; radius = 6; width = 28; height = 26;
-                enter_anim = 160ms; exit_anim = 160ms; }
-.tray:pressed { bg = REST; }
+.tray {
+	align = right;
+	fg = TEXT;
+	radius = 6;
+	width = 28;
+	height = 26;
+	enter_anim = 160ms;
+	exit_anim = 160ms;
+}
 
+.tray:pressed {
+	bg = REST;
+}
 
-// ============================================================================
-// HUD — hover-revealed button panel.
-// ============================================================================
+// ==================================
+//               HUD
+// ==================================
 
-/* In-process state — no poll timer, no fork; the daemon pings on mutation. */
 source gamma_warm = gamma_warm();
 source dnd_on     = dnd();
 source mirror_on  = toplevel(app_id="at.yrlf.wl_mirror");
 
-/* Geometry: 32-px hit targets, 6-px gaps → row = 5·(32+6) − 6 = 184 (layout
- * adds `pad` per widget then drops the trailing one). The row is centred in
- * `width`, putting the glyph edge ≈18 px in — the bar groups' pad_x. The bar
- * row spans y 6..40, so a 40-px body under a 3-px gutter shares its centre.
- * The surface stays anchored to the screen top (the hover strip must sit at
- * the true edge); `reveal_gutter` leaves that band unpainted so the body
- * floats clear. */
 surface hud {
-  layer = overlay;
-  anchor = top;
-  width  = 242;
-  height = 40;
-  font_size = 14;
-  reveal_on_hover = 20;        // input only — does not displace paint
-  reveal_gutter   = 3;
-  reveal_anim_ms  = 200;
-  reveal_easing   = ease-out;
-  visible = hid.value == "0";
+	layer = overlay;
+	anchor = top;
+	width  = 242;
+	height = 40;
+	font_size = 14;
+	reveal_on_hover = 20;
+	reveal_gutter   = 3;
+	reveal_anim_ms  = 200;
+	reveal_easing   = ease-out;
+	visible = hid.value == "0";
 
-  widget gamma_btn.btn {
-    icon = 0xf186;
-    fg = gamma_warm.value == "1" ? WSACT : TEXT;
-    on_click() = exec("sh -c 'wispctl gamma is-warm && wispctl gamma off || wispctl gamma flat'");
-  }
-  widget sep1.sep { text = "/"; }
-  widget dnd_btn.btn {
-    icon = 0xf1f6;
-    fg = dnd_on.value == "on" ? TERT : TEXT;
-    on_click() = exec("wispctl dnd toggle");
-  }
-  widget sep2.sep { text = "/"; }
-  widget vol_btn.btn {
-    icon = 0xf028;
-    on_click() = exec("foot -T ws-hud-vol --app-id=ws-hud-vol -e wiremix");
-  }
-  widget sep3.sep { text = "/"; }
-  widget wifi_btn.btn {
-    icon = 0xf1eb;
-    on_click() = exec("foot -T ws-hud-wifi --app-id=ws-hud-wifi -e impala");
-  }
-  widget sep4.sep { text = "/"; }
-  widget mirror_btn.btn {
-    icon = 0xf24d;
-    fg = mirror_on.exists ? PRIM : TEXT;
-    on_click() = {
-      exec("mirror toggle");
-    };
-  }
+	widget gamma_btn.btn {
+		icon = 0xf186;
+		fg = gamma_warm.value == "1" ? WSACT : TEXT;
+		on_click() = exec("sh -c 'wispctl gamma is-warm && wispctl gamma off || wispctl gamma flat'");
+	}
+	widget sep1.sep {
+		text = "/";
+	}
+	widget dnd_btn.btn {
+		icon = 0xf1f6;
+		fg = dnd_on.value == "on" ? TERT : TEXT;
+		on_click() = exec("wispctl dnd toggle");
+	}
+	widget sep2.sep {
+		text = "/";
+	}
+	widget vol_btn.btn {
+		icon = 0xf028;
+		on_click() = exec("foot -T ws-hud-vol --app-id=ws-hud-vol -e wiremix");
+	}
+	widget sep3.sep {
+		text = "/";
+	}
+	widget wifi_btn.btn {
+		icon = 0xf1eb;
+		on_click() = exec("foot -T ws-hud-wifi --app-id=ws-hud-wifi -e impala");
+	}
+	widget sep4.sep {
+		text = "/";
+	}
+	widget mirror_btn.btn {
+		icon = 0xf24d;
+		fg = mirror_on.exists ? PRIM : TEXT;
+		on_click() = {
+			exec("mirror toggle")
+		}
+		;
+	}
 }
 
-#hud widget { align = center; pad = 6; }
-.btn        { width = 32; height = 32; radius = 8; }
-/* Only the state-carrying glyphs recolor — a transition on a constant fg would
- * cost a live TransSlot for an animation that can never run. */
-#gamma_btn, #dnd_btn, #mirror_btn { transition_fg = 180ms; }
-.btn:pressed { bg = REST; }
+#hud widget {
+	align = center;
+	pad = 6;
+}
 
-// ============================================================================
-// OSD — notification stack.
-// ============================================================================
+.btn {
+	width = 32;
+	height = 32;
+	radius = 8;
+}
+
+#gamma_btn, #dnd_btn, #mirror_btn {
+	transition_fg = 180ms;
+}
+.btn:pressed {
+	bg = REST;
+}
+
+// ==================================
+//           OSD (notifs)
+// ==================================
+
 surface osd {
-  spawned_by = osd;
-  layer = overlay;
-  anchor = top;
-  max = 4; width = 340; height = 60; margin = 6; gap = 0;   // margin > 0 → float layout
-  pad_x = 14; icon_gap = 12; prog_h = 10;
-  body_lines = 4; body_max = 256;
-  timeout_low = 3000; timeout_normal = 5000; timeout = 1200;
-  prog_fg = WSACT; prog_track = REST;
-  bg = CRUST; radius = 10; border_width = 2; border = BORD;
-  separator = REST; separator_frac = 80;
-  dismiss_on_click = true; focus_follow = true; dbus_close = true;
+	spawned_by = osd;
+	layer = overlay;
+	anchor = top;
+	max = 4;
+	body_lines = 4;
+	body_max = 256;
+	dismiss_on_click = true;
+	focus_follow = true;
+	dbus_close = true;
 
-  widget icon  { align = left;   width = 40; icon = $icon; }
-  /* Summary + wrapped body as one block: $body arrives "\n"-joined, so
-     body_lines is 1 (summary) + however many lines it wrapped to. The block
-     centers in the slab; a progress band steals the bottom prog_h + 8 px, so
-     lift by half that to stay centered in what's left. elide keeps a long
-     summary (attacker-controlled, it comes off D-Bus) inside the slab. */
-  widget title { align = left;  text = $nbody > 0 ? "{$summary}\n{$body}" : $summary;
-                 body_lines = 1 + $nbody; elide;
-                 pad = 12; y_offset = $progress >= 0 ? -9 : 0; }
-  /* progress is -1 on a plain notification — no pct column then. */
-  widget pct   { align = right;  text = "{$pct}%";         pad = 12;
-                 y_offset = $progress >= 0 ? -9 : 0;
-                 visible = $progress >= 0; }
-  /* Progress band. $progress is 0..100, hence value_max. */
-  widget prog  { slider; align = left; width = 312; height = 10;
-                 visible = $progress >= 0; value = $progress; value_max = 100;
-                 track_bg = REST; track_fg = WSACT; track_radius = 5; }
+	width = 340;
+	height = 60;
+	margin = 6;
+	gap = 0;
+	pad_x = 14;
+	icon_gap = 12;
+	prog_h = 10;
+
+	timeout_low = 3000;
+	timeout_normal = 5000;
+	timeout = 1200;
+
+	radius = 10;
+	border_width = 2;
+	separator_frac = 80;
+
+	prog_fg = WSACT;
+	prog_track = REST;
+	bg = CRUST;
+	border = BORD;
+	separator = REST;
+
+	widget icon  {
+		align = left;
+		width = 40;
+		icon = $icon;
+	}
+
+	widget title {
+		align = left;
+		text = $nbody > 0 ? "{$summary}\n{$body}" : $summary;
+		body_lines = 1 + $nbody;
+		elide;
+		pad = 12;
+		y_offset = $progress >= 0 ? -9 : 0;
+	}
+
+	widget pct   {
+		align = right;
+		text = "{$pct}%";
+		pad = 12;
+		y_offset = $progress >= 0 ? -9 : 0;
+		visible = $progress >= 0;
+	}
+
+	widget prog  {
+		slider;
+		align = left;
+		width = 312;
+		height = 10;
+		visible = $progress >= 0;
+		value = $progress;
+		value_max = 100;
+		track_bg = REST;
+		track_fg = WSACT;
+		track_radius = 5;
+	}
 }
 
-#osd widget { fg = TEXT; }
+#osd widget {
+	fg = TEXT;
+}
 
-/* Category styling. `muted` arrives as 1 (mute) / 2 (warn) per slab; the
- * pseudos read the derived $mute / $warn bindings, so the render path has no
- * C branch on it. */
-#osd:warn { bg = REST; }
-#osd widget:warn { fg = ORANGE; }
-#prog:warn { track_fg = ORANGE; }
-#prog:mute { track_fg = RED; }
+#osd:warn {
+	bg = REST;
+}
+#osd widget:warn {
+	fg = ORANGE;
+}
+#prog:warn {
+	track_fg = ORANGE;
+}
+#prog:mute {
+	track_fg = RED;
+}
 
-/* Pct posts (volume / brightness) skip the stack and render as this pill —
-   one fixed-height slab, {icon}{slider}, top-centered like a bar module.
-   margin > 0 floats it below the bar, so it rounds and outlines all round.
-   The icon's leading gap is its widget width (the slab has no pad_x). */
 surface pill {
-  spawned_by = osd_pill;
-  layer = overlay;
-  anchor = top;
-  width = 220; height = 40; margin = 3; radius = 8; font_size = 20;
+	spawned_by = osd_pill;
+	layer = overlay;
+	anchor = top;
+	width = 220;
+	height = 40;
+	margin = 3;
+	radius = 8;
+	font_size = 20;
 
-  /* tight ~10px around the glyph, ~16px bar→edge; x_offset compensates the
-     wide speaker glyphs whose wave arcs hang left of the column center */
-  widget icon { align = left; width = 40; pad = 0; x_offset = 3; icon = $icon; }
-  widget prog { slider; align = left; width = 164; height = 10;
-                value = $progress; value_max = 100;
-                track_bg = REST; track_fg = WSACT; track_radius = 5; }
+	widget icon {
+		align = left;
+		width = 40;
+		pad = 0;
+		x_offset = 3;
+		icon = $icon;
+	}
+	widget prog {
+		slider;
+		align = left;
+		width = 164;
+		height = 10;
+		value = $progress;
+		value_max = 100;
+		track_bg = REST;
+		track_fg = WSACT;
+		track_radius = 5;
+	}
 }
 
-#pill { bg = CRUST; border = BORD; border_width = 2; }
-#pill widget { fg = TEXT; }
-#pill:warn { bg = REST; }
-#pill widget:warn { fg = ORANGE; }
+#pill {
+	bg = CRUST;
+	border = BORD;
+	border_width = 2;
+}
+#pill widget {
+	fg = TEXT;
+}
+#pill:warn {
+	bg = REST;
+}
+#pill widget:warn {
+	fg = ORANGE;
+}
 
-// ============================================================================
-// Optional subsystems.
-// ============================================================================
+// ==================================
+//            Subsystems
+// ==================================
 
 lock {
-  bg         = SOLID;
-  ring       = PRIM;
-  ring_bad   = RED;
-  fg         = YELLOW;
-  dim        = PRIM;
-  caps       = RED;
-  prompt     = "Password";
-  pam        = "system-auth";
-  font_size  = 20;
+	bg         = BLACK;
+	ring       = PRIM;
+	ring_bad   = RED;
+	fg         = YELLOW;
+	dim        = PRIM;
+	caps       = RED;
+	prompt     = "Password";
+	pam        = "system-auth";
+	font_size  = 20;
 }
 
 gamma {
-  day_k     = 6500;
-  night_k   = 2800;
-  flat_k    = 2400;
-  day_hour  = 7;
-  night_hour = 20;
+	day_k     = 6500;
+	night_k   = 2800;
+	flat_k    = 2400;
+	day_hour  = 7;
+	night_hour = 20;
 }
 
 wallpaper {
-  path = "~/next/rice/themes/current/wallpaper.png";
-  transition = wipe;
-  wipe_dir   = down_right;
-  wipe_soft  = 200;
-  fade_ms    = 300;
-  bg         = SOLID;
+	path = "~/next/rice/themes/current/wallpaper.png";
+	transition = wipe;
+	wipe_dir   = down_right;
+	wipe_soft  = 200;
+	fade_ms    = 300;
+	bg         = BLACK;
 }
 
-media {}
+media {
+	// media keys
+}
+
+// ==================================
+//              Menus
+// ==================================
 
 surface menu {
-  spawned_by = menu;
-  layer = overlay;
-  exclusive_zone = -1;
-  keyboard = exclusive;
+	spawned_by = menu;
+	layer = overlay;
+	exclusive_zone = -1;
+	keyboard = exclusive;
 
-  axis        = vertical;      // top-centered launcher float, query row on top
-  width       = 320;
-  margin      = 6;
-  max_visible = 5;
-  row_h       = 34;
+	axis        = vertical;
+	width       = 320;
+	margin      = 6;
+	max_visible = 5;
+	row_h       = 34;
 
-  prompt = "run: ";
-  sort   = "most_used";
-  icons  = true;
+	prompt = "run: ";
+	sort   = "most_used";
+	icons  = true;
 
-  pad_x = 8;   // legacy MENU_PAD_X
-  pad_y = 6;   // legacy MENU_VPAD
+	pad_x = 8;
+	pad_y = 6;
 
-  // query row: dim prompt, the typed text, then a caret
-  group query {
-    height = 34; pad = 0; pad_x = 8; gap = 0;   // caret hugs the query; prompt carries its own trailing space
-    bg = #00000000; border = #00000000;
-    cell { text = menu.prompt; fg = SUBTXT; }
-    cell { text = menu.query;  fg = TEXT; }
-    cell { text = "_";         fg = TEXT; }
-  }
-  for row in rows {
-    cell {
-      height = 34;
-      icon   = row.icon;
-      text   = row.label;
-      fg     = TEXT;
-      bg     = row.selected ? REST : #00000000;
-      radius = 4;
-      pad_x  = 8;
-      elide;
-    }
-  }
+	group query {
+		height = 34;
+		pad = 0;
+		pad_x = 8;
+		gap = 0;
+		bg = #00000000;
+		border = #00000000;
+		cell {
+			text = menu.prompt;
+			fg = SUBTXT;
+		}
+		cell {
+			text = menu.query;
+			fg = TEXT;
+		}
+		cell {
+			text = "_";
+			fg = TEXT;
+		}
+	}
+	for row in rows {
+		cell {
+			height = 34;
+			icon   = row.icon;
+			text   = row.label;
+			fg     = TEXT;
+			bg     = row.selected ? REST : #00000000;
+			radius = 4;
+			pad_x  = 8;
+			elide;
+		}
+	}
 }
 
-#hud, #osd, #menu { bg = CRUST; fg = TEXT; border = BORD; border_width = 2; radius = 8; }
+#hud, #osd, #menu {
+	bg = CRUST;
+	fg = TEXT;
+	border = BORD;
+	border_width = 2;
+	radius = 8;
+}
 
 menu power {
-  item { icon = 0xf011; label = "Poweroff";  exec = "loginctl poweroff"; }
-  item { icon = 0xf021; label = "Reboot";    exec = "loginctl reboot"; }
-  item { icon = 0xf08b; label = "Logout";    exec = "pkill -x mango"; }
-  item { icon = 0xf186; label = "Sleep";     exec = "true"; }
-  item { icon = 0xf28d; label = "Hibernate"; exec = "true"; }
+	item {
+		icon = 0xf011;
+		label = "Poweroff";
+		exec = "loginctl poweroff";
+	}
+	item {
+		icon = 0xf021;
+		label = "Reboot";
+		exec = "loginctl reboot";
+	}
+	item {
+		icon = 0xf08b;
+		label = "Logout";
+		exec = "pkill -x mango";
+	}
+	item {
+		icon = 0xf186;
+		label = "Sleep";
+		exec = "true";
+	}
+	item {
+		icon = 0xf28d;
+		label = "Hibernate";
+		exec = "true";
+	}
 }
 
-menu emoji { preset = emoji; }
+menu emoji {
+	preset = emoji;
+}
 
-/* The tray right-click popup (dbusmenu). Reserved name: no items of its own —
-   tray.c fills the rows and borrows this decl's look + geometry. A dropdown,
-   not a launcher: no query group, so nothing looks searchable (typing still
-   filters, it just isn't drawn), max_visible >= any real tray menu so it never
-   scrolls, and `elide` cuts a long label at the width. anchor_gap matches the
-   bar's own 6px screen inset, so the popup sits off the module the same way
-   the bar sits off the screen edge. */
 menu tray {
-  width       = 200;
-  row_h       = 24;
-  max_visible = 24;
-  anchor_gap  = 6;
-  hover;   // pointer moves the selection (one indicator, mouse or keyboard)
-  font_size   = 12;
+	width       = 200;
+	row_h       = 24;
+	max_visible = 24;
+	anchor_gap  = 6;
+	hover;
+	font_size   = 12;
 
-  bg = CRUST; border = BORD; border_width = 2; radius = 8;
-  pad_x = 6; pad_y = 6;
+	bg = CRUST;
+	border = BORD;
+	border_width = 2;
+	radius = 8;
+	pad_x = 6;
+	pad_y = 6;
 
-  for row in rows {
-    cell {
-      height = 24;
-      text   = row.label;
-      fg     = TEXT;
-      bg     = row.selected ? BORD : #00000000;
-      radius = 4;
-      pad_x  = 8;
-      elide;
-    }
-  }
+	for row in rows {
+		cell {
+			height = 24;
+			text   = row.label;
+			fg     = TEXT;
+			bg     = row.selected ? BORD : #00000000;
+			radius = 4;
+			pad_x  = 8;
+			elide;
+		}
+	}
 }

@@ -19,6 +19,8 @@ void   arena_free(Arena *a);
 typedef struct { const char *file; int line, col; } Loc;
 void diag_error(Loc l, const char *fmt, ...) __attribute__((format(printf,2,3)));
 void diag_note (Loc l, const char *fmt, ...) __attribute__((format(printf,2,3)));
+void diag_hint (Loc l, const char *fmt, ...) __attribute__((format(printf,2,3)));
+void diag_add_source(const char *file, const char *buf);
 int  diag_count(void);
 
 /* ---------- tokens ---------- */
@@ -307,5 +309,6 @@ SemaResult *sema_check(Arena *a, Unit *u);
  *             `for tag in tags.list { cell { … } }`, visible=expr guard,
  *             on_click(param)=exec("…{param}…") handlers. */
 int codegen_emit(const char *dir, Unit *u, SemaResult *r);
+extern int cg_line_map;   /* --no-line-map clears; see codegen_util.c */
 
 #endif

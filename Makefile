@@ -33,6 +33,12 @@ WISPC_CC := $(CC) -O2 -Wall -Wextra -Werror -Wno-unused-parameter -Wno-format-tr
 # it. Each config gets its OWN build dir (build/<name>/) so switching configs is
 # a relink-nothing cache hit; the current selection lives in build/.selected and
 # `wispctl rebuild` passes an explicit WISP= from the user's config dir.
+# #line source mapping in generated C is ON by default (errors point at the
+# .wisp). `make LINE_MAP=0` emits raw generated lines for debugging codegen.
+ifeq ($(LINE_MAP),0)
+WISPC_EMIT_FLAGS := --no-line-map
+endif
+
 SELECTED_FILE := $(BUILD)/.selected
 
 # Selection is STICKY across separate make invocations: with no explicit WISP=
@@ -163,7 +169,7 @@ WISPC_NEED  := $(shell mkdir -p $(GENDIR) $(BUILD); \
         $(wildcard $(TOOLDIR)/wispc/*.c) -o $(WISPC_BOOT) 1>&2 || { echo FAIL; exit 0; }; \
   fi; \
   if [ ! -f $(WISPC_STAMP) ] || [ $(WISP) -nt $(WISPC_STAMP) ] || [ $(WISPC_BOOT) -nt $(WISPC_STAMP) ]; then \
-    $(WISPC_BOOT) --emit $(GENDIR) $(WISP) 1>&2 && touch $(WISPC_STAMP) || { echo FAIL; exit 0; }; \
+    $(WISPC_BOOT) --emit $(GENDIR) $(WISPC_EMIT_FLAGS) $(WISP) 1>&2 && touch $(WISPC_STAMP) || { echo FAIL; exit 0; }; \
   fi; \
   echo OK)
 ifneq ($(WISPC_NEED),OK)
@@ -189,7 +195,7 @@ HDR := $(SRCDIR)/wisp.h $(SRCDIR)/proto.h $(SRCDIR)/config.h \
        $(GENDIR)/features.h $(GENDIR)/gen_overrides.h $(GENDIR)/gen_menus.h
 
 WISPC_SRC := $(TOOLDIR)/wispc/arena.c $(TOOLDIR)/wispc/diag.c $(TOOLDIR)/wispc/lex.c \
-            $(TOOLDIR)/wispc/parse.c $(TOOLDIR)/wispc/style.c $(TOOLDIR)/wispc/sema.c $(TOOLDIR)/wispc/dump.c \
+            $(TOOLDIR)/wispc/parse.c $(TOOLDIR)/wispc/style.c $(TOOLDIR)/wispc/sema.c $(TOOLDIR)/wispc/sema_types.c $(TOOLDIR)/wispc/dump.c \
             $(TOOLDIR)/wispc/codegen.c $(TOOLDIR)/wispc/codegen_util.c \
             $(TOOLDIR)/wispc/codegen_sources.c $(TOOLDIR)/wispc/codegen_expr.c \
             $(TOOLDIR)/wispc/codegen_items.c $(TOOLDIR)/wispc/codegen_surface.c \
@@ -413,7 +419,27 @@ check:
 	else \
 	    echo "==> nm assertions skipped (configs/minimal.wisp absent)"; \
 	fi; \
+	if $(MAKE) -s check-diag; then :; else fail=1; fi; \
 	if [ $$fail -ne 0 ]; then echo "check: FAIL"; exit 1; fi; \
 	echo "check: PASS"
 
-.PHONY: all tools install install-tools install-share uninstall clean distclean check
+# Diagnostic golden corpus: one deliberate mistake per tests/diag/*.wisp, each
+# with a committed *.expected stderr. Normalise the path prefix so goldens are
+# location-independent. Regenerate a golden after an intended message change with:
+#   ./wispc --check tests/diag/NAME.wisp 2>&1 | sed 's|.*tests/diag/|tests/diag/|' > tests/diag/NAME.expected
+check-diag: $(WISPC_BOOT)
+	@echo "==> Diagnostic goldens"; fail=0; tmp=$$(mktemp); \
+	for w in tests/diag/*.wisp; do \
+	    $(WISPC_BOOT) --check "$$w" 2>&1 | sed 's|.*tests/diag/|tests/diag/|' > $$tmp; \
+	    if diff -q "$${w%.wisp}.expected" $$tmp >/dev/null; then \
+	        printf "  %-34s OK\n" "$$(basename $$w)"; \
+	    else \
+	        printf "  %-34s FAIL\n" "$$(basename $$w)"; \
+	        diff "$${w%.wisp}.expected" $$tmp || true; fail=1; \
+	    fi; \
+	done; \
+	rm -f $$tmp; \
+	if [ $$fail -ne 0 ]; then echo "check-diag: FAIL"; exit 1; fi; \
+	echo "check-diag: PASS"
+
+.PHONY: all tools install install-tools install-share uninstall clean distclean check check-diag

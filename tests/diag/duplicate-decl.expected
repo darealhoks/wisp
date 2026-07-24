@@ -1,0 +1,3 @@
+tests/diag/duplicate-decl.wisp:2:1: error: duplicate source 'c'
+  source c = mem();
+  ^

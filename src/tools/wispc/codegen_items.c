@@ -548,6 +548,7 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
             fprintf(o, "%schar __vb[48]; snprintf(__vb, sizeof __vb, %s, (double)(mut_%s) * %.6f);\n",
                     indent, fmt, vmut, scale);
             fprintf(o, "%sint __vw = text_width(f, __vb); int __vx, __vy;\n", indent);
+            fprintf(o, "%s(void)__vw;   /* some align branches place by edge, not width */\n", indent);
             if (sl_vert) {
                 fprintf(o, "%s__vx = rx + (rw - __vw) / 2;\n", indent);
                 if (valign == 0)      fprintf(o, "%s__vy = ry - %d - f->line_h;\n", indent, vgap);

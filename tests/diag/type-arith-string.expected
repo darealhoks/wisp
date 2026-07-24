@@ -1,0 +1,4 @@
+tests/diag/type-arith-string.wisp:1:21: error: cannot add 'string' and 'int'
+  const label = "cpu" + 3;
+                      ^
+  help: build strings with interpolation: "{a}{b}"

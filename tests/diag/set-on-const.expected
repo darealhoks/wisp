@@ -1,0 +1,4 @@
+tests/diag/set-on-const.wisp:4:18: error: 'power' is const, not mut
+      on_click() = set(power, 1);
+                   ^
+  help: declare it `mut power = ...` to allow set()

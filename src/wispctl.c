@@ -4,6 +4,7 @@
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
+#include <time.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -128,9 +129,28 @@ static int cmd_rebuild(const char *name) {
         }
     }
 
+    /* Friendly TTY build: capture make's output and show a spinner instead of
+     * a silent stall; on failure replay the captured log so compiler errors
+     * are intact. Non-tty (scripts, sync.sh) keeps the raw passthrough. */
+    char cfgname[NAME_MAX] = "config";
+    if (wisp[0]) {
+        char *b = strrchr(wisp, '/');
+        snprintf(cfgname, sizeof cfgname, "%s", b ? b + 1 : wisp);
+        char *dot = strrchr(cfgname, '.');
+        if (dot) *dot = 0;
+    }
+    int tty = isatty(2);
+    int logfd = -1;
+    if (tty) {
+        char tmpl[] = "/tmp/wispctl-build-XXXXXX";
+        logfd = mkstemp(tmpl);
+        if (logfd >= 0) unlink(tmpl); else tty = 0;
+    }
+
     pid_t pid = fork();
     if (pid < 0) { perror("fork"); return 1; }
     if (pid == 0) {
+        if (tty) { dup2(logfd, 1); dup2(logfd, 2); }
         char wisparg[PATH_MAX + 8];
         const char *mkargv[8] = { "make", "-s", "-C", src, "install",
                                   "WISP_NOWARM=1" };
@@ -144,12 +164,51 @@ static int cmd_rebuild(const char *name) {
         perror("wispctl: exec make");
         _exit(127);
     }
-    int st;
-    while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {}
+    static const char *frames[] = { "⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏" };
+    int st, fi = 0;
+    for (;;) {
+        pid_t r = waitpid(pid, &st, tty ? WNOHANG : 0);
+        if (r < 0) { if (errno == EINTR) continue; perror("waitpid"); return 1; }
+        if (r == pid) break;
+        fprintf(stderr, "\r\033[32m%s\033[0m compiling %s ", frames[fi++ % 10], cfgname);
+        nanosleep(&(struct timespec){ 0, 100 * 1000 * 1000 }, NULL);
+    }
+    if (tty) fputs("\r\033[K", stderr);
     if (!WIFEXITED(st) || WEXITSTATUS(st) != 0) {
-        fprintf(stderr, "wispctl: build failed\n");
+        if (tty) {
+            /* Replay the log with the severity word tinted, so wispc/gcc
+             * errors read as styled as the success path. Plain text otherwise. */
+            lseek(logfd, 0, SEEK_SET);
+            FILE *lf = fdopen(logfd, "r");
+            char line[4096];
+            while (lf && fgets(line, sizeof line, lf)) {
+                char *p;
+                if ((p = strstr(line, "error:"))) {
+                    fprintf(stderr, "%.*s\033[1;31merror:\033[0m%s",
+                            (int)(p - line), line, p + 6);
+                } else if ((p = strstr(line, "warning:"))) {
+                    fprintf(stderr, "%.*s\033[1;33mwarning:\033[0m%s",
+                            (int)(p - line), line, p + 8);
+                } else if (!strncmp(line, "  help: ", 8)) {
+                    line[strcspn(line, "\n")] = 0;
+                    fprintf(stderr, "  \033[32m%s\033[0m\n", line + 2);
+                } else if ((p = strstr(line, "note:"))) {
+                    fprintf(stderr, "%.*s\033[36mnote:\033[0m%s",
+                            (int)(p - line), line, p + 5);
+                } else {
+                    fputs(line, stderr);
+                }
+            }
+            if (lf) fclose(lf); else close(logfd);
+            fprintf(stderr, "\033[1;31m✗\033[0m build failed\n");
+        } else {
+            fprintf(stderr, "wispctl: build failed\n");
+            if (logfd >= 0) close(logfd);
+        }
         return 1;
     }
+    if (logfd >= 0) close(logfd);
+    if (tty) fprintf(stderr, "\033[32m✓\033[0m compiled %s\n", cfgname);
 
     int s = connect_daemon();
     if (s < 0) {
@@ -181,7 +240,13 @@ static int cmd_rebuild(const char *name) {
     char rep[64];
     ssize_t k = recv(s, rep, sizeof rep - 1, 0);
     close(s);
-    if (k > 0) { rep[k] = 0; fputs(rep, stdout); }
+    if (k > 0) {
+        rep[k] = 0;
+        if (tty && !strncmp(rep, "ok", 2))
+            fprintf(stderr, "\033[32m✓\033[0m reloaded\n");
+        else
+            fputs(rep, stdout);
+    }
 
     /* Warm the other configs' caches AFTER the reload, detached: the switch
      * shouldn't wait on rebuilding configs it isn't switching to. Double-fork

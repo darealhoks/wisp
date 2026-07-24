@@ -1,0 +1,3 @@
+tests/diag/for-non-iterable.wisp:3:12: error: for-iter must be `rows`, <tags-src>.list, <dbus_signal-src>.history or <tray-src>.items
+    for x in c {
+             ^

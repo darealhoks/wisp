@@ -1,0 +1,4 @@
+tests/diag/unknown-prop.wisp:3:5: error: unknown widget property 'wdith'
+      wdith = 100;
+      ^
+  help: did you mean 'width'?

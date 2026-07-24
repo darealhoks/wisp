@@ -1,0 +1,3 @@
+tests/diag/syntax-eq-vs-assign.wisp:3:10: error: use '=' to set a property ('==' is the comparison operator)
+      text == "hi";
+           ^

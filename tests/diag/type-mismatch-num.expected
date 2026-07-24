@@ -1,0 +1,3 @@
+tests/diag/type-mismatch-num.wisp:3:13: error: widget property 'width' expects a number, got 'string'
+      width = "wide";
+              ^

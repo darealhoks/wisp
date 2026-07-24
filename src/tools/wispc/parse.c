@@ -20,6 +20,58 @@ static void expect(P *p, TokKind k, const char *what) {
     }
 }
 
+/* Close a `{`-block. On EOF, point the caret at the *opener* — a beginner who
+ * dropped a `}` needs to see which block never closed, not the end of file. */
+static void expect_rbrace(P *p, Loc open) {
+    if (eat(p, TK_RBRACE)) return;
+    if (at(p, TK_EOF))
+        diag_error(open, "unclosed '{' — reached end of file with no matching '}'");
+    else
+        diag_error(cur(p).loc, "expected '}' to close this block");
+}
+
+/* Levenshtein for did-you-mean on mistyped declaration keywords. */
+static int lev(const char *a, size_t an, const char *b, size_t bn) {
+    if (an > 24 || bn > 24) return 99;
+    int prev[25], cur[25];
+    for (size_t j = 0; j <= bn; j++) prev[j] = (int)j;
+    for (size_t i = 1; i <= an; i++) {
+        cur[0] = (int)i;
+        for (size_t j = 1; j <= bn; j++) {
+            int c = a[i-1] == b[j-1] ? 0 : 1, m = prev[j] + 1;
+            if (cur[j-1] + 1 < m) m = cur[j-1] + 1;
+            if (prev[j-1] + c < m) m = prev[j-1] + c;
+            cur[j] = m;
+        }
+        for (size_t j = 0; j <= bn; j++) prev[j] = cur[j];
+    }
+    return prev[bn];
+}
+
+/* Nearest declaration keyword within one edit — tight so a valid selector id
+ * that merely resembles a keyword never triggers a false rewrite. */
+static const char *kw_suggest(const char *s, size_t n) {
+    static const char *K[] = { "source","surface","compound","widget","group",
+        "cell","region","const","mut","lock","gamma","wallpaper","media","menu", NULL };
+    for (int i = 0; K[i]; i++)
+        if (lev(s, n, K[i], strlen(K[i])) <= 1) return K[i];
+    return NULL;
+}
+
+/* Skip to the end of a malformed top-level declaration (its closing '}' or ';')
+ * so one typo yields one error, not a cascade. */
+static void skip_decl(P *p) {
+    int depth = 0;
+    for (;;) {
+        Tok t = cur(p);
+        if (t.kind == TK_EOF) return;
+        if (t.kind == TK_LBRACE) { depth++; lex_next(&p->L); }
+        else if (t.kind == TK_RBRACE) { lex_next(&p->L); if (depth <= 1) return; depth--; }
+        else if (t.kind == TK_SEMI && depth == 0) { lex_next(&p->L); return; }
+        else lex_next(&p->L);
+    }
+}
+
 #define NEW(p, T) ((T*)arena_alloc((p)->a, sizeof(T)))
 #define NEW_ARR(p, T, n) ((T*)arena_alloc((p)->a, sizeof(T)*(size_t)(n)))
 
@@ -212,7 +264,7 @@ static Expr *parse_primary(P *p) {
         return e;
     }
     default:
-        diag_error(t.loc, "unexpected token in expression");
+        diag_error(t.loc, "expected a value here (number, string, color, name, or '(' expr ')')");
         lex_next(&p->L);
         e = NEW(p, Expr); e->kind = EX_INT; e->loc = t.loc; e->i = 0; return e;
     }
@@ -346,13 +398,14 @@ static Stmt *parse_stmt(P *p) {
     Tok t = cur(p);
     Stmt *s = NEW(p, Stmt); s->loc = t.loc;
     if (t.kind == TK_LBRACE) {
+        Loc open = cur(p).loc;
         lex_next(&p->L);
         VList list = {0};
         while (!at(p, TK_RBRACE) && !at(p, TK_EOF)) {
             vl_push(&list, parse_stmt(p));
             eat(p, TK_SEMI);
         }
-        expect(p, TK_RBRACE, "'}'");
+        expect_rbrace(p, open);
         s->kind = ST_BLOCK;
         int n; s->block.list = (Stmt**)vl_freeze(p, &list, &n); s->block.n = n;
         return s;
@@ -422,7 +475,7 @@ static Stmt *parse_stmt(P *p) {
         s->emit.n = nn;
         return s;
     }
-    diag_error(t.loc, "expected statement (exec/emit/set/block)");
+    diag_error(t.loc, "expected a handler statement: exec(...), emit(...), set(...), animate(...), or a { } block");
     lex_next(&p->L);
     s->kind = ST_EXEC; s->exec.arg = NULL;
     return s;
@@ -448,7 +501,12 @@ static Prop *parse_prop(P *p) {
         lex_next(&p->L);
         return pr;
     }
-    expect(p, TK_ASSIGN, "'='");
+    if (at(p, TK_EQ)) {   /* `x == v;` — comparison written where assignment goes */
+        diag_error(cur(p).loc, "use '=' to set a property ('==' is the comparison operator)");
+        lex_next(&p->L);
+    } else {
+        expect(p, TK_ASSIGN, "'='");
+    }
     pr->val = parse_expr(p);
     expect(p, TK_SEMI, "';'");
     return pr;
@@ -490,6 +548,7 @@ static Widget *parse_widget_or_cell(P *p, bool is_cell) {
         else { lex_next(&p->L); w->name = arena_strn(p->a, n.s, n.len); w->nlen = n.len; end = n.s + n.len; }
     }
     parse_classes(p, end, &w->classes, &w->nclasses);
+    Loc wopen = cur(p).loc;
     expect(p, TK_LBRACE, "'{'");
     VList items = {0};
     while (!at(p, TK_RBRACE) && !at(p, TK_EOF)) {
@@ -534,13 +593,13 @@ static Widget *parse_widget_or_cell(P *p, bool is_cell) {
             b->kind = WB_PROP;
             b->prop = parse_prop(p);
         } else {
-            diag_error(t.loc, "unexpected token in widget body");
+            diag_error(t.loc, "expected a widget property, an event handler (on_click(...) etc.), or `for`");
             lex_next(&p->L);
             continue;
         }
         vl_push(&items, b);
     }
-    expect(p, TK_RBRACE, "'}'");
+    expect_rbrace(p, wopen);
     int n;
     WBody **arr = (WBody**)vl_freeze(p, &items, &n);
     w->items = NEW_ARR(p, WBody, n);
@@ -558,6 +617,7 @@ static ForBlock *parse_for(P *p) {
     else { lex_next(&p->L); f->var = arena_strn(p->a, v.s, v.len); f->vlen = v.len; }
     if (!eat(p, TK_KW_IN)) diag_error(cur(p).loc, "expected 'in'");
     f->iter = parse_expr(p);
+    Loc fopen = cur(p).loc;
     expect(p, TK_LBRACE, "'{'");
     VList cells = {0};
     while (!at(p, TK_RBRACE) && !at(p, TK_EOF)) {
@@ -567,7 +627,7 @@ static ForBlock *parse_for(P *p) {
         }
         vl_push(&cells, parse_widget_or_cell(p, true));
     }
-    expect(p, TK_RBRACE, "'}'");
+    expect_rbrace(p, fopen);
     int n;
     Widget **arr = (Widget**)vl_freeze(p, &cells, &n);
     f->cells = NEW_ARR(p, Widget*, n);
@@ -613,6 +673,7 @@ static Region *parse_region(P *p) {
     Tok n = cur(p);
     if (n.kind != TK_IDENT) diag_error(n.loc, "expected region name");
     else { lex_next(&p->L); r->name = arena_strn(p->a, n.s, n.len); r->nlen = n.len; }
+    Loc ropen = cur(p).loc;
     expect(p, TK_LBRACE, "'{'");
     VList items = {0};
     while (!at(p, TK_RBRACE) && !at(p, TK_EOF)) {
@@ -625,12 +686,12 @@ static Region *parse_region(P *p) {
         } else if (t.kind == TK_IDENT) {
             b->kind = SB_PROP; b->prop = parse_prop(p);
         } else {
-            diag_error(t.loc, "unexpected token in region body");
+            diag_error(t.loc, "expected a property, `widget`, or `for` in region body");
             lex_next(&p->L); continue;
         }
         vl_push(&items, b);
     }
-    expect(p, TK_RBRACE, "'}'");
+    expect_rbrace(p, ropen);
     int nn;
     SBody **arr = (SBody**)vl_freeze(p, &items, &nn);
     r->items = NEW_ARR(p, SBody, nn);
@@ -648,6 +709,7 @@ static Group *parse_group(P *p) {
     if (n.kind != TK_IDENT) diag_error(n.loc, "expected group name");
     else { lex_next(&p->L); g->name = arena_strn(p->a, n.s, n.len); g->nlen = n.len; }
     parse_classes(p, n.s + n.len, &g->classes, &g->nclasses);
+    Loc gopen = cur(p).loc;
     expect(p, TK_LBRACE, "'{'");
     VList props = {0}, members = {0}, fors = {0};
     while (!at(p, TK_RBRACE) && !at(p, TK_EOF)) {
@@ -664,11 +726,11 @@ static Group *parse_group(P *p) {
         } else if (t.kind == TK_IDENT) {
             vl_push(&props, parse_prop(p));
         } else {
-            diag_error(t.loc, "expected group property, widget or cell");
+            diag_error(t.loc, "expected a group property, `widget`, `cell`, or `for`");
             lex_next(&p->L); continue;
         }
     }
-    expect(p, TK_RBRACE, "'}'");
+    expect_rbrace(p, gopen);
     int np; Prop **pa = (Prop**)vl_freeze(p, &props, &np);
     g->props = NEW_ARR(p, Prop*, np);
     for (int i = 0; i < np; i++) g->props[i] = pa[i];
@@ -723,6 +785,7 @@ static Decl *parse_surface_or_compound(P *p, DKind dk, bool menu_decl) {
     Tok n = cur(p);
     if (n.kind != TK_IDENT) diag_error(n.loc, "expected surface name");
     else { lex_next(&p->L); d->name = arena_strn(p->a, n.s, n.len); d->nlen = n.len; }
+    Loc sopen = cur(p).loc;
     expect(p, TK_LBRACE, "'{'");
     VList items = {0}, rows = {0};
     while (!at(p, TK_RBRACE) && !at(p, TK_EOF)) {
@@ -762,12 +825,12 @@ static Decl *parse_surface_or_compound(P *p, DKind dk, bool menu_decl) {
             b->kind = SB_PROP;
             b->prop = parse_prop(p);
         } else {
-            diag_error(t.loc, "unexpected token in surface body");
+            diag_error(t.loc, "expected a property, `widget`, `group`, `for`, or `region` in surface body");
             lex_next(&p->L); continue;
         }
         vl_push(&items, b);
     }
-    expect(p, TK_RBRACE, "'}'");
+    expect_rbrace(p, sopen);
     int nn;
     SBody **arr = (SBody**)vl_freeze(p, &items, &nn);
     d->surface.items = NEW_ARR(p, SBody, nn);
@@ -786,13 +849,14 @@ static Decl *parse_block_decl(P *p, DKind dk, const char *name) {
     Decl *d = NEW(p, Decl);
     d->kind = dk; d->loc = kw.loc;
     d->name = NULL; d->nlen = 0;
+    Loc bopen = cur(p).loc;
     expect(p, TK_LBRACE, "'{'");
     VList props = {0};
     while (!at(p, TK_RBRACE) && !at(p, TK_EOF)) {
-        if (!at(p, TK_IDENT)) { diag_error(cur(p).loc, "expected property"); lex_next(&p->L); continue; }
+        if (!at(p, TK_IDENT)) { diag_error(cur(p).loc, "expected a property name"); lex_next(&p->L); continue; }
         vl_push(&props, parse_prop(p));
     }
-    expect(p, TK_RBRACE, "'}'");
+    expect_rbrace(p, bopen);
     int n;
     Prop **arr = (Prop**)vl_freeze(p, &props, &n);
     d->block.props = NEW_ARR(p, Prop*, n);
@@ -877,13 +941,14 @@ static Decl *parse_style_rule(P *p) {
     r->sels = NEW_ARR(p, Sel*, ns);
     for (int i = 0; i < ns; i++) r->sels[i] = sa[i];
     r->nsels = ns;
+    Loc styopen = cur(p).loc;
     expect(p, TK_LBRACE, "'{' in style rule");
     VList props = {0};
     while (!at(p, TK_RBRACE) && !at(p, TK_EOF)) {
-        if (!at(p, TK_IDENT)) { diag_error(cur(p).loc, "expected property in style rule"); lex_next(&p->L); continue; }
+        if (!at(p, TK_IDENT)) { diag_error(cur(p).loc, "expected a property in style rule"); lex_next(&p->L); continue; }
         vl_push(&props, parse_prop(p));
     }
-    expect(p, TK_RBRACE, "'}'");
+    expect_rbrace(p, styopen);
     int np; Prop **pa = (Prop**)vl_freeze(p, &props, &np);
     r->props = NEW_ARR(p, Prop*, np);
     for (int i = 0; i < np; i++) r->props[i] = pa[i];
@@ -911,6 +976,23 @@ Unit *parse_file(Arena *a, const char *file, const char *src) {
             break;
         case TK_KW_WIDGET: case TK_KW_GROUP: case TK_KW_CELL: case TK_KW_REGION:
         case TK_IDENT: case TK_HASH: case TK_DOT:
+            if (t.kind == TK_IDENT && !(t.len == 4 && memcmp(t.s, "menu", 4) == 0)) {
+                Tok pk = lex_peek(&p.L);
+                /* `foo = ...;` at top level — a property with no block around it. */
+                if (pk.kind == TK_ASSIGN) {
+                    diag_error(t.loc, "property '%.*s' is not inside any block", (int)t.len, t.s);
+                    diag_hint(t.loc, "properties live inside a surface/widget/group/... block, not at top level");
+                    skip_decl(&p); continue;
+                }
+                /* `srface bar { ... }` — a mistyped declaration keyword. A real
+                 * two-part style selector never leads with a near-keyword id. */
+                const char *sug;
+                if (pk.kind == TK_IDENT && (sug = kw_suggest(t.s, t.len))) {
+                    diag_error(t.loc, "unknown declaration keyword '%.*s'", (int)t.len, t.s);
+                    diag_hint(t.loc, "did you mean '%s'?", sug);
+                    skip_decl(&p); continue;
+                }
+            }
             d = (t.kind == TK_IDENT && t.len == 4 && memcmp(t.s, "menu", 4) == 0 &&
                  lex_peek(&p.L).kind == TK_IDENT)
                 ? parse_surface_or_compound(&p, D_SURFACE, true) : parse_style_rule(&p);
@@ -923,7 +1005,9 @@ Unit *parse_file(Arena *a, const char *file, const char *src) {
         case TK_KW_WALLPAPER: d = parse_block_decl(&p, D_WALLPAPER, "wallpaper"); break;
         case TK_KW_MEDIA:     d = parse_block_decl(&p, D_MEDIA,     "media"); break;
         default:
-            diag_error(t.loc, "expected top-level declaration");
+            diag_error(t.loc, "expected a top-level declaration "
+                       "(source, const, mut, surface, compound, group, widget, "
+                       "lock, gamma, wallpaper, media) or a style rule");
             lex_next(&p.L);
             continue;
         }

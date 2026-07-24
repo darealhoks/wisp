@@ -1,0 +1,4 @@
+tests/diag/bad-source-field-clock.wisp:4:12: error: source 't' has no field 'value'
+      text = t.value;
+             ^
+  help: clock has no fields — use it bare: "{t}"

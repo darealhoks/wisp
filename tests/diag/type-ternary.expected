@@ -1,0 +1,3 @@
+tests/diag/type-ternary.wisp:1:11: error: ternary arms have mismatched types 'int' and 'string'
+  const v = true ? 1 : "no";
+            ^

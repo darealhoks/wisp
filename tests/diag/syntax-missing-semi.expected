@@ -1,0 +1,3 @@
+tests/diag/syntax-missing-semi.wisp:4:3: error: expected ';'
+    }
+    ^

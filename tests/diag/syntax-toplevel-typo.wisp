@@ -1,0 +1,3 @@
+srface bar {
+  anchor = top;
+}

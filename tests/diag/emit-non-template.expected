@@ -1,0 +1,4 @@
+tests/diag/emit-non-template.wisp:6:18: error: emit target 'popup' is not a spawned_by template
+      on_click() = emit(popup);
+                   ^
+  help: only osd/menu templates (surfaces with `spawned_by = ...`) can be emit()ed

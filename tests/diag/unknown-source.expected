@@ -1,0 +1,4 @@
+tests/diag/unknown-source.wisp:1:12: error: unknown built-in source 'clok'
+  source c = clok();
+             ^
+  help: did you mean 'clock'?

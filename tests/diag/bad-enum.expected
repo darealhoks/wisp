@@ -1,0 +1,4 @@
+tests/diag/bad-enum.wisp:3:13: error: 'exclusive' is not a valid align value
+      align = exclusive;
+              ^
+  help: align accepts: left right top bottom center start end

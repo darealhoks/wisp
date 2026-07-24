@@ -13,6 +13,13 @@ typedef struct CGCtx CGCtx;
 
 typedef enum { ALIGN_START = 0, ALIGN_END = 1, ALIGN_CENTER = 2 } Align;
 
+/* #line source mapping (Phase 4). cg_open wraps a gen file so cg_line/
+ * cg_line_reset can rebase emitted lines onto the .wisp and back. */
+extern int  cg_line_map;
+FILE       *cg_open(const char *path);
+void        cg_line(FILE *o, Loc loc);
+void        cg_line_reset(FILE *o);
+
 const char *sname(const char *s, size_t n);
 char       *strndup0(const char *s, size_t n);
 int         eval_anchor(Expr *e);

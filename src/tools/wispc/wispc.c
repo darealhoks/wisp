@@ -212,7 +212,7 @@ static void print_font_sizes(Unit *u) {
 }
 
 static int usage(void) {
-    fputs("usage: wispc [--dump-ast | --check | --features | --deps | --font-sizes | --emit DIR | --watch [--reload]] FILE\n", stderr);
+    fputs("usage: wispc [--dump-ast | --check | --features | --deps | --font-sizes | --emit DIR [--no-line-map] | --watch [--reload]] FILE\n", stderr);
     return 2;
 }
 
@@ -268,6 +268,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--deps"))       mode = MODE_DEPS;
         else if (!strcmp(argv[i], "--font-sizes")) mode = MODE_FONTS;
         else if (!strcmp(argv[i], "--emit"))       { mode = MODE_EMIT; if (++i >= argc) return usage(); emit_path = argv[i]; }
+        else if (!strcmp(argv[i], "--no-line-map")) cg_line_map = 0;
         else if (!strcmp(argv[i], "--watch"))      mode = MODE_WATCH;
         else if (!strcmp(argv[i], "--reload"))     watch_reload = 1;
         else if (argv[i][0] == '-') return usage();
@@ -277,6 +278,7 @@ int main(int argc, char **argv) {
     if (mode == MODE_WATCH) return watch_loop(path, watch_reload);
     char *src = slurp(path);
     if (!src) return 1;
+    diag_add_source(path, src);   /* lets diagnostics print offending lines */
 
     Arena *a = arena_new();
     Unit *u = parse_file(a, path, src);
