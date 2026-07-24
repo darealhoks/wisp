@@ -2,8 +2,8 @@
 
 **W**idget **I**nterface, **S**ingle **P**rocess — one Wayland daemon that draws
 a whole desktop shell. All it needs is `wlr-layer-shell-unstable-v1`, plus
-`ext-workspace-v1` if you want workspace tags (sway, niri, hyprland, labwc,
-cosmic, kwin, patched dwl). Developed on [mangoWM](https://github.com/DreamMaoMao/mango),
+`ext-workspace-v1` if you want workspace tags (sway, niri, labwc, cosmic,
+kwin, patched dwl — see the support table below). Developed on [mangoWM](https://github.com/DreamMaoMao/mango),
 which is served by a small IPC fallback instead.
 
 Bar, hover panels, notification slabs, app menu, session lock, night-mode gamma
@@ -50,6 +50,36 @@ Then drive it: `wispctl apps`, `wispctl volume up`, `wispctl notify 1 hi`.
 
 `configs/bee.wisp` is the config this desktop actually runs, and the best
 reference once the docs run out.
+
+## Compositor support
+
+wisp needs `wlr-layer-shell` to run; each other feature lights up only if the
+compositor speaks its protocol, else stays dark while the rest works.
+Workspaces read from `ext-workspace-v1` or mango's IPC only, so compositors with
+just their own tag IPC (hyprland, wayfire, river) show no tags.
+
+| Compositor | Bar (layer-shell) | Workspaces | Gamma | Toplevels | Lock | Fractional scale |
+|---|---|---|---|---|---|---|
+| **mango** (home) | ✓ | ✓ IPC + ext-ws | ✓ | ✓ | ✓ | ✓ |
+| **sway** ≥1.12 | ✓ | ✓ ext-ws | ✓ | ✓ | ✓ | ✓ |
+| **niri** ≥25.08 | ✓ | ✓ ext-ws | ✓ | ✓ | ✓ | ✓ |
+| **labwc** ≥0.8.3 | ✓ | ✓ ext-ws | ⚠ flaky¹ | ✓ | ✓ | ✓ |
+| **hyprland** | ✓ | ✗ own IPC only² | ✓ | ✓ | ✓ | ✓ |
+| **wayfire** | ✓ | ✗ own IPC only² | ✓ | ✓ | ✓ | ✓ |
+| **river** | ✓ | ✗ own tags only² | ✓ | ✓ | ✓ | ✓ |
+| **dwl** | ✓ | ✗ patch³ | ✓ | ✗ patch³ | ✓ | ✓ |
+| **COSMIC** | ✓ | ✓ ext-ws | ✗⁴ | ? | ✓ | ✓ |
+| **KWin** (Plasma ≥6.6) | ✓ | ✓ ext-ws | ✗⁵ | ✗⁵ | ✓ | ✓ |
+| **GNOME** (Mutter) | ✗ — unsupported⁶ | — | — | — | — | — |
+
+¹ works but flaky on multi-output; test on your hardware.
+² tags exist but only over its own IPC, which wisp doesn't speak.
+³ apply `ext-workspace` / `foreign-toplevel` from [dwl-patches](https://codeberg.org/dwl/dwl-patches).
+⁴ open feature request, unimplemented.
+⁵ KWin declines these for its own KDE protocols.
+⁶ Mutter refuses `wlr-layer-shell` by policy.
+
+Checked against newest releases, July 2026; support moves, so check your version.
 
 ---
 
