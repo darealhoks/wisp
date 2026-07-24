@@ -154,6 +154,17 @@
 #define EXTWS_STATE_URGENT 2
 #define EXTWS_STATE_HIDDEN 4
 
+/* river-status-unstable-v1 / river-control-unstable-v1 (river.c). We request one
+ * zriver_output_status_v1 per output (client-allocated id) and switch tags via
+ * zriver_control_v1. Both interfaces open with a `destroy` destructor at opcode
+ * 0, so the getters/commands start at 1. */
+#define RIVER_STATUS_MGR_REQ_GET_OUTPUT  1   /* get_river_output_status(new_id, wl_output) */
+#define RIVER_OUTPUT_EV_FOCUSED_TAGS     0
+#define RIVER_OUTPUT_EV_VIEW_TAGS        1   /* array: one tag mask per view */
+#define RIVER_OUTPUT_EV_URGENT_TAGS      2   /* since status-manager v2 */
+#define RIVER_CONTROL_REQ_ADD_ARGUMENT   1
+#define RIVER_CONTROL_REQ_RUN_COMMAND    2
+
 /* zwlr_foreign_toplevel_management_unstable_v1 (v3) — wl_toplevel.c. Handle
  * objects arrive with server-allocated ids (>= 0xff000000), same as ext-ws. */
 #define TL_MGR_REQ_STOP       0

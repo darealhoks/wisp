@@ -197,12 +197,15 @@ static void extws_view(Output *o, int idx) {
 void tags_init(void) {
     mango_init();
     tags_fd = mango_fd;
-    if (mango_fd >= 0) { id_extws_mgr = 0; return; }
+    if (mango_fd >= 0) { id_extws_mgr = 0; id_river_status_mgr = 0; return; }
+    /* river before ext-workspace: its view_tags gives true occupancy (which tags
+     * hold views), which ext-workspace can't report. */
+    if (id_river_status_mgr) { id_extws_mgr = 0; river_init(); return; }
     if (id_extws_mgr) {
         for (int i = 0; i < MAX_WS; i++) wss[i].coord = -1;
         return;   /* handles stream in on their own; no fd to poll */
     }
-    msg("wisp: no workspace backend (no ext_workspace_v1, no mango ipc)");
+    msg("wisp: no workspace backend (no ext_workspace_v1, no river, no mango ipc)");
 }
 
 void tags_dispatch(void) {
@@ -213,6 +216,7 @@ void tags_dispatch(void) {
 
 void tags_view(Output *o, int idx) {
     if (idx < 1 || idx > 32) return;
-    if (id_extws_mgr) extws_view(o, idx);
-    else              mango_view_tag(o, idx);
+    if (id_river_status_mgr)  river_view_tag(o, idx);
+    else if (id_extws_mgr)    extws_view(o, idx);
+    else                      mango_view_tag(o, idx);
 }

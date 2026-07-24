@@ -95,6 +95,7 @@ extern uint32_t id_pointer, id_keyboard;
 extern uint32_t id_gamma_mgr;
 extern uint32_t id_slock_mgr, id_slock;
 extern uint32_t id_extws_mgr;    /* ext_workspace_manager_v1; 0 = unsupported */
+extern uint32_t id_river_status_mgr, id_river_control;  /* river workspace source (river.c) */
 #ifdef WISP_HAS_TOPLEVEL
 /* zwlr_foreign_toplevel — app-aliveness source (wl_toplevel.c). Rides the main
  * wl_display fd; getters read a fixed match table codegen emits (stage 2). */
@@ -160,10 +161,10 @@ Output *output_by_registry_name(uint32_t name);
 Output *output_by_name(const char *name);
 
 /* Tag/workspace seam (workspace.c) — tag state in, tag switches out. Two
- * backends: ext_workspace_v1 when the compositor advertises it (sway, niri,
- * hyprland, labwc, cosmic, kwin, patched dwl), else mango's unix socket.
- * tags_fd is >= 0 only for a backend with its own fd (mango); ext-workspace
- * rides the wl_display connection. */
+ * backends: mango's unix socket, else river's status protocol, else
+ * ext_workspace_v1 when the compositor advertises it (sway, niri, hyprland,
+ * labwc, cosmic, kwin, patched dwl). tags_fd is >= 0 only for a backend with
+ * its own fd (mango); river + ext-workspace ride the wl_display connection. */
 extern int tags_fd;
 void    tags_init(void);
 void    tags_dispatch(void);
@@ -171,6 +172,11 @@ void    tags_dispatch(void);
 void    tags_view(Output *o, int idx);
 /* Returns 1 if the event was consumed by the ext-workspace backend. */
 int     extws_handle_event(uint32_t obj, uint16_t op, uint8_t *body, uint32_t bodylen);
+
+/* river status/control backend (river.c); driven by workspace.c + wl.c. */
+void    river_init(void);
+void    river_view_tag(Output *o, int idx);
+int     river_handle_event(uint32_t obj, uint16_t op, uint8_t *body, uint32_t bodylen);
 
 /* mango unix-socket IPC backend (mango.c); driven by workspace.c. */
 extern int mango_fd;

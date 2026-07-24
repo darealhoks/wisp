@@ -35,6 +35,7 @@ uint32_t id_pointer, id_keyboard;
 uint32_t id_gamma_mgr;
 uint32_t id_slock_mgr, id_slock;
 uint32_t id_extws_mgr;
+uint32_t id_river_status_mgr, id_river_control;
 #ifdef WISP_FRACTIONAL
 uint32_t id_viewporter, id_frac_mgr;
 #endif
@@ -567,6 +568,12 @@ static void handle_registry_global(uint32_t name, const char *iface, uint32_t ve
     } else if (!id_extws_mgr && !strcmp(iface, "ext_workspace_manager_v1")) {
         id_extws_mgr = wl_new_id();
         wl_registry_bind(name, iface, 1, id_extws_mgr);
+    } else if (!id_river_status_mgr && !strcmp(iface, "zriver_status_manager_v1")) {
+        id_river_status_mgr = wl_new_id();
+        wl_registry_bind(name, iface, ver < 4 ? ver : 4, id_river_status_mgr);
+    } else if (!id_river_control && !strcmp(iface, "zriver_control_v1")) {
+        id_river_control = wl_new_id();
+        wl_registry_bind(name, iface, 1, id_river_control);
 #ifdef WISP_HAS_TOPLEVEL
     } else if (!id_toplevel_mgr && !strcmp(iface, "zwlr_foreign_toplevel_manager_v1")) {
         tl_bind(name, ver);
@@ -718,6 +725,7 @@ static void handle(uint32_t obj, uint16_t op, uint8_t *body, uint32_t bodylen) {
      * the bar is the only consumer of tag state, and wisp-lock links neither. */
 #ifdef WISP_HAS_BAR
     if (extws_handle_event(obj, op, body, bodylen)) return;
+    if (river_handle_event(obj, op, body, bodylen)) return;
 #endif
 #ifdef WISP_HAS_TOPLEVEL
     if (tl_handle_event(obj, op, body, bodylen)) return;

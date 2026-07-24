@@ -55,8 +55,9 @@ reference once the docs run out.
 
 wisp needs `wlr-layer-shell` to run; each other feature lights up only if the
 compositor speaks its protocol, else stays dark while the rest works.
-Workspaces read from `ext-workspace-v1` or mango's IPC only, so compositors with
-just their own tag IPC (hyprland, wayfire, river) show no tags.
+Workspaces read from `ext-workspace-v1`, mango's IPC, or river's status
+protocol; compositors with just their own tag IPC (hyprland, wayfire) show no
+tags.
 
 | Compositor | Bar (layer-shell) | Workspaces | Gamma | Toplevels | Lock | Fractional scale |
 |---|---|---|---|---|---|---|
@@ -66,7 +67,7 @@ just their own tag IPC (hyprland, wayfire, river) show no tags.
 | **labwc** ≥0.8.3 | ✓ | ✓ ext-ws | ⚠ flaky¹ | ✓ | ✓ | ✓ |
 | **hyprland** | ✓ | ✗ own IPC only² | ✓ | ✓ | ✓ | ✓ |
 | **wayfire** | ✓ | ✗ own IPC only² | ✓ | ✓ | ✓ | ✓ |
-| **river** | ✓ | ✗ own tags only² | ✓ | ✓ | ✓ | ✓ |
+| **river** | ✓ | ✓ river-status | ✓ | ✓ | ✓ | ✓ |
 | **dwl** | ✓ | ✗ patch³ | ✓ | ✗ patch³ | ✓ | ✓ |
 | **COSMIC** | ✓ | ✓ ext-ws | ✗⁴ | ? | ✓ | ✓ |
 | **KWin** (Plasma ≥6.6) | ✓ | ✓ ext-ws | ✗⁵ | ✗⁵ | ✓ | ✓ |
