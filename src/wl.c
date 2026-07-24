@@ -480,8 +480,8 @@ void output_init_widgets(Output *o) {
     if (lock_active()) lock_on_output_added(o);
 #endif
 
-    /* ponytail: focused_output = first output; mango ipc no longer reports
-     * kbd focus. Fine on one monitor — `watch all-monitors` if that changes. */
+    /* Seed only; wl_toplevel.c retargets focused_output as windows activate
+     * (zwlr-foreign-toplevel — works on every supported compositor). */
     if (!focused_output) focused_output = o;
 }
 #endif

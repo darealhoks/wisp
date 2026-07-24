@@ -1,9 +1,11 @@
 /* mango.c — mango compositor IPC (>= 0.15, the dwl-ipc Wayland protocol is
  * gone). Line-delimited commands + JSON replies over the unix socket in
- * $MANGO_INSTANCE_SIGNATURE. We hold one persistent `watch all-tags`
+ * $MANGO_INSTANCE_SIGNATURE. We hold one persistent `watch all-monitors`
  * subscription (mango pushes a snapshot on subscribe, then on every change —
  * zero polling, idle stays at 0 ticks) and fire one-shot `dispatch view`
- * connections for tag switches. */
+ * connections for tag switches. all-monitors over all-tags because its
+ * monitor-level "active" flag is kbd focus — it drives focused_output, so
+ * OSD/menus land on the focused monitor even with no window there. */
 #include "wisp.h"
 
 #include <errno.h>
@@ -17,9 +19,9 @@
 
 int mango_fd = -1;
 
-/* Carry-over for a JSON line split across reads. An all-tags message is
- * ~1 KB/monitor; 8 KB covers any sane setup, oversized lines are dropped. */
-static char   mg_buf[8192];
+/* Carry-over for a JSON line split across reads. An all-monitors message is
+ * ~1.5 KB/monitor; 16 KB covers any sane setup, oversized lines are dropped. */
+static char   mg_buf[16384];
 static size_t mg_len;
 
 static int mango_connect(void) {
@@ -36,7 +38,7 @@ static int mango_connect(void) {
 void mango_init(void) {
     mango_fd = mango_connect();
     if (mango_fd < 0) return;   /* not mango; workspace.c falls back and reports */
-    static const char sub[] = "watch all-tags\n";
+    static const char sub[] = "watch all-monitors\n";
     if (write(mango_fd, sub, sizeof sub - 1) != (ssize_t)(sizeof sub - 1)) {
         close(mango_fd); mango_fd = -1; return;
     }
@@ -71,13 +73,16 @@ static void mg_flush(Output *o, uint32_t occ, uint32_t act, uint32_t urg, uint32
 #endif
 }
 
-/* One all-tags line: {"all_tags":[{"monitor":"eDP-1","tags":[{"index":1,
- * "is_active":true,"is_urgent":false,...,"client_count":2},...]},...]} */
+/* One all-monitors line: {"monitors":[{"name":"eDP-1","active":true,...,
+ * "tags":[{"index":1,"is_active":true,"is_urgent":false,...,
+ * "client_count":2},...],...},...]}. Monitor-level "active" = kbd focus;
+ * mg_find's leading-quote anchor keeps it distinct from "is_active" /
+ * "active_tags" / "active_client". */
 static void mg_parse_line(const char *p, const char *end) {
     Output *o = NULL;
     uint32_t occ = 0, act = 0, urg = 0, all = 0;
     for (;;) {
-        const char *mon = mg_find(p, end, "\"monitor\":\"");
+        const char *mon = mg_find(p, end, "\"name\":\"");
         const char *idx = mg_find(p, end, "\"index\":");
         if (idx && (!mon || idx < mon)) {
             uint32_t bit, n = (uint32_t)atoi(idx);
@@ -98,6 +103,10 @@ static void mg_parse_line(const char *p, const char *end) {
             for (p = mon; p < end && *p != '"' && i + 1 < sizeof name; p++) name[i++] = *p;
             name[i] = 0;
             o = output_by_name(name);
+            /* "active" follows "name" directly, before the tags array — the
+             * first hit from here is this monitor's focus flag. */
+            const char *q = mg_find(p, end, "\"active\":");
+            if (o && q && *q == 't') focused_output = o;
         } else {
             mg_flush(o, occ, act, urg, all);
             return;

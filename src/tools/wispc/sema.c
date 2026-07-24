@@ -597,6 +597,10 @@ SemaResult *sema_check(Arena *a, Unit *u) {
     /* Pass 3: per-surface analysis. */
     for (int i = 0; i < s.s.nsur; i++) analyze_surface(&s, s.s.sur[i]);
 
+    /* OSD/menu anchor to the focused monitor; wl_toplevel.c is the only
+     * compositor-agnostic source of that (activated toplevel's output). */
+    if (s.r->has_osd || s.r->has_menu) s.r->has_toplevel = 1;
+
     free(s.deps);
     return s.r;
 }

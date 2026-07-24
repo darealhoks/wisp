@@ -172,10 +172,14 @@
 #define TL_MGR_EV_FINISHED    1
 /* zwlr_foreign_toplevel_handle_v1 (destroy is the 8th request, index 7) */
 #define TL_HANDLE_REQ_DESTROY 7
-#define TL_HANDLE_EV_TITLE    0
-#define TL_HANDLE_EV_APP_ID   1
-#define TL_HANDLE_EV_DONE     5
-#define TL_HANDLE_EV_CLOSED   6
+#define TL_HANDLE_EV_TITLE        0
+#define TL_HANDLE_EV_APP_ID       1
+#define TL_HANDLE_EV_OUTPUT_ENTER 2
+#define TL_HANDLE_EV_OUTPUT_LEAVE 3
+#define TL_HANDLE_EV_STATE        4
+#define TL_HANDLE_EV_DONE         5
+#define TL_HANDLE_EV_CLOSED       6
+#define TL_STATE_ACTIVATED        2   /* enum value in the state array */
 
 #endif
 

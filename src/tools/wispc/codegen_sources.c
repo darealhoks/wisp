@@ -809,19 +809,20 @@ void emit_sources(FILE *o, SrcInst *srcs, int nsrc) {
      * tl_n_matches). One entry per toplevel() source, in declaration order. */
     int n_tl = 0;
     for (int i = 0; i < nsrc; i++) if (is_toplevel(&srcs[i])) n_tl++;
-    if (n_tl) {
-        if (n_tl > 16)   /* TL_MATCH_MAX in wl_toplevel.c */
-            diag_error(srcs[0].decl->loc, "codegen: too many toplevel() sources (max 16)");
-        fputs("const char *const tl_match_app_ids[] = {\n", o);
-        for (int i = 0; i < nsrc; i++) {
-            if (!is_toplevel(&srcs[i])) continue;
-            char *aid = strndup0(srcs[i].fmt, srcs[i].flen);
-            fprintf(o, "    \"%s\",\n", aid);
-            free(aid);
-        }
-        fputs("};\n", o);
-        fprintf(o, "const int tl_n_matches = %d;\n\n", n_tl);
+    if (n_tl > 16)   /* TL_MATCH_MAX in wl_toplevel.c */
+        diag_error(srcs[0].decl->loc, "codegen: too many toplevel() sources (max 16)");
+    /* Emitted even with zero toplevel() sources: wl_toplevel.o is also linked
+     * for OSD/menu focus tracking (sema forces has_toplevel) and externs these. */
+    fputs("const char *const tl_match_app_ids[] = {\n", o);
+    for (int i = 0; i < nsrc; i++) {
+        if (!is_toplevel(&srcs[i])) continue;
+        char *aid = strndup0(srcs[i].fmt, srcs[i].flen);
+        fprintf(o, "    \"%s\",\n", aid);
+        free(aid);
     }
+    if (!n_tl) fputs("    0,\n", o);
+    fputs("};\n", o);
+    fprintf(o, "const int tl_n_matches = %d;\n\n", n_tl);
 }
 
 /* ============================================================ */

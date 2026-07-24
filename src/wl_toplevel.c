@@ -36,6 +36,8 @@ static uint32_t tl_mgr_name;   /* registry global name, for the remove path */
 typedef struct {
     uint32_t id;                 /* handle object id; 0 = free slot */
     int      match;              /* index into the match table, -1 = no match */
+    uint32_t out;                /* wl_output id from output_enter; 0 = unknown */
+    int      activated;          /* state array contained ACTIVATED */
     char     title[TL_TITLE_CAP];
 } TLSlot;
 static TLSlot slots[TL_MAX];
@@ -119,7 +121,7 @@ int tl_handle_event(uint32_t obj, uint16_t op, uint8_t *body, uint32_t bodylen) 
             if (bodylen < 4) return 1;
             uint32_t nid = *(uint32_t *)body;   /* server-allocated handle id */
             TLSlot *s = slot_by_id(0);
-            if (s) { s->id = nid; s->match = -1; s->title[0] = 0; }
+            if (s) { s->id = nid; s->match = -1; s->out = 0; s->activated = 0; s->title[0] = 0; }
             /* Table full: the toplevel is untracked, so it can never match —
              * count stays correct for the apps we do track. */
         } else if (op == TL_MGR_EV_FINISHED) {
@@ -147,17 +149,39 @@ int tl_handle_event(uint32_t obj, uint16_t op, uint8_t *body, uint32_t bodylen) 
         s->match = match_app_id((const char *)(body + 4));
         break;
     }
+    case TL_HANDLE_EV_OUTPUT_ENTER:
+        if (bodylen >= 4) s->out = *(uint32_t *)body;
+        break;
+    case TL_HANDLE_EV_OUTPUT_LEAVE:
+        if (bodylen >= 4 && s->out == *(uint32_t *)body) s->out = 0;
+        break;
+    case TL_HANDLE_EV_STATE: {
+        /* wl_array of u32: len in bytes, then entries. */
+        if (bodylen < 4) break;
+        uint32_t alen = *(uint32_t *)body;
+        if (alen > bodylen - 4) break;
+        s->activated = 0;
+        for (uint32_t i = 0; i + 4 <= alen; i += 4)
+            if (*(uint32_t *)(body + 4 + i) == TL_STATE_ACTIVATED) s->activated = 1;
+        break;
+    }
     case TL_HANDLE_EV_DONE:
         publish();   /* atomic commit point */
+        /* Focus tracking: the activated toplevel's output is the focused
+         * monitor — the compositor-agnostic anchor for OSD/menu placement. */
+        if (s->activated && s->out) {
+            Output *fo = output_by_wl(s->out);
+            if (fo) focused_output = fo;
+        }
         break;
     case TL_HANDLE_EV_CLOSED:
         /* Finalize per the protocol: destroy the handle, free the slot. */
         wl_req(s->id, TL_HANDLE_REQ_DESTROY, NULL, 0, -1);
-        s->id = 0; s->match = -1; s->title[0] = 0;
+        s->id = 0; s->match = -1; s->out = 0; s->activated = 0; s->title[0] = 0;
         publish();
         break;
     default:
-        break;   /* state / output_enter/leave / parent: unused */
+        break;   /* parent: unused */
     }
     return 1;
 }
