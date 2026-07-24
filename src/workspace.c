@@ -198,6 +198,11 @@ void tags_init(void) {
     mango_init();
     tags_fd = mango_fd;
     if (mango_fd >= 0) { id_extws_mgr = 0; id_river_status_mgr = 0; return; }
+    /* hyprland before river/ext-workspace: it has its own socket IPC and reports
+     * true occupancy (window counts) that ext-workspace can't. */
+    hyprland_init();
+    tags_fd = hyprland_fd;
+    if (hyprland_fd >= 0) { id_extws_mgr = 0; id_river_status_mgr = 0; return; }
     /* river before ext-workspace: its view_tags gives true occupancy (which tags
      * hold views), which ext-workspace can't report. */
     if (id_river_status_mgr) { id_extws_mgr = 0; river_init(); return; }
@@ -205,18 +210,24 @@ void tags_init(void) {
         for (int i = 0; i < MAX_WS; i++) wss[i].coord = -1;
         return;   /* handles stream in on their own; no fd to poll */
     }
-    msg("wisp: no workspace backend (no ext_workspace_v1, no river, no mango ipc)");
+    msg("wisp: no workspace backend (no ext_workspace_v1, no river, no mango/hyprland ipc)");
 }
 
 void tags_dispatch(void) {
-    if (mango_fd < 0) return;   /* ext-workspace has no fd of its own */
-    mango_dispatch();
-    tags_fd = mango_fd;   /* mango.c clears it to -1 when the socket closes */
+    if (mango_fd >= 0) {
+        mango_dispatch();
+        tags_fd = mango_fd;   /* mango.c clears it to -1 when the socket closes */
+    } else if (hyprland_fd >= 0) {
+        hyprland_dispatch();
+        tags_fd = hyprland_fd;   /* hyprland.c clears it to -1 on close */
+    }
+    /* river + ext-workspace have no fd of their own (ride wl_display) */
 }
 
 void tags_view(Output *o, int idx) {
     if (idx < 1 || idx > 32) return;
-    if (id_river_status_mgr)  river_view_tag(o, idx);
-    else if (id_extws_mgr)    extws_view(o, idx);
-    else                      mango_view_tag(o, idx);
+    if (hyprland_fd >= 0)          hyprland_view_tag(o, idx);
+    else if (id_river_status_mgr)  river_view_tag(o, idx);
+    else if (id_extws_mgr)         extws_view(o, idx);
+    else                           mango_view_tag(o, idx);
 }

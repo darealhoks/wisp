@@ -77,6 +77,7 @@ static void emit_objects_mk(FILE *o, SemaResult *r) {
     fputs("    $(BUILD)/mango.o \\\n", o);
     fputs("    $(BUILD)/workspace.o \\\n", o);
     fputs("    $(BUILD)/river.o \\\n", o);
+    fputs("    $(BUILD)/hyprland.o \\\n", o);
     int any_src = r->has_src_cpu || r->has_src_mem || r->has_src_temp ||
                   r->has_src_bat || r->has_src_net || r->has_src_disk ||
                   r->has_src_vpn || r->has_src_backlight;

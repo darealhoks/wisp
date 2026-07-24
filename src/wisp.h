@@ -183,6 +183,12 @@ extern int mango_fd;
 void    mango_init(void);
 void    mango_dispatch(void);
 void    mango_view_tag(Output *o, int idx);
+
+/* Hyprland unix-socket IPC backend (hyprland.c); driven by workspace.c. */
+extern int hyprland_fd;
+void    hyprland_init(void);
+void    hyprland_dispatch(void);
+void    hyprland_view_tag(Output *o, int idx);
 void    output_destroy(Output *o);
 void    output_init_widgets(Output *o);   /* spawn bar/wall/hud + ipc + gamma */
 int     output_count(void);
