@@ -36,7 +36,7 @@ void image_blit_cover(uint32_t *dst, int dw, int dh,
                       const uint8_t *src, int sw, int sh);
 
 /* Disk cache of a finished W*H cover-fit of `img_path`, keyed by size + the
- * image's mtime, at $XDG_CACHE_HOME/wisp/lockbg-WxH.bin. The daemon seeds it
+ * image's mtime, at $XDG_CACHE_HOME/wisp/bg-<pathhash>-WxH.bin. The daemon seeds it
  * from wall.c's render so wisp-lock's first load skips the decode + scale.
  * Load returns a malloc'd ARGB buffer or NULL; store is a no-op when the
  * cached copy is already current. */

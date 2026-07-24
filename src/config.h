@@ -67,13 +67,20 @@
 
 /* ---------- Status sampling ---------- */
 #define VPN_STALE_S        180
-#define STATUS_CADENCE_WIFI   5
-#define STATUS_CADENCE_BAT   30
-#define STATUS_CADENCE_DISK 300
-/* CPU temp and VPN state change on the order of seconds, not the 1Hz status
- * tick — coarser cadence cuts idle syscalls without affecting visible state. */
+/* Free space changes glacially; disk rides its own slow timer, not the 1 Hz
+ * tick, so a disk-only config wakes only every DISK_S instead of every second. */
+#define DISK_S              30
+/* bat is event-driven off kernel uevents (netlink.c power_supply); capacity %
+ * is driver-dependent (many only uevent on threshold crossings), so a slow
+ * fallback timer still re-reads the number. */
+#define BAT_FALLBACK_S       60
+/* CPU temp changes on the order of seconds, not the 1Hz status tick — a coarser
+ * cadence cuts idle syscalls without affecting visible state. */
 #define STATUS_CADENCE_TEMP   2
-#define STATUS_CADENCE_VPN    5
+/* vpn/net are event-driven off rtnetlink (netlink.c); wifi signal strength
+ * changes constantly, so it alone stays polled — but slowly, and only while the
+ * link is up (see gen wifi-signal timer). */
+#define WIFI_SIGNAL_S        10
 
 /* Low-battery notification thresholds. Fires once when bat_pct crosses each
  * threshold downward while discharging; charging back above clears the latch
@@ -100,14 +107,34 @@
 #ifndef WALL_FADE_MS
 #define WALL_FADE_MS 300
 #endif
-/* How the two frames are combined per tick: cross-dissolve or block reveal. */
+/* How the two frames are combined per tick: cross-dissolve, block reveal, or
+ * an edge sweeping across the output. */
 #define WALL_TRANSITION_FADE   0
 #define WALL_TRANSITION_DITHER 1
+#define WALL_TRANSITION_WIPE   2
 #ifndef WALL_TRANSITION
 #define WALL_TRANSITION WALL_TRANSITION_FADE
 #endif
 #ifndef WALL_DITHER_PX
 #define WALL_DITHER_PX 16
+#endif
+/* Wipe direction names where the edge travels TO, so `right` reveals the new
+ * wallpaper from the left screen edge. The diagonals sweep on x+y, which is a
+ * 45-degree edge whatever the output's aspect ratio. */
+#define WALL_WIPE_DIR_RIGHT      0
+#define WALL_WIPE_DIR_LEFT       1
+#define WALL_WIPE_DIR_DOWN       2
+#define WALL_WIPE_DIR_UP         3
+#define WALL_WIPE_DIR_DOWN_RIGHT 4
+#define WALL_WIPE_DIR_DOWN_LEFT  5
+#define WALL_WIPE_DIR_UP_RIGHT   6
+#define WALL_WIPE_DIR_UP_LEFT    7
+#ifndef WALL_WIPE_DIR
+#define WALL_WIPE_DIR WALL_WIPE_DIR_RIGHT
+#endif
+/* Width of the lerp band at the edge, px. 1 = a hard cut line. */
+#ifndef WALL_WIPE_SOFT
+#define WALL_WIPE_SOFT 160
 #endif
 
 /* ---------- OSD / notifications (mako + dwl-osd replacement) ----------

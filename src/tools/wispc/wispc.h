@@ -289,9 +289,10 @@ typedef struct SemaResult {
     const char **spawned_names;
     const char ***spawned_args;
     /* feature set */
-    bool has_dbus, has_mpris, has_tray, has_osd, has_menu, has_hud, has_bar, has_lock, has_gamma, has_wallpaper, has_media, has_anim, has_pipewire;
-    bool has_src_cpu, has_src_mem, has_src_temp, has_src_bat, has_src_wifi, has_src_disk, has_src_vpn;
-    bool has_src_exec, has_src_tags;
+    bool has_dbus, has_mpris, has_tray, has_osd, has_menu, has_hud, has_bar, has_lock, has_gamma, has_wallpaper, has_media, has_anim, has_pipewire, has_toplevel;
+    bool has_src_cpu, has_src_mem, has_src_temp, has_src_bat, has_src_net, has_src_disk, has_src_vpn;
+    bool has_src_exec, has_src_tags, has_src_backlight, has_power, has_bluez;
+    bool net_rates_used;           /* a config reads net.rx_kbps/tx_kbps */
     int  tray_icon_px;             /* tray(icon_size=N); 0 = runtime default */
 } SemaResult;
 
@@ -300,7 +301,7 @@ SemaResult *sema_check(Arena *a, Unit *u);
 /* ---------- codegen ---------- */
 /* Emits gen_main.c, gen_sources.c, gen_surfaces.c, gen_bindings.c into dir.
  * Supports the DSL slice needed by configs/minimal.wisp + configs/bar.wisp:
- *   sources:  clock, cpu, mem, temp, bat, disk, vpn, wifi, tags
+ *   sources:  clock, cpu, mem, temp, bat, disk, vpn, net, tags
  *   surfaces: single anchored "bar" with multi-widget left/right flex pack,
  *             icon+text widgets, ternary/member/interp expressions,
  *             `for tag in tags.list { cell { … } }`, visible=expr guard,

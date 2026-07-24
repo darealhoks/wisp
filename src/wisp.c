@@ -120,7 +120,11 @@ void on_pointer_event(uint16_t op, uint8_t *body, uint32_t bodylen) {
         (void)button; (void)state;
 #ifdef WISP_HAS_MENU
         /* Click-off: a press on any non-menu surface dismisses an open menu. */
-        if (state == 1 && w->kind != W_MENU) menu_cancel_all();
+        if (state == 1 && w->kind != W_MENU) {
+            menu_clickoff = 1;
+            menu_cancel_all();
+            menu_clickoff = 0;
+        }
 #endif
 #ifdef WISP_HAS_HUD
         if (w->kind == W_HUD) { hud_on_pointer_button(w, button, state); break; }

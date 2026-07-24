@@ -567,6 +567,10 @@ static void handle_registry_global(uint32_t name, const char *iface, uint32_t ve
     } else if (!id_extws_mgr && !strcmp(iface, "ext_workspace_manager_v1")) {
         id_extws_mgr = wl_new_id();
         wl_registry_bind(name, iface, 1, id_extws_mgr);
+#ifdef WISP_HAS_TOPLEVEL
+    } else if (!id_toplevel_mgr && !strcmp(iface, "zwlr_foreign_toplevel_manager_v1")) {
+        tl_bind(name, ver);
+#endif
     }
 }
 
@@ -621,6 +625,9 @@ static void handle(uint32_t obj, uint16_t op, uint8_t *body, uint32_t bodylen) {
     if (obj == id_registry && op == REGISTRY_EV_GLOBAL_REM) {
         if (bodylen < 4) return;
         uint32_t name = *(uint32_t *)body;
+#ifdef WISP_HAS_TOPLEVEL
+        tl_on_registry_remove(name);
+#endif
         Output *o = output_by_registry_name(name);
         if (o) {
             output_destroy(o);
@@ -711,6 +718,9 @@ static void handle(uint32_t obj, uint16_t op, uint8_t *body, uint32_t bodylen) {
      * the bar is the only consumer of tag state, and wisp-lock links neither. */
 #ifdef WISP_HAS_BAR
     if (extws_handle_event(obj, op, body, bodylen)) return;
+#endif
+#ifdef WISP_HAS_TOPLEVEL
+    if (tl_handle_event(obj, op, body, bodylen)) return;
 #endif
     /* Opcode 0 is overloaded across interfaces (layer-surface.configure,
        buffer.release, callback.done, ...). Disambiguate by object id —

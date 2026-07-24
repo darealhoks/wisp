@@ -76,10 +76,18 @@ static void emit_main(FILE *o, SrcInst *srcs, int nsrc, SemaResult *r) {
           "#include <sys/timerfd.h>\n\n", o);
     fputs("static int ep_fd = -1;\n", o);
 
+    int has_poll = has_polled_status_src(srcs, nsrc);
+    int have_net = has_net_src(srcs, nsrc);
+    int have_bat = has_bat_src(srcs, nsrc);
+    int have_disk = has_disk_src(srcs, nsrc);
+    int have_bl = has_backlight_src(srcs, nsrc);
+    int have_nl = has_vpn_src(srcs, nsrc) || have_net;
+    int have_uev = have_bat || have_bl;
+
     for (int i = 0; i < nsrc; i++) {
         SrcInst *s = &srcs[i];
         const char *nm = sname(s->decl->name, s->decl->nlen);
-        if (s->drv->drv == DRV_CLOCK)
+        if (s->drv->drv == DRV_CLOCK || s->drv->drv == DRV_INOTIFY)
             fprintf(o, "extern int src_%s_fd; void src_%s_init(void); void src_%s_handle(void);\n",
                     nm, nm, nm);
         else if (s->drv->drv == DRV_EXEC)
@@ -93,7 +101,15 @@ static void emit_main(FILE *o, SrcInst *srcs, int nsrc, SemaResult *r) {
               "extern int dbus_fd; extern int dbus_reconnect_fd;\n"
               "void dbus_reconnect_init(void); void dbus_reconnect_handle(void);\n", o);
     if (has_status_src(srcs, nsrc))
+        fputs("void wispgen_status_setup(void);\n", o);
+    if (has_poll)
         fputs("extern int wispgen_status_tfd; void wispgen_status_init(void); void wispgen_status_handle(void);\n", o);
+    if (have_net)
+        fputs("extern int wispgen_net_sig_tfd; void wispgen_net_sig_init(void); void wispgen_net_sig_handle(void);\n", o);
+    if (have_bat)
+        fputs("extern int wispgen_bat_tfd; void wispgen_bat_init(void); void wispgen_bat_handle(void);\n", o);
+    if (have_disk)
+        fputs("extern int wispgen_disk_tfd; void wispgen_disk_init(void); void wispgen_disk_handle(void);\n", o);
     /* lock_helper_fd / lock_on_helper_event live in wisp-lock now. */
     if (r->has_gamma)
         fputs("void gamma_init(void); void gamma_tick(int tick_n);\n", o);
@@ -159,16 +175,28 @@ static void emit_main(FILE *o, SrcInst *srcs, int nsrc, SemaResult *r) {
           "    }\n", o);
     fputs("    if (reload_ctl >= 0) ctl_adopt(reload_ctl); else ctl_open();\n", o);
     fputs("    key_rep_tfd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);\n", o);
-    if (has_status_src(srcs, nsrc)) fputs("    wispgen_status_init();\n", o);
+    if (has_status_src(srcs, nsrc)) fputs("    wispgen_status_setup();\n", o);
+    if (has_poll) fputs("    wispgen_status_init();\n", o);
+    /* Open the rtnetlink socket (and, for net, its slow signal timer) after the
+     * initial sample so the timer arms against a known link state. */
+    if (have_nl) fputs("    nl_init();\n", o);
+    if (have_net) fputs("    wispgen_net_sig_init();\n", o);
+    /* Uevent socket (bat/backlight) + slow fallback timer for bat, after the
+     * initial sample. */
+    if (have_uev) fputs("    uev_init();\n", o);
+    if (have_bat) fputs("    wispgen_bat_init();\n", o);
+    /* Slow disk timer, after the initial sample. */
+    if (have_disk) fputs("    wispgen_disk_init();\n", o);
     if (r->has_gamma) fputs("    gamma_init();\n", o);
-    /* Standalone 1Hz tick for gamma when no status sources are running. */
-    if (r->has_gamma && !has_status_src(srcs, nsrc)) {
+    /* Standalone 1Hz tick for gamma when no polled status tick is running. */
+    if (r->has_gamma && !has_poll) {
         fputs("    int wispgen_gamma_tfd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);\n", o);
         fputs("    { struct itimerspec ts = { .it_value = {.tv_sec=1}, .it_interval = {.tv_sec=1} };\n"
               "      timerfd_settime(wispgen_gamma_tfd, 0, &ts, NULL); }\n", o);
     }
     for (int i = 0; i < nsrc; i++)
-        if (srcs[i].drv->drv == DRV_CLOCK || srcs[i].drv->drv == DRV_EXEC)
+        if (srcs[i].drv->drv == DRV_CLOCK || srcs[i].drv->drv == DRV_EXEC ||
+            srcs[i].drv->drv == DRV_INOTIFY)
             fprintf(o, "    src_%s_init();\n", sname(srcs[i].decl->name, srcs[i].decl->nlen));
     /* DBUS source init must run before dbus_connect() so AddMatch is sent
      * as part of the connect ramp-up. Same for mpris's subscriptions. */
@@ -183,6 +211,8 @@ static void emit_main(FILE *o, SrcInst *srcs, int nsrc, SemaResult *r) {
         fputs("    dbus_reconnect_init();\n"
               "    dbus_connect();\n", o);
     if (r->has_pipewire) fputs("    pw_init();\n", o);
+    if (r->has_power) fputs("    pp_connect();\n", o);
+    if (r->has_bluez) fputs("    bz_connect();\n", o);
 
     fputs("    tags_init();\n", o);
     fputs("    ep_fd = epoll_create1(EPOLL_CLOEXEC);\n", o);
@@ -190,17 +220,27 @@ static void emit_main(FILE *o, SrcInst *srcs, int nsrc, SemaResult *r) {
     fputs("    if (tags_fd >= 0) epoll_add_fd(tags_fd);\n", o);
     fputs("    epoll_add_fd(ctl_fd);\n", o);
     fputs("    if (key_rep_tfd >= 0) epoll_add_fd(key_rep_tfd);\n", o);
-    if (has_status_src(srcs, nsrc)) fputs("    epoll_add_fd(wispgen_status_tfd);\n", o);
+    if (has_poll) fputs("    epoll_add_fd(wispgen_status_tfd);\n", o);
+    if (have_nl) fputs("    epoll_add_fd(nl_fd);\n", o);
+    if (have_net) fputs("    epoll_add_fd(wispgen_net_sig_tfd);\n", o);
+    if (have_uev) fputs("    epoll_add_fd(uev_fd);\n", o);
+    if (have_bat) fputs("    epoll_add_fd(wispgen_bat_tfd);\n", o);
+    if (have_disk) fputs("    epoll_add_fd(wispgen_disk_tfd);\n", o);
     if ((has_dbus_src(srcs, nsrc) || r->has_dbus))
         fputs("    if (dbus_fd >= 0) epoll_add_fd(dbus_fd);\n"
               "    epoll_add_fd(dbus_reconnect_fd);\n", o);
     if (r->has_pipewire)
         fputs("    if (pw_fd >= 0) epoll_add_fd(pw_fd);\n"
               "    epoll_add_fd(pw_reconnect_fd);\n", o);
-    if (r->has_gamma && !has_status_src(srcs, nsrc))
+    if (r->has_power)
+        fputs("    if (pp_fd >= 0) epoll_add_fd(pp_fd);\n", o);
+    if (r->has_bluez)
+        fputs("    if (bz_fd >= 0) epoll_add_fd(bz_fd);\n", o);
+    if (r->has_gamma && !has_poll)
         fputs("    epoll_add_fd(wispgen_gamma_tfd);\n", o);
     for (int i = 0; i < nsrc; i++)
-        if (srcs[i].drv->drv == DRV_CLOCK || srcs[i].drv->drv == DRV_EXEC)
+        if (srcs[i].drv->drv == DRV_CLOCK || srcs[i].drv->drv == DRV_EXEC ||
+            srcs[i].drv->drv == DRV_INOTIFY)
             fprintf(o, "    epoll_add_fd(src_%s_fd);\n", sname(srcs[i].decl->name, srcs[i].decl->nlen));
 
     fputs("    msg(\"wisp: running (generated)\");\n", o);
@@ -240,13 +280,28 @@ static void emit_main(FILE *o, SrcInst *srcs, int nsrc, SemaResult *r) {
           "#endif\n"
           "                    key_rep_cancel();\n"
           "                }\n", o);
-    if (has_status_src(srcs, nsrc)) {
+    if (has_poll) {
         fputs("            } else if (fd == wispgen_status_tfd) {\n"
               "                wispgen_status_handle();\n", o);
         if (r->has_gamma)
             fputs("                gamma_tick(0);\n", o);
     }
-    if (r->has_gamma && !has_status_src(srcs, nsrc)) {
+    if (have_nl)
+        fputs("            } else if (fd == nl_fd) {\n"
+              "                nl_dispatch();\n", o);
+    if (have_net)
+        fputs("            } else if (fd == wispgen_net_sig_tfd) {\n"
+              "                wispgen_net_sig_handle();\n", o);
+    if (have_uev)
+        fputs("            } else if (fd == uev_fd) {\n"
+              "                uev_dispatch();\n", o);
+    if (have_bat)
+        fputs("            } else if (fd == wispgen_bat_tfd) {\n"
+              "                wispgen_bat_handle();\n", o);
+    if (have_disk)
+        fputs("            } else if (fd == wispgen_disk_tfd) {\n"
+              "                wispgen_disk_handle();\n", o);
+    if (r->has_gamma && !has_poll) {
         fputs("            } else if (fd == wispgen_gamma_tfd) {\n"
               "                uint64_t _e; (void)!read(wispgen_gamma_tfd, &_e, sizeof _e);\n"
               "                gamma_tick(0);\n", o);
@@ -262,11 +317,18 @@ static void emit_main(FILE *o, SrcInst *srcs, int nsrc, SemaResult *r) {
               "                pw_dispatch();\n"
               "            } else if (fd == pw_reconnect_fd) {\n"
               "                pw_reconnect();\n", o);
+    if (r->has_power)
+        fputs("            } else if (pp_fd >= 0 && fd == pp_fd) {\n"
+              "                pp_dispatch();\n", o);
+    if (r->has_bluez)
+        fputs("            } else if (bz_fd >= 0 && fd == bz_fd) {\n"
+              "                bz_dispatch();\n", o);
     if (r->has_anim)
         fputs("            } else if (fd == anim_fd()) {\n"
               "                anim_on_tfd();\n", o);
     for (int i = 0; i < nsrc; i++) {
-        if (srcs[i].drv->drv != DRV_CLOCK && srcs[i].drv->drv != DRV_EXEC) continue;
+        if (srcs[i].drv->drv != DRV_CLOCK && srcs[i].drv->drv != DRV_EXEC &&
+            srcs[i].drv->drv != DRV_INOTIFY) continue;
         const char *nm = sname(srcs[i].decl->name, srcs[i].decl->nlen);
         fprintf(o, "            } else if (fd == src_%s_fd) {\n"
                    "                src_%s_handle();\n", nm, nm);
@@ -544,6 +606,8 @@ static void emit_overrides(FILE *o, Unit *u, CGCtx *ctx) {
         {"fade_ms",    "WALL_FADE_MS",     0},
         {"transition", "WALL_TRANSITION",  4},
         {"dither_px",  "WALL_DITHER_PX",   0},
+        {"wipe_dir",   "WALL_WIPE_DIR",    4},
+        {"wipe_soft",  "WALL_WIPE_SOFT",   0},
     };
     emit_block_overrides(o, find_block(u, D_WALLPAPER), "wallpaper", wallmap,
                          (int)(sizeof wallmap / sizeof wallmap[0]), ctx);
@@ -703,6 +767,7 @@ static void emit_overrides(FILE *o, Unit *u, CGCtx *ctx) {
 /* ============================================================ */
 
 int codegen_emit(const char *dir, Unit *u, SemaResult *r) {
+    cg_net_rates_used = r->net_rates_used;
     SrcInst srcs[32];
     int nsrc = collect_srcs(u, srcs, 32);
     if (nsrc < 0) return 1;

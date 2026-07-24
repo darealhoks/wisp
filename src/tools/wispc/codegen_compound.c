@@ -433,7 +433,7 @@ int emit_surfaces(FILE *o, Unit *u, CGCtx *ctx) {
     /* extern decls for source value buffers (clocks + exec + dbus) + status helpers. */
     for (int i = 0; i < ctx->nsrc; i++) {
         const char *snm = sname(ctx->srcs[i].decl->name, ctx->srcs[i].decl->nlen);
-        if (ctx->srcs[i].drv->drv == DRV_CLOCK)
+        if (ctx->srcs[i].drv->drv == DRV_CLOCK || ctx->srcs[i].drv->drv == DRV_INOTIFY)
             fprintf(o, "extern char src_%s_value[];\n", snm);
         else if (ctx->srcs[i].drv->drv == DRV_EXEC) {
             /* Sized extern so `sizeof src_<n>_line` is usable inside on_click
@@ -449,16 +449,16 @@ int emit_surfaces(FILE *o, Unit *u, CGCtx *ctx) {
             fprintf(o, "extern int src_%s_hist_n;\n", snm);
         }
     }
-    int need_mem = 0, need_vpn = 0, need_wifi = 0;
+    int need_mem = 0, need_vpn = 0, need_net = 0;
     for (int i = 0; i < ctx->nsrc; i++) {
         const char *nm = ctx->srcs[i].drv->name;
-        if (!strcmp(nm, "mem"))  need_mem = 1;
-        if (!strcmp(nm, "vpn"))  need_vpn = 1;
-        if (!strcmp(nm, "wifi")) need_wifi = 1;
+        if (!strcmp(nm, "mem")) need_mem = 1;
+        if (!strcmp(nm, "vpn")) need_vpn = 1;
+        if (!strcmp(nm, "net")) need_net = 1;
     }
-    if (need_mem)  fputs("int wispgen_mem_pct(void);\n", o);
-    if (need_vpn)  fputs("const char *wispgen_vpn_state_s(void);\n", o);
-    if (need_wifi) fputs("const char *wispgen_wifi_ssid(void);\n", o);
+    if (need_mem) fputs("int wispgen_mem_pct(void);\n", o);
+    if (need_vpn) fputs("const char *wispgen_vpn_state_s(void);\n", o);
+    if (need_net) fputs("const char *wispgen_net_ssid(void);\n", o);
 
     /* extern decls for every mut (lives in gen_bindings.c). Reads in render
      * exprs / writes in set() need the symbol visible in this TU. */
@@ -487,6 +487,12 @@ int emit_surfaces(FILE *o, Unit *u, CGCtx *ctx) {
      * in click handlers writes to it). */
     for (int i = 0; i < ctx->r->nsurfaces; i++)
         fprintf(o, "extern int dirty_%s;\n", ctx->r->surface_names[i]);
+    /* Source-dirty masks (defined in gen_bindings.c) — the surface render dumps
+     * them under WISP_DIRTY_DEBUG. Only emitted when the config stays <= 64
+     * sources; the render only references them under the same condition. */
+    if (ctx->nsrc <= 64)
+        for (int i = 0; i < ctx->r->nsurfaces; i++)
+            fprintf(o, "extern uint64_t bar_dirty_srcs_%s;\n", ctx->r->surface_names[i]);
     for (int i = 0; i < u->n; i++) {
         Decl *d = u->decls[i];
         if (d->kind != D_SURFACE && d->kind != D_COMPOUND) continue;

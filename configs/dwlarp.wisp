@@ -6,7 +6,7 @@ source mem_s  = mem();
 source bat_s  = bat("BAT0");
 source temp_s = temp();
 source vpn_s  = vpn("mullvad");
-source wifi_s = wifi("wlan0");
+source wifi_s = net("wlan0");
 source disk_s = disk("/");
 
 const FG    = #ffffffff;
@@ -287,6 +287,10 @@ gamma {
 wallpaper {
   path = "~/.local/share/dwl/wallpaper.png";
   bg   = #ff0f1219;
+  transition = wipe;
+  wipe_dir   = down_right;
+  wipe_soft  = 200;
+  fade_ms    = 300;
 }
 
 media {}

@@ -13,20 +13,23 @@ typedef struct {
 
 enum {
     F_NONE = 0,
-    F_CLOCK, F_CPU, F_MEM, F_TEMP, F_BAT, F_WIFI, F_DISK, F_VPN,
-    F_TAGS, F_EXEC, F_DBUS, F_MPRIS, F_TRAY, F_PIPEWIRE,
+    F_CLOCK, F_CPU, F_MEM, F_TEMP, F_BAT, F_NET, F_DISK, F_VPN,
+    F_TAGS, F_EXEC, F_DBUS, F_MPRIS, F_TRAY, F_PIPEWIRE, F_TOPLEVEL,
+    F_BACKLIGHT, F_POWER, F_BLUEZ,
 };
 
 /* A row here without a driver in codegen_sources.c makes --check pass and
- * --emit die — add the row in the same commit as the driver, never before.
- * Wanted but undriven: inotify (a poll-free file source, unlike exec_line). */
+ * --emit die — add the row in the same commit as the driver, never before. */
 static const SrcDef SOURCES[] = {
     {"clock",                "value",  "value", F_CLOCK },
     {"cpu",                  "pct",    "pct load1", F_CPU },
     {"mem",                  "pct",    "pct used_mb", F_MEM },
     {"temp",                 "c",      "c", F_TEMP },
     {"bat",                  "pct",    "pct charging", F_BAT },
-    {"wifi",                 "ssid",   "ssid signal", F_WIFI },
+    {"net",                  "ssid",   "up ssid signal rx_kbps tx_kbps", F_NET },
+    {"backlight",            "pct",    "pct", F_BACKLIGHT },
+    {"power_profile",        "profile","profile", F_POWER },
+    {"bluez",                "device", "powered connected device battery", F_BLUEZ },
     {"disk",                 "pct",    "pct free_gb", F_DISK },
     {"vpn",                  "state",  "state ok", F_VPN },
     {"tags",             "title",  "title list occ act urg", F_TAGS },
@@ -34,10 +37,12 @@ static const SrcDef SOURCES[] = {
     {"dnd",                  "value",  "value", F_NONE },
     {"ui_hidden",            "value",  "value", F_NONE },
     {"exec_line",            "value",  "value", F_EXEC },
+    {"inotify",              "value",  "value", F_NONE },
     {"dbus_signal",          "value",  "value history", F_DBUS },
     {"mpris",                "title",  "title artist status player", F_MPRIS },
     {"tray",                 "count",  "count items", F_TRAY },
     {"pipewire",             "vol",    "vol mute mic_vol mic_mute ok", F_PIPEWIRE },
+    {"toplevel",             "exists", "exists count title", F_TOPLEVEL },
 };
 
 static const SrcDef *find_src(const char *name, size_t n) {
@@ -128,7 +133,13 @@ static void set_flag(SemaResult *r, int f) {
     case F_MEM:  r->has_src_mem = 1; break;
     case F_TEMP: r->has_src_temp = 1; break;
     case F_BAT:  r->has_src_bat = 1; break;
-    case F_WIFI: r->has_src_wifi = 1; break;
+    case F_NET:  r->has_src_net = 1; break;
+    case F_BACKLIGHT: r->has_src_backlight = 1; break;
+    /* power.c is a standalone system-bus client; does NOT imply has_dbus
+     * (the session transport). */
+    case F_POWER: r->has_power = 1; break;
+    /* bluez.c is likewise a standalone system-bus client. */
+    case F_BLUEZ: r->has_bluez = 1; break;
     case F_DISK: r->has_src_disk = 1; break;
     case F_VPN:  r->has_src_vpn = 1; break;
     case F_TAGS:  r->has_src_tags = 1; break;
@@ -140,6 +151,9 @@ static void set_flag(SemaResult *r, int f) {
     case F_TRAY:  r->has_tray = 1; r->has_dbus = 1; break;
     /* Native PipeWire client — its own transport, does NOT imply has_dbus. */
     case F_PIPEWIRE: r->has_pipewire = 1; break;
+    /* zwlr foreign-toplevel client — rides the wl_display, own transport,
+     * repainted via wispgen_wisp_state_changed() (DRV_WISP-shaped). */
+    case F_TOPLEVEL: r->has_toplevel = 1; break;
     default: break;
     }
 }
@@ -248,6 +262,13 @@ static void walk_expr(S *s, Expr *e) {
                 const SrcDef *sd = find_src(d->source.call->call.name, d->source.call->call.nlen);
                 if (sd && !field_ok(sd, e->member.field, e->member.flen))
                     diag_error(e->loc, "source '%s' has no field '%.*s'", d->name, (int)e->member.flen, e->member.field);
+                /* net rates are the one polled thing in an otherwise
+                 * event-driven source: only a config that actually reads
+                 * them puts net() on the shared tick (idle = 0 CPU). */
+                if (sd && !strcmp(sd->name, "net") &&
+                    (nameq(e->member.field, e->member.flen, "rx_kbps") ||
+                     nameq(e->member.field, e->member.flen, "tx_kbps")))
+                    s->r->net_rates_used = 1;
             }
             add_dep(s, d->name);
             return;

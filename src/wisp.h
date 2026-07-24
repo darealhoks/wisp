@@ -95,6 +95,17 @@ extern uint32_t id_pointer, id_keyboard;
 extern uint32_t id_gamma_mgr;
 extern uint32_t id_slock_mgr, id_slock;
 extern uint32_t id_extws_mgr;    /* ext_workspace_manager_v1; 0 = unsupported */
+#ifdef WISP_HAS_TOPLEVEL
+/* zwlr_foreign_toplevel — app-aliveness source (wl_toplevel.c). Rides the main
+ * wl_display fd; getters read a fixed match table codegen emits (stage 2). */
+extern uint32_t id_toplevel_mgr;               /* 0 = compositor lacks the global */
+void tl_bind(uint32_t name, uint32_t ver);     /* called from the registry handler */
+void tl_on_registry_remove(uint32_t name);     /* manager global vanished */
+int  tl_handle_event(uint32_t obj, uint16_t op, uint8_t *body, uint32_t bodylen);
+int  tl_count(int match_idx);
+int  tl_exists(int match_idx);
+const char *tl_title(int match_idx);
+#endif
 #ifdef WISP_FRACTIONAL
 extern uint32_t id_viewporter, id_frac_mgr;   /* 0 = compositor lacks them */
 void     widget_frac_attach(Widget *w);       /* per-surface viewport + scale listener */
@@ -222,6 +233,10 @@ struct Widget {
     uint32_t   id_pool;
     int        n_slots;
     BufSlot    slots[2];
+    /* Index of the slot last attached, -1 if none. Copy-forward reads it even
+     * after buffer-release: a released shm buffer is still client-owned memory
+     * we mapped, so its pixels remain the last frame until we overwrite them. */
+    int        last_attached;
 
     /* Frame callback for animation (NULL when idle). */
     uint32_t   frame_cb;
@@ -352,6 +367,9 @@ void    widget_ensure_pool(Widget *w, int n_slots);
 void    widget_free_pool(Widget *w);
 BufSlot *widget_free_slot(Widget *w);
 void    widget_attach(Widget *w, BufSlot *s, int request_frame);
+void    widget_attach_rect(Widget *w, BufSlot *s, int request_frame,
+                           int x, int y, int dw, int dh);
+int     widget_copy_forward(Widget *w, BufSlot *dst);
 /* Cutout registry: one surface can punch a transparent rect through another
  * surface's pixels (e.g. OSD body cuts the bar strip underneath so the
  * translucent stack doesn't double-blend). Target keyed by DSL surface name.
@@ -367,7 +385,7 @@ void    widget_attach(Widget *w, BufSlot *s, int request_frame);
 void    cutout_set  (const char *target, Output *scope, int x, int y, int w, int h);
 void    cutout_clear(const char *target, Output *scope);
 void    cutout_drop_output(Output *o);   /* clear all cutouts scoped to a removed output */
-void    cutout_apply(const char *self,   Output *self_out, uint32_t *px, int sw, int sh);
+int     cutout_apply(const char *self,   Output *self_out, uint32_t *px, int sw, int sh);
 /* Rect of the bar cell most recently clicked, so a popup opened as a result of
  * that click can be anchored under it instead of centered. Recorded by the
  * generated click dispatch, consumed (and time-boxed) by menu_create. */
@@ -398,6 +416,7 @@ void    widget_set_input_region_multi(Widget *w, const Rect *rects, int n);
 void render_set_scale(int scale120);   /* 120ths: 120 = 1x, 180 = 1.5x */
 
 void clear_buf(uint32_t *px, int w, int h, uint32_t c);
+void clear_band(uint32_t *px, int w, int h, int y0, int y1, uint32_t c);
 void fill_rect(uint32_t *px, int sw, int sh, int x, int y, int w, int h, uint32_t c);
 void fill_rect_rounded(uint32_t *px, int sw, int sh,
                        int x, int y, int w, int h,
@@ -498,16 +517,67 @@ typedef struct {
     int bat_charging;
     int vpn_state;     /* 0=off 1=on 2=stale */
     int wifi_level;    /* -1=off, 0..3 */
+    int net_up;        /* default route exists */
+    int net_rx_kbps;   /* KB/s over the last shared tick */
+    int net_tx_kbps;
+    int backlight_pct; /* -1 if no backlight device */
 } Status;
 
 extern Status status;
 
 void status_init(void);
-/* Per-kind probe override from a source arg: kind = "temp"/"bat"/"wifi"/"disk",
- * val = zone / battery name / iface / mount path. Call before first sample. */
+/* Per-kind probe override from a source arg: kind = "temp"/"bat"/"net"/"disk"/
+ * "backlight", val = zone / battery name / iface / mount path / device name.
+ * Call before first sample. */
 void status_set_arg(const char *kind, const char *val);
-void status_tick(int tick_n);   /* called once per second */
+void status_tick(int tick_n);   /* called once per shared status tick (1 s default) */
 void status_sample_all(void);
+/* vpn state + net link (up/ssid/signal) — not on the shared tick; driven by
+ * rtnetlink events (netlink.c) and the slow signal timer. Rates (rx/tx) DO
+ * ride the shared tick, sampled in status_tick when a config reads them. */
+void status_sample_vpn(void);
+void status_sample_net(void);
+/* bat capacity/charging — driven by kernel uevents + a slow fallback timer. */
+void status_sample_bat(void);
+/* disk free space — driven by its own slow timer (DISK_S), off the shared tick. */
+void status_sample_disk(void);
+/* backlight % — driven by kernel uevents (SUBSYSTEM=backlight), no timer. */
+void status_sample_backlight(void);
+
+/* rtnetlink monitor (netlink.c): one NETLINK_ROUTE socket subscribed to link +
+ * IPv4-addr + route groups. Any event calls wispgen_netlink_changed() (weak,
+ * emitted by wispc when a config uses vpn()/net()). Opened only for those. */
+extern int nl_fd;
+void nl_init(void);
+void nl_dispatch(void);
+/* Kernel uevent monitor (same file): NETLINK_KOBJECT_UEVENT socket filtered to
+ * SUBSYSTEM=power_supply / backlight; events call wispgen_uevent_power() /
+ * wispgen_uevent_backlight() (weak, emitted by wispc when a config uses
+ * bat() / backlight()). Opened only for those configs. */
+extern int uev_fd;
+void uev_init(void);
+void uev_dispatch(void);
+
+/* ============================================================ */
+/* power-profiles-daemon client (power.c) — system bus           */
+/* ============================================================ */
+
+extern int pp_fd;               /* -1 while the system bus / ppd is absent */
+void pp_connect(void);
+void pp_dispatch(void);
+const char *pp_profile(void);   /* "performance"/"balanced"/"power-saver", "" unknown */
+
+/* ============================================================ */
+/* BlueZ client (bluez.c) — system bus                           */
+/* ============================================================ */
+
+extern int bz_fd;               /* -1 while the system bus / bluetoothd is absent */
+void bz_connect(void);
+void bz_dispatch(void);
+int  bz_powered(void);          /* adapter Powered, 0/1 */
+int  bz_connected(void);        /* 1 if any device is connected */
+const char *bz_device(void);    /* Alias of the active device, "" if none */
+int  bz_battery(void);          /* active device Battery1 Percentage, -1 if absent */
 
 /* ============================================================ */
 /* Bar (bar.c)                                                   */
@@ -582,6 +652,8 @@ int     menu_icon_px(void);   /* icon size that fits a vertical row */
 /* Hook fired once per menu lifetime with the picked ORIGINAL item index
  * (-1 on cancel), then cleared. Used by apps.c to bump usage + free state. */
 void    menu_set_pick_hook(void (*fn)(int idx));
+/* Nonzero only while the click-off press is cancelling menus (wisp.c). */
+extern int menu_clickoff;
 /* Geometry for the NEXT menu_create only (consumed like click_anchor).
  * Zero fields fall back to the template's MENU_* values. */
 void    menu_set_geom(const WispMenuGeom *g);
@@ -625,6 +697,7 @@ typedef struct { int y, vh, sh, settled, closing; } OsdSlabGeom;
 int  osd_slab_layout(Widget *w);              /* wrap + measure + tween; → n_active */
 int  osd_pill_layout(Widget *w);              /* pill: one fixed-height slab; → 0 or 1 */
 void osd_slab_geom(Widget *w, int i, OsdSlabGeom *g);
+int  osd_dirty_band(Widget *w, int *y0, int *y1);  /* buffer rows to repaint; 0 = full */
 const char *osd_slab_body(int i);             /* wrapped body, "\n"-joined */
 int  osd_slab_nbody(int i);                   /* wrapped line count */
 void osd_stack_input_region(Widget *w);
@@ -764,6 +837,7 @@ const char     *tray_title(int i);
 const char     *tray_id(int i);
 const char     *tray_status(int i);
 const uint32_t *tray_icon(int i);          /* TRAY_ICON_PX² premultiplied ARGB, or NULL */
+int             tray_menu_is_open(int i);  /* item's dbusmenu popup is on screen */
 void            tray_click(int i, const char *member);  /* "Activate", … */
 void            tray_menu(int i);          /* dbusmenu popup, or SecondaryActivate */
 
@@ -884,6 +958,7 @@ uint32_t anim_start_color(uint32_t *target, uint32_t from, uint32_t to,
 void     anim_cancel_for(void *target);
 void     anim_tick(int64_t now);
 int      anim_fd(void);
+int      anim_active(void);       /* >0 while any tween runs */
 void     anim_on_tfd(void);
 int      anim_px(double v);      /* tweened size -> pixels, pair-stable */
 double   anim_ease(int easing, double t);  /* exposed for hud reveal tween */

@@ -18,6 +18,10 @@
 Anim anims[ANIM_MAX];
 static int anim_active_count = 0;
 
+/* Non-zero while any tween is running — the bar's partial-repaint path bails to
+ * a full render then, since a tween may move any cell. */
+int anim_active(void) { return anim_active_count; }
+
 static int     anim_tfd = -1;
 static int     anim_armed = 0;
 

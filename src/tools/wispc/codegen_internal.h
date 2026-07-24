@@ -60,6 +60,7 @@ typedef enum {
     DRV_TAGS,
     DRV_EXEC,
     DRV_DBUS,
+    DRV_INOTIFY,
     DRV_WISP,   /* in-process daemon state; no fd, pinged by wispgen_wisp_state_changed() */
 } DrvKind;
 
@@ -80,11 +81,26 @@ typedef struct {
 
 const SrcDrv *find_drv(const char *name, size_t n);
 const char   *drv_field_expr(const SrcDrv *d, const char *f, size_t n, int *is_str);
+/* Stable bit index of a source in the srcs[] array — the bit it owns in the
+ * per-bar `bar_dirty_srcs_<surf>` mask. -1 if not a source. Both emit_bindings
+ * (writer) and the surface render (item dep masks) must agree on it, which they
+ * do because ctx->srcs is the same array codegen_emit passes to emit_bindings. */
+int           src_bit(SrcInst *srcs, int nsrc, const char *name, size_t nlen);
 int           collect_srcs(Unit *u, SrcInst *out, int max);
 SrcInst      *find_inst(SrcInst *s, int n, const char *name, size_t L);
 int           has_status_src(SrcInst *s, int n);
+int           has_polled_status_src(SrcInst *s, int n);  /* status kinds still on the 1 Hz tick */
+int           has_vpn_src(SrcInst *s, int n);
+int           has_net_src(SrcInst *s, int n);
+int           has_backlight_src(SrcInst *s, int n);
+/* net rx/tx read anywhere in the config → net() joins the shared tick.
+ * Set by codegen_emit from SemaResult before collect_srcs runs. */
+extern int    cg_net_rates_used;
+int           has_bat_src(SrcInst *s, int n);
+int           has_disk_src(SrcInst *s, int n);
 int           has_tags(SrcInst *s, int n);
 int           has_dbus_src(SrcInst *s, int n);
+int           tl_match_index(SrcInst *s, int n, const SrcInst *target);
 void          emit_sources(FILE *o, SrcInst *srcs, int nsrc);
 void          emit_bindings(FILE *o, SrcInst *srcs, int nsrc, SemaResult *r,
                             CGCtx *ctx);
@@ -137,6 +153,12 @@ struct CGCtx {
     Decl   **konst; int nkonst;
     Local locals[16]; int nlocals;
     const char *widget_var;
+    /* When set, the draw loop is emitting a partial-repaint-capable bar: each
+     * item's draw is gated on `!__partial || (dep_mask & __wds)`, and a dirty
+     * cell is first overwritten with `surface_bg` before its content redraws.
+     * Set only around an eligible plain bar surface's draw loop. */
+    int   partial_ok;
+    uint32_t surface_bg;
     FILE *prelude;
     char *prelude_buf; size_t prelude_sz;
     int   buf_seq;
@@ -186,6 +208,7 @@ typedef struct {
     int    group_id;        /* -1 = not in a group; else group index */
     bool   group_first;     /* first member of its group (draws container) */
     Group *grp;             /* container props, set on group_first only */
+    uint64_t dep_mask;      /* bar_dirty_srcs bits this item's display depends on */
 } BarItem;
 
 void assign_handler_idx(BarItem *items, int nitems);

@@ -4,11 +4,11 @@
 source time   = clock("%H:%M");
 source date_s = clock("%b %-d");
 source tags   = tags();
-source cpu_s  = cpu();
-source mem_s  = mem();
+source cpu_s  = cpu(every="2s");
+source mem_s  = mem(every="2s");
 source bat_s  = bat("BAT0");
-source temp_s = temp();
-source wifi_s = wifi("wlan0");
+source temp_s = temp(every="2s");
+source wifi_s = net("");
 /* SUPER+b (mango) → `wispctl hide toggle`: bar + HUD gate on this. */
 source hid    = ui_hidden();
 source tray_s = tray(icon_size=20);
@@ -128,6 +128,7 @@ surface bar {
     for tray_item in tray_s.items {
       cell.tray {
         icon       = tray_item.icon;
+        bg         = tray_item.menu_open ? REST : #00000000;   // stays lit while the popup is up
         text       = tray_item.has_icon || TRAY_ICONS_ONLY ? "" : tray_item.id;
         visible    = tray_item.status != "Passive"
                      && (tray_item.has_icon || !TRAY_ICONS_ONLY);
@@ -172,7 +173,7 @@ widget { fg = TEXT; }
 /* In-process state — no poll timer, no fork; the daemon pings on mutation. */
 source gamma_warm = gamma_warm();
 source dnd_on     = dnd();
-source mirror_on  = exec_line("mirror status", every="2s", refresh="instant");
+source mirror_on  = toplevel(app_id="at.yrlf.wl_mirror");
 
 /* Geometry: 32-px hit targets, 6-px gaps → row = 5·(32+6) − 6 = 184 (layout
  * adds `pad` per widget then drops the trailing one). The row is centred in
@@ -217,9 +218,8 @@ surface hud {
   widget sep4.sep { text = "/"; }
   widget mirror_btn.btn {
     icon = 0xf24d;
-    fg = mirror_on.value == "on" ? PRIM : TEXT;
+    fg = mirror_on.exists ? PRIM : TEXT;
     on_click() = {
-      set(mirror_on, mirror_on.value == "on" ? "off" : "on");
       exec("mirror toggle");
     };
   }
@@ -239,7 +239,7 @@ surface osd {
   spawned_by = osd;
   layer = overlay;
   anchor = top;
-  max = 8; width = 340; height = 60; margin = 6; gap = 0;   // margin > 0 → float layout
+  max = 4; width = 340; height = 60; margin = 6; gap = 0;   // margin > 0 → float layout
   pad_x = 14; icon_gap = 12; prog_h = 10;
   body_lines = 4; body_max = 256;
   timeout_low = 3000; timeout_normal = 5000; timeout = 1200;
@@ -287,8 +287,10 @@ surface pill {
   anchor = top;
   width = 220; height = 40; margin = 3; radius = 8; font_size = 20;
 
-  widget icon { align = left; width = 40; pad = 4; icon = $icon; }
-  widget prog { slider; align = left; width = 162; height = 10;
+  /* tight ~10px around the glyph, ~16px bar→edge; x_offset compensates the
+     wide speaker glyphs whose wave arcs hang left of the column center */
+  widget icon { align = left; width = 40; pad = 0; x_offset = 3; icon = $icon; }
+  widget prog { slider; align = left; width = 164; height = 10;
                 value = $progress; value_max = 100;
                 track_bg = REST; track_fg = WSACT; track_radius = 5; }
 }
@@ -324,7 +326,9 @@ gamma {
 
 wallpaper {
   path = "~/next/rice/themes/current/wallpaper.png";
-  transition = fade;
+  transition = wipe;
+  wipe_dir   = down_right;
+  wipe_soft  = 200;
   fade_ms    = 300;
   bg         = SOLID;
 }

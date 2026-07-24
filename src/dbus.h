@@ -73,6 +73,14 @@ typedef struct {
 
 uint32_t send_msg(const Msg *m);
 
+/* dbus_wire.c — connection-agnostic guts shared with power.c's system-bus
+ * client: full message marshal (caller owns serial + socket), SASL EXTERNAL,
+ * and bus-address parsing (returns >0 abstract-namespace length, 0 for a
+ * filesystem path, -1 on parse failure). */
+void dbus_msg_build(W *h, const Msg *m, uint32_t serial);
+int  dbus_sasl_auth(int fd);
+int  dbus_parse_bus_addr(const char *spec, char *out, size_t cap);
+
 /* Async method call: sends `m` and routes its METHOD_RETURN/ERROR to `cb`.
  * `r` is positioned at the reply body, `sig` is its signature, `is_err` is 1
  * for an ERROR (body is then the error message, if any). `sender` is the

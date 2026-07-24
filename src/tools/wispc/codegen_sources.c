@@ -21,8 +21,23 @@ static const SrcDrv DRVS[] = {
     { "disk",    DRV_STATUS,  {{"pct", "status.disk_pct", 0}} },
     { "vpn",     DRV_STATUS,  {{"state", "wispgen_vpn_state_s()", 1},
                                {"ok", "(status.vpn_state == 1)", 0}} },
-    { "wifi",    DRV_STATUS,  {{"ssid", "wispgen_wifi_ssid()", 1},
-                               {"signal", "status.wifi_level", 0}} },
+    /* net: up/ssid/signal are rtnetlink-event-driven; rx/tx ride the shared
+     * tick, and only when a config reads them (see status_kind_polled). */
+    { "net",     DRV_STATUS,  {{"up", "status.net_up", 0},
+                               {"ssid", "wispgen_net_ssid()", 1},
+                               {"signal", "status.wifi_level", 0},
+                               {"rx_kbps", "status.net_rx_kbps", 0},
+                               {"tx_kbps", "status.net_tx_kbps", 0}} },
+    { "backlight",DRV_STATUS, {{"pct", "status.backlight_pct", 0}} },
+    /* power_profile rides DRV_WISP: power.c owns pp_fd, repaints via
+     * wispgen_wisp_state_changed() on every bus event. */
+    { "power_profile",DRV_WISP,{{"profile", "pp_profile()", 1}} },
+    /* bluez rides DRV_WISP: bluez.c owns bz_fd, repaints via
+     * wispgen_wisp_state_changed() on every bus event. */
+    { "bluez",   DRV_WISP,    {{"powered",   "bz_powered()",   0},
+                               {"connected", "bz_connected()", 0},
+                               {"device",    "bz_device()",    1},
+                               {"battery",   "bz_battery()",   0}} },
     { "tags",DRV_TAGS,{{"title", "(($W)->s.bar.title)", 1}} },
     /* DRV_WISP: value is read straight from daemon state, so polling it via
      * `exec_line("wispctl …")` (a fork + socket round-trip back into ourselves
@@ -45,7 +60,14 @@ static const SrcDrv DRVS[] = {
                                {"mic_vol",  "pw_mic_vol_pct()", 0},
                                {"mic_mute", "pw_mic_muted()", 0},
                                {"ok",       "pw_ok()",        0}} },
+    /* toplevel rides DRV_WISP (repainted via wispgen_wisp_state_changed(), which
+     * wl_toplevel.c calls on every published change). Fields lower to
+     * tl_exists/tl_count/tl_title(<idx>) where <idx> is the declaration's slot in
+     * the emitted tl_match_app_ids[] table — done in lower_member, since the
+     * static c_expr here can't carry the per-declaration index. */
+    { "toplevel",DRV_WISP,    {{"exists", "", 0}, {"count", "", 0}, {"title", "", 1}} },
     { "exec_line",DRV_EXEC,   {{"value", "", 1}} },  /* lowering: see lower_member */
+    { "inotify", DRV_INOTIFY, {{"value", "", 1}} },  /* lowering: see lower_member */
     { "dbus_signal",DRV_DBUS, {{"value", "", 1}} },  /* lowering: see lower_member */
 };
 #define NDRVS (int)(sizeof DRVS / sizeof DRVS[0])
@@ -67,6 +89,26 @@ const char *drv_field_expr(const SrcDrv *d, const char *f, size_t n, int *is_str
 }
 
 /* SrcInst is declared in codegen_internal.h. */
+
+/* "<int>(s|ms)"; a bare number is ms. */
+static int parse_dur_ms(const char *s, size_t L) {
+    long v = 0;
+    size_t i = 0;
+    while (i < L && s[i] >= '0' && s[i] <= '9') { v = v * 10 + (s[i] - '0'); i++; }
+    if (i + 1 < L && s[i] == 'm' && s[i + 1] == 's') return (int)v;
+    if (i < L && s[i] == 's') return (int)v * 1000;
+    return (int)v;
+}
+
+/* every= is only meaningful on kinds the shared status tick samples;
+ * vpn/bat/disk/backlight run on their own event/slow-timer cadence, and net
+ * joins the tick only when the config reads its rx/tx rates. */
+int cg_net_rates_used;
+static int status_kind_polled(const SrcDrv *d) {
+    if (!strcmp(d->name, "net")) return cg_net_rates_used;
+    return strcmp(d->name, "vpn") && strcmp(d->name, "bat") &&
+           strcmp(d->name, "disk") && strcmp(d->name, "backlight");
+}
 
 int collect_srcs(Unit *u, SrcInst *out, int max) {
     int n = 0;
@@ -105,13 +147,8 @@ int collect_srcs(Unit *u, SrcInst *out, int max) {
                 size_t kl = c->call.anlen ? c->call.anlen[k] : 0;
                 if (kn && kl == 5 && memcmp(kn, "every", 5) == 0 &&
                     c->call.args[k]->kind == EX_STRING) {
-                    /* parse "<int>(s|ms)" */
-                    const char *s = c->call.args[k]->str.s; size_t L = c->call.args[k]->str.n;
-                    long v = 0; size_t i = 0;
-                    while (i < L && s[i] >= '0' && s[i] <= '9') { v = v*10 + (s[i]-'0'); i++; }
-                    if (i+1 < L && s[i]=='m' && s[i+1]=='s') out[n].interval_ms = (int)v;
-                    else if (i < L && s[i] == 's')          out[n].interval_ms = (int)v * 1000;
-                    else                                     out[n].interval_ms = (int)v;
+                    out[n].interval_ms = parse_dur_ms(c->call.args[k]->str.s,
+                                                      c->call.args[k]->str.n);
                 }
                 /* refresh_ms="<n>(s|ms)" — delay before re-poll after on_click.
                  * `refresh_ms="0"` (or `refresh="instant"`) skips the timerfd
@@ -125,15 +162,12 @@ int collect_srcs(Unit *u, SrcInst *out, int max) {
                      || (L == 5 && memcmp(s, "sync", 4) == 0)) {
                         out[n].refresh_ms = 0;
                     } else {
-                        long v = 0; size_t i = 0;
-                        while (i < L && s[i] >= '0' && s[i] <= '9') { v = v*10 + (s[i]-'0'); i++; }
-                        if (i+1 < L && s[i]=='m' && s[i+1]=='s') out[n].refresh_ms = (int)v;
-                        else if (i < L && s[i] == 's')          out[n].refresh_ms = (int)v * 1000;
-                        else                                    out[n].refresh_ms = (int)v;
+                        out[n].refresh_ms = parse_dur_ms(s, L);
                     }
                 }
             }
-            if (out[n].interval_ms < 50) out[n].interval_ms = 50;
+            /* every="0" = one-shot: probe at startup + on refresh() only. */
+            if (out[n].interval_ms && out[n].interval_ms < 50) out[n].interval_ms = 50;
             if (out[n].refresh_ms < 0)  out[n].refresh_ms = 0;
         } else if (drv->drv == DRV_DBUS) {
             if (c->call.nargs < 2 ||
@@ -166,16 +200,82 @@ int collect_srcs(Unit *u, SrcInst *out, int max) {
                     return -1;
                 }
             }
-        } else if (drv->drv == DRV_STATUS && c->call.nargs >= 1 &&
-                   c->call.args[0]->kind == EX_STRING) {
-            /* per-kind probe arg (temp(zone=), bat(name=), wifi(iface=),
-             * disk(path=)) — value only, the keyword is implied by the kind */
-            out[n].fmt  = c->call.args[0]->str.s;
-            out[n].flen = c->call.args[0]->str.n;
+        } else if (drv->drv == DRV_INOTIFY) {
+            /* inotify(path="/abs/file") — watch is on the parent dir so atomic
+             * rename writes (editors, status files) keep working; path must be
+             * absolute so the dir/base split is meaningful. */
+            for (int k = 0; k < c->call.nargs; k++) {
+                const char *kn = c->call.argnames ? c->call.argnames[k] : NULL;
+                size_t kl = c->call.anlen ? c->call.anlen[k] : 0;
+                if (kn && kl == 4 && memcmp(kn, "path", 4) == 0 &&
+                    c->call.args[k]->kind == EX_STRING) {
+                    out[n].fmt  = c->call.args[k]->str.s;
+                    out[n].flen = c->call.args[k]->str.n;
+                } else {
+                    diag_error(d->loc, "codegen: inotify() takes only path=\"…\"");
+                    return -1;
+                }
+            }
+            if (!out[n].fmt || out[n].fmt[0] != '/' || out[n].fmt[out[n].flen - 1] == '/') {
+                diag_error(d->loc, "codegen: inotify() requires an absolute file path=\"/…\"");
+                return -1;
+            }
+        } else if (drv->drv == DRV_WISP && !strcmp(drv->name, "toplevel")) {
+            /* toplevel(app_id="…") — app_id is required; stored in fmt for the
+             * match-table emission and used as the source's match key. */
+            for (int k = 0; k < c->call.nargs; k++) {
+                const char *kn = c->call.argnames ? c->call.argnames[k] : NULL;
+                size_t kl = c->call.anlen ? c->call.anlen[k] : 0;
+                if (kn && kl == 6 && memcmp(kn, "app_id", 6) == 0 &&
+                    c->call.args[k]->kind == EX_STRING) {
+                    out[n].fmt  = c->call.args[k]->str.s;
+                    out[n].flen = c->call.args[k]->str.n;
+                } else {
+                    diag_error(d->loc, "codegen: toplevel() takes only app_id=\"…\"");
+                    return -1;
+                }
+            }
+            if (!out[n].fmt) {
+                diag_error(d->loc, "codegen: toplevel() requires app_id=\"…\"");
+                return -1;
+            }
+        } else if (drv->drv == DRV_STATUS) {
+            for (int k = 0; k < c->call.nargs; k++) {
+                const char *kn = c->call.argnames ? c->call.argnames[k] : NULL;
+                size_t kl = c->call.anlen ? c->call.anlen[k] : 0;
+                if (c->call.args[k]->kind != EX_STRING) {
+                    diag_error(d->loc, "codegen: %s() args must be strings", drv->name);
+                    return -1;
+                }
+                if (kn && kl == 5 && memcmp(kn, "every", 5) == 0) {
+                    if (!status_kind_polled(drv)) {
+                        diag_error(d->loc, "codegen: every= only applies to polled kinds (cpu/mem/temp); %s() is event-driven", drv->name);
+                        return -1;
+                    }
+                    out[n].interval_ms = parse_dur_ms(c->call.args[k]->str.s,
+                                                      c->call.args[k]->str.n);
+                    if (out[n].interval_ms < 250) {
+                        diag_error(d->loc, "codegen: %s(every=) must be >= 250ms", drv->name);
+                        return -1;
+                    }
+                } else {
+                    /* per-kind probe arg (temp(zone=), bat(name=), net(iface=),
+                     * disk(path=)) — value only, the keyword is implied by the kind */
+                    out[n].fmt  = c->call.args[k]->str.s;
+                    out[n].flen = c->call.args[k]->str.n;
+                }
+            }
         }
         n++;
     }
     return n;
+}
+
+int src_bit(SrcInst *srcs, int nsrc, const char *name, size_t nlen) {
+    for (int i = 0; i < nsrc; i++)
+        if (srcs[i].decl->nlen == nlen && memcmp(srcs[i].decl->name, name, nlen) == 0)
+            return i;
+    return -1;
 }
 
 SrcInst *find_inst(SrcInst *s, int n, const char *name, size_t L) {
@@ -192,6 +292,37 @@ int has_status_src(SrcInst *s, int n) {
     for (int i = 0; i < n; i++) if (s[i].drv->drv == DRV_STATUS) return 1;
     return 0;
 }
+static int is_status_named(const SrcInst *s, const char *nm) {
+    return s->drv->drv == DRV_STATUS && !strcmp(s->drv->name, nm);
+}
+int has_vpn_src(SrcInst *s, int n) {
+    for (int i = 0; i < n; i++) if (is_status_named(&s[i], "vpn")) return 1;
+    return 0;
+}
+int has_net_src(SrcInst *s, int n) {
+    for (int i = 0; i < n; i++) if (is_status_named(&s[i], "net")) return 1;
+    return 0;
+}
+int has_bat_src(SrcInst *s, int n) {
+    for (int i = 0; i < n; i++) if (is_status_named(&s[i], "bat")) return 1;
+    return 0;
+}
+int has_disk_src(SrcInst *s, int n) {
+    for (int i = 0; i < n; i++) if (is_status_named(&s[i], "disk")) return 1;
+    return 0;
+}
+int has_backlight_src(SrcInst *s, int n) {
+    for (int i = 0; i < n; i++) if (is_status_named(&s[i], "backlight")) return 1;
+    return 0;
+}
+/* The 1 Hz shared tick is needed only for polled status kinds; the event/slow-
+ * timer kinds don't arm it, so a config using only those runs no status timer. */
+int has_polled_status_src(SrcInst *s, int n) {
+    for (int i = 0; i < n; i++)
+        if (s[i].drv->drv == DRV_STATUS && status_kind_polled(s[i].drv))
+            return 1;
+    return 0;
+}
 int has_tags(SrcInst *s, int n) {
     for (int i = 0; i < n; i++) if (s[i].drv->drv == DRV_TAGS) return 1;
     return 0;
@@ -200,22 +331,36 @@ int has_dbus_src(SrcInst *s, int n) {
     for (int i = 0; i < n; i++) if (s[i].drv->drv == DRV_DBUS) return 1;
     return 0;
 }
+static int is_toplevel(const SrcInst *s) {
+    return s->drv->drv == DRV_WISP && !strcmp(s->drv->name, "toplevel");
+}
+/* Match-table slot of a toplevel source = its ordinal among toplevel sources in
+ * declaration order. wl_toplevel.c reads tl_match_app_ids[] in this same order,
+ * so the index a field lowers to and the runtime's slot agree. */
+int tl_match_index(SrcInst *s, int n, const SrcInst *target) {
+    int idx = 0;
+    for (int i = 0; i < n; i++) {
+        if (&s[i] == target) return idx;
+        if (is_toplevel(&s[i])) idx++;
+    }
+    return -1;
+}
 
 void emit_sources(FILE *o, SrcInst *srcs, int nsrc) {
     fputs("/* Generated by wispc. Do not edit. */\n", o);
     fputs("#include \"wisp.h\"\n", o);
     fputs("#include <stdio.h>\n#include <string.h>\n#include <time.h>\n#include <errno.h>\n", o);
-    fputs("#include <unistd.h>\n#include <fcntl.h>\n#include <signal.h>\n#include <sys/timerfd.h>\n#include <sys/wait.h>\n\n", o);
+    fputs("#include <unistd.h>\n#include <fcntl.h>\n#include <signal.h>\n#include <sys/timerfd.h>\n#include <sys/wait.h>\n#include <sys/inotify.h>\n\n", o);
 
     /* Shared helpers (only emitted if their producing source is in use, so
      * the linker doesn't drag in unused state). */
-    int need_mem = 0, need_vpn = 0, need_wifi = 0;
+    int need_mem = 0, need_vpn = 0, need_net = 0;
     for (int i = 0; i < nsrc; i++) {
         if (srcs[i].drv->drv != DRV_STATUS) continue;
         const char *nm = srcs[i].drv->name;
-        if (!strcmp(nm, "mem"))  need_mem = 1;
-        if (!strcmp(nm, "vpn"))  need_vpn = 1;
-        if (!strcmp(nm, "wifi")) need_wifi = 1;
+        if (!strcmp(nm, "mem")) need_mem = 1;
+        if (!strcmp(nm, "vpn")) need_vpn = 1;
+        if (!strcmp(nm, "net")) need_net = 1;
     }
     if (need_mem) {
         fputs("int wispgen_mem_pct(void) {\n"
@@ -238,11 +383,12 @@ void emit_sources(FILE *o, SrcInst *srcs, int nsrc) {
               "    switch (status.vpn_state) { case 1: return \"on\"; case 2: return \"stale\"; default: return \"off\"; }\n"
               "}\n\n", o);
     }
-    if (need_wifi) {
-        fputs("const char *wispgen_wifi_ssid(void) {\n"
+    if (need_net) {
+        fputs("const char *wispgen_net_ssid(void) {\n"
               "    static char ssid[128] = \"\";\n"
               "    if (status.wifi_level < 0) { ssid[0] = 0; return ssid; }\n"
-              "    if (ssid[0]) return ssid;\n"
+              /* No cross-call cache: on a link change the iface may differ, and
+               * callers only reach here on a wifi event or a render — cheap. */
               "    FILE *f = fopen(\"/proc/net/wireless\", \"r\");\n"
               "    if (f) {\n"
               "        char ln[128]; int n = 0;\n"
@@ -413,6 +559,52 @@ void emit_sources(FILE *o, SrcInst *srcs, int nsrc) {
             fputs  ("}\n\n", o);
             free(cmd);
         }
+        if (s->drv->drv == DRV_INOTIFY) {
+            /* Poll-free file source: one inotify fd per source, watch on the
+             * parent dir (IN_CLOSE_WRITE|IN_MOVED_TO|IN_CREATE|IN_DELETE) so
+             * both in-place writes and atomic renames re-read the file. */
+            char *path = strndup0(s->fmt, s->flen);
+            char *base = strrchr(path, '/') + 1;  /* collect_srcs guarantees '/' */
+            char *dir  = strndup0(path, base == path + 1 ? 1 : (size_t)(base - path - 1));
+            fprintf(o, "int  src_%s_fd = -1;\n", nm);
+            fprintf(o, "char src_%s_value[256];\n", nm);
+            fprintf(o, "static void src_%s_read(void) {\n", nm);
+            fprintf(o, "    src_%s_value[0] = 0;\n", nm);
+            fprintf(o, "    FILE *f = fopen(\"%s\", \"r\");\n", path);
+            fputs  ("    if (!f) return;\n", o);
+            fprintf(o, "    if (fgets(src_%s_value, sizeof src_%s_value, f)) {\n", nm, nm);
+            fprintf(o, "        char *nl = strchr(src_%s_value, '\\n');\n", nm);
+            fputs  ("        if (nl) *nl = 0;\n", o);
+            fputs  ("    } else {\n", o);
+            fprintf(o, "        src_%s_value[0] = 0;\n", nm);
+            fputs  ("    }\n", o);
+            fputs  ("    fclose(f);\n", o);
+            fputs  ("}\n", o);
+            fprintf(o, "void src_%s_init(void) {\n", nm);
+            fprintf(o, "    src_%s_fd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);\n", nm);
+            fprintf(o, "    if (src_%s_fd < 0 ||\n", nm);
+            fprintf(o, "        inotify_add_watch(src_%s_fd, \"%s\",\n", nm, dir);
+            fputs  ("                          IN_CLOSE_WRITE | IN_MOVED_TO | IN_CREATE | IN_DELETE) < 0)\n", o);
+            fprintf(o, "        die(\"inotify: %s: %%s\", strerror(errno));\n", dir);
+            fprintf(o, "    src_%s_read();\n", nm);
+            fputs  ("}\n", o);
+            fprintf(o, "void src_%s_handle(void) {\n", nm);
+            fputs  ("    char buf[1024] __attribute__((aligned(__alignof__(struct inotify_event))));\n", o);
+            fputs  ("    int hit = 0;\n", o);
+            fputs  ("    ssize_t n;\n", o);
+            fprintf(o, "    while ((n = read(src_%s_fd, buf, sizeof buf)) > 0) {\n", nm);
+            fputs  ("        for (char *p = buf; p < buf + n; ) {\n", o);
+            fputs  ("            struct inotify_event *e = (struct inotify_event *)p;\n", o);
+            fprintf(o, "            if (e->len && strcmp(e->name, \"%s\") == 0) hit = 1;\n", base);
+            fputs  ("            p += sizeof *e + e->len;\n", o);
+            fputs  ("        }\n", o);
+            fputs  ("    }\n", o);
+            fputs  ("    if (!hit) return;\n", o);
+            fprintf(o, "    src_%s_read();\n", nm);
+            fprintf(o, "    on_%s_change();\n", nm);
+            fputs  ("}\n\n", o);
+            free(dir); free(path);
+        }
         if (s->drv->drv == DRV_DBUS) {
             char *iface  = strndup0(s->fmt,  s->flen);
             char *member = strndup0(s->arg2, s->a2len);
@@ -449,28 +641,144 @@ void emit_sources(FILE *o, SrcInst *srcs, int nsrc) {
             free(iface); free(member);
         }
     }
-    /* Shared status tick: fires every second, runs status_sample_all, then
-     * calls every status source's on_change. tags sources are pinged
-     * from wl.c whenever bar_set_tags_on/title_on writes. */
+    /* One-shot status setup: per-kind probe args + initial full sample. Needed
+     * whenever any status source exists — including a vpn/net-only config that
+     * runs no shared tick. */
     if (has_status_src(srcs, nsrc)) {
-        fputs("int wispgen_status_tfd = -1;\n", o);
-        fputs("void wispgen_status_init(void) {\n", o);
-        fputs("    wispgen_status_tfd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);\n", o);
-        fputs("    struct itimerspec ts = { .it_value = { .tv_sec = 1 }, .it_interval = { .tv_sec = 1 } };\n", o);
-        fputs("    timerfd_settime(wispgen_status_tfd, 0, &ts, NULL);\n", o);
+        fputs("void wispgen_status_setup(void) {\n", o);
         for (int i = 0; i < nsrc; i++)
             if (srcs[i].drv->drv == DRV_STATUS && srcs[i].fmt)
                 fprintf(o, "    status_set_arg(\"%s\", \"%.*s\");\n",
                         srcs[i].drv->name, (int)srcs[i].flen, srcs[i].fmt);
         fputs("    status_init(); status_sample_all();\n", o);
         fputs("}\n", o);
+    }
+    /* Shared status tick — polled status kinds only (cpu/mem/temp).
+     * vpn/net/bat/backlight are event-driven (rtnetlink / uevent + slow timers), so they
+     * neither arm this timer nor fire from it. */
+    if (has_polled_status_src(srcs, nsrc)) {
+        /* One timer for all polled kinds: it runs at the fastest every= among
+         * them (default 1 s), and each tick samples every polled kind — a
+         * slower per-source cadence isn't worth a second timer. */
+        int tick_ms = 0;
+        for (int i = 0; i < nsrc; i++) {
+            if (srcs[i].drv->drv != DRV_STATUS || !status_kind_polled(srcs[i].drv)) continue;
+            if (!tick_ms || srcs[i].interval_ms < tick_ms) tick_ms = srcs[i].interval_ms;
+        }
+        fputs("int wispgen_status_tfd = -1;\n", o);
+        fputs("void wispgen_status_init(void) {\n", o);
+        fputs("    wispgen_status_tfd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);\n", o);
+        fprintf(o, "    struct itimerspec ts = { .it_value = { .tv_sec = %d, .tv_nsec = %d }, .it_interval = { .tv_sec = %d, .tv_nsec = %d } };\n",
+                tick_ms / 1000, (tick_ms % 1000) * 1000000,
+                tick_ms / 1000, (tick_ms % 1000) * 1000000);
+        fputs("    timerfd_settime(wispgen_status_tfd, 0, &ts, NULL);\n", o);
+        fputs("}\n", o);
         fputs("static unsigned wispgen_tick_n = 0;\n", o);
         fputs("void wispgen_status_handle(void) {\n", o);
         fputs("    uint64_t exp; (void)!read(wispgen_status_tfd, &exp, sizeof exp);\n", o);
         fputs("    status_tick(++wispgen_tick_n);\n", o);
         for (int i = 0; i < nsrc; i++) {
-            if (srcs[i].drv->drv != DRV_STATUS) continue;
+            if (srcs[i].drv->drv != DRV_STATUS || !status_kind_polled(srcs[i].drv)) continue;
             fprintf(o, "    on_%s_change();\n", sname(srcs[i].decl->name, srcs[i].decl->nlen));
+        }
+        fputs("}\n\n", o);
+    }
+    /* Wifi signal strength changes constantly, so it stays polled — but slowly
+     * (WIFI_SIGNAL_S) and only while the link is up; armed/disarmed as the
+     * netlink handler observes the link come and go. */
+    int have_net = has_net_src(srcs, nsrc);
+    SrcInst *net_s = NULL, *vpn_s = NULL;
+    for (int i = 0; i < nsrc; i++) {
+        if (is_status_named(&srcs[i], "net")) net_s = &srcs[i];
+        if (is_status_named(&srcs[i], "vpn")) vpn_s = &srcs[i];
+    }
+    if (have_net) {
+        const char *wn = sname(net_s->decl->name, net_s->decl->nlen);
+        fputs("int wispgen_net_sig_tfd = -1;\n", o);
+        fputs("static void wispgen_net_sig_arm(int up) {\n", o);
+        fputs("    struct itimerspec ts = {0};\n", o);
+        fputs("    if (up) { ts.it_value.tv_sec = WIFI_SIGNAL_S; ts.it_interval.tv_sec = WIFI_SIGNAL_S; }\n", o);
+        fputs("    timerfd_settime(wispgen_net_sig_tfd, 0, &ts, NULL);\n", o);
+        fputs("}\n", o);
+        fputs("void wispgen_net_sig_init(void) {\n", o);
+        fputs("    wispgen_net_sig_tfd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);\n", o);
+        fputs("    wispgen_net_sig_arm(status.wifi_level >= 0);\n", o);
+        fputs("}\n", o);
+        fputs("void wispgen_net_sig_handle(void) {\n", o);
+        fputs("    uint64_t exp; (void)!read(wispgen_net_sig_tfd, &exp, sizeof exp);\n", o);
+        fputs("    status_sample_net();\n", o);
+        fputs("    wispgen_net_sig_arm(status.wifi_level >= 0);\n", o);
+        fprintf(o, "    on_%s_change();\n", wn);
+        fputs("}\n\n", o);
+    }
+    /* bat: kernel uevents give instant AC/charging flips; a slow fallback timer
+     * still re-reads capacity % (drivers often only uevent on threshold crossings).
+     * Both paths re-sample and rely on on_*_change to suppress no-op repaints. */
+    int have_bat = has_bat_src(srcs, nsrc);
+    SrcInst *bat_s = NULL;
+    for (int i = 0; i < nsrc; i++) if (is_status_named(&srcs[i], "bat")) bat_s = &srcs[i];
+    if (have_bat) {
+        const char *bn = sname(bat_s->decl->name, bat_s->decl->nlen);
+        fputs("int wispgen_bat_tfd = -1;\n", o);
+        fputs("void wispgen_bat_init(void) {\n", o);
+        fputs("    wispgen_bat_tfd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);\n", o);
+        fputs("    struct itimerspec ts = { .it_value = { .tv_sec = BAT_FALLBACK_S },\n"
+              "                             .it_interval = { .tv_sec = BAT_FALLBACK_S } };\n", o);
+        fputs("    timerfd_settime(wispgen_bat_tfd, 0, &ts, NULL);\n", o);
+        fputs("}\n", o);
+        fputs("void wispgen_bat_handle(void) {\n", o);
+        fputs("    uint64_t exp; (void)!read(wispgen_bat_tfd, &exp, sizeof exp);\n", o);
+        fputs("    status_sample_bat();\n", o);
+        fprintf(o, "    on_%s_change();\n", bn);
+        fputs("}\n", o);
+        /* Weak-called by netlink.c on any power_supply uevent. */
+        fputs("void wispgen_uevent_power(void) {\n", o);
+        fputs("    status_sample_bat();\n", o);
+        fprintf(o, "    on_%s_change();\n", bn);
+        fputs("}\n\n", o);
+    }
+    /* backlight: kernel uevents only — the backlight class emits a change
+     * event on every brightness write, so no fallback timer. */
+    SrcInst *bl_s = NULL;
+    for (int i = 0; i < nsrc; i++) if (is_status_named(&srcs[i], "backlight")) bl_s = &srcs[i];
+    if (bl_s) {
+        fputs("void wispgen_uevent_backlight(void) {\n", o);
+        fputs("    status_sample_backlight();\n", o);
+        fprintf(o, "    on_%s_change();\n", sname(bl_s->decl->name, bl_s->decl->nlen));
+        fputs("}\n\n", o);
+    }
+    /* disk: free space moves glacially, so it rides a dedicated slow timer (DISK_S)
+     * instead of the 1 Hz tick. on_*_change suppresses no-op repaints. */
+    int have_disk = has_disk_src(srcs, nsrc);
+    SrcInst *disk_s = NULL;
+    for (int i = 0; i < nsrc; i++) if (is_status_named(&srcs[i], "disk")) disk_s = &srcs[i];
+    if (have_disk) {
+        const char *dn = sname(disk_s->decl->name, disk_s->decl->nlen);
+        fputs("int wispgen_disk_tfd = -1;\n", o);
+        fputs("void wispgen_disk_init(void) {\n", o);
+        fputs("    wispgen_disk_tfd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);\n", o);
+        fputs("    struct itimerspec ts = { .it_value = { .tv_sec = DISK_S },\n"
+              "                             .it_interval = { .tv_sec = DISK_S } };\n", o);
+        fputs("    timerfd_settime(wispgen_disk_tfd, 0, &ts, NULL);\n", o);
+        fputs("}\n", o);
+        fputs("void wispgen_disk_handle(void) {\n", o);
+        fputs("    uint64_t exp; (void)!read(wispgen_disk_tfd, &exp, sizeof exp);\n", o);
+        fputs("    status_sample_disk();\n", o);
+        fprintf(o, "    on_%s_change();\n", dn);
+        fputs("}\n\n", o);
+    }
+    /* rtnetlink handler (weak-called by netlink.c): re-sample vpn/net and
+     * repaint on real change. The on_*_change guards suppress no-op events. */
+    if (vpn_s || have_net) {
+        fputs("void wispgen_netlink_changed(void) {\n", o);
+        if (vpn_s) {
+            fputs("    status_sample_vpn();\n", o);
+            fprintf(o, "    on_%s_change();\n", sname(vpn_s->decl->name, vpn_s->decl->nlen));
+        }
+        if (have_net) {
+            fputs("    status_sample_net();\n", o);
+            fputs("    wispgen_net_sig_arm(status.wifi_level >= 0);\n", o);
+            fprintf(o, "    on_%s_change();\n", sname(net_s->decl->name, net_s->decl->nlen));
         }
         fputs("}\n\n", o);
     }
@@ -496,6 +804,24 @@ void emit_sources(FILE *o, SrcInst *srcs, int nsrc) {
         fputs("}\n\n", o);
     }
     (void)has_tags;
+
+    /* toplevel match table consumed by wl_toplevel.c (extern tl_match_app_ids /
+     * tl_n_matches). One entry per toplevel() source, in declaration order. */
+    int n_tl = 0;
+    for (int i = 0; i < nsrc; i++) if (is_toplevel(&srcs[i])) n_tl++;
+    if (n_tl) {
+        if (n_tl > 16)   /* TL_MATCH_MAX in wl_toplevel.c */
+            diag_error(srcs[0].decl->loc, "codegen: too many toplevel() sources (max 16)");
+        fputs("const char *const tl_match_app_ids[] = {\n", o);
+        for (int i = 0; i < nsrc; i++) {
+            if (!is_toplevel(&srcs[i])) continue;
+            char *aid = strndup0(srcs[i].fmt, srcs[i].flen);
+            fprintf(o, "    \"%s\",\n", aid);
+            free(aid);
+        }
+        fputs("};\n", o);
+        fprintf(o, "const int tl_n_matches = %d;\n\n", n_tl);
+    }
 }
 
 /* ============================================================ */
@@ -509,9 +835,18 @@ void emit_bindings(FILE *o, SrcInst *srcs, int nsrc, SemaResult *r,
     /* Status-field helpers live in gen_sources.c; harmless if unused. */
     fputs("int wispgen_mem_pct(void);\n"
           "const char *wispgen_vpn_state_s(void);\n"
-          "const char *wispgen_wifi_ssid(void);\n\n", o);
+          "const char *wispgen_net_ssid(void);\n\n", o);
     for (int i = 0; i < r->nsurfaces; i++)
         fprintf(o, "int dirty_%s = 1;\n", r->surface_names[i]);
+    /* Per-surface source-dirty mask: bit i = source srcs[i] changed since the
+     * last render. The bar render snapshots + resets it each frame and repaints
+     * only the items whose dep_mask intersects it (partial path in
+     * codegen_surface.c). Init all-set so the first render is a full paint.
+     * Disabled past 64 sources (no config approaches that) — mask type is u64. */
+    int masks_ok = nsrc <= 64;
+    if (masks_ok)
+        for (int i = 0; i < r->nsurfaces; i++)
+            fprintf(o, "uint64_t bar_dirty_srcs_%s = ~0ull;\n", r->surface_names[i]);
     fputc('\n', o);
 
     /* Emit `static <T> mut_<name> = <init>;` for every D_MUT declaration.
@@ -581,6 +916,9 @@ void emit_bindings(FILE *o, SrcInst *srcs, int nsrc, SemaResult *r,
             for (int k = 0; deps && deps[k]; k++) {
                 if (strcmp(deps[k], nm) == 0) {
                     fprintf(o, "    dirty_%s = 1;\n", r->surface_names[j]);
+                    if (masks_ok)
+                        fprintf(o, "    bar_dirty_srcs_%s |= (1ull << %d);\n",
+                                r->surface_names[j], i);
                     break;
                 }
             }

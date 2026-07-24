@@ -239,12 +239,17 @@ static void handle_close(R *r, uint32_t serial, const char *sender) {
 
 static void handle_get_caps(uint32_t serial, const char *sender) {
     /* reply signature: as. Body: u32 array_bytes + array of strings.
-     * Advertise just "body" and "icon-static" to keep it honest. */
+     * "actions" is advertised even though clicks only dismiss: Chromium/
+     * Electron (Discord) and Firefox refuse to use a server without it and
+     * silently show nothing.
+     * ponytail: emit ActionInvoked("default") on click if focus-on-click
+     * ever matters. */
     W b = {0};
     int len_pos = b.pos;
     wu32(&b, 0);                         /* placeholder */
     int start = b.pos;
     walign(&b, 4);
+    wstr(&b, "actions");
     wstr(&b, "body");
     wstr(&b, "icon-static");
     wstr(&b, "persistence");

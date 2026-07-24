@@ -91,6 +91,13 @@ extern void dbus_emit_closed(uint32_t id, uint32_t reason) __attribute__((weak))
 
 int dnd_on = 0;
 
+/* Partial-repaint tracker (see osd_dirty_band). osd_gen bumps on any content
+ * change the geometry alone can't reveal (a replace that keeps the slab's
+ * height but swaps text/progress); the band tracker forces a full frame then. */
+static int osd_gen = 0;
+static int osd_band_top = 0, osd_band_bot = 0;
+static int osd_band_n = -1, osd_band_gen = -1;
+
 static void update_input_region(Widget *w);
 static void start_close(Osd *o, uint32_t reason);
 #if OSD_PILL_W > 0
@@ -311,6 +318,7 @@ static void osd_attach_empty(Widget *w) {
     widget_attach(w, s, 1);
     w->s.osd.has_pixels = 0;
     w->want_pool_free = 1;
+    osd_band_n = -1;   /* pool goes away; next post starts from a full frame */
 }
 
 /* Spawn / close tween progress for one slab: 1.0 at rest, ease-out cubic in,
@@ -462,6 +470,51 @@ void osd_slab_geom(Widget *w, int i, OsdSlabGeom *g) {
     g->closing = w->s.osd.items[i].closing_at_ms > 0;
 }
 
+/* Dirty row band vs the last frame, in buffer rows. Returns 1 with [*y0,*y1)
+ * when a partial repaint is safe; 0 to force a full clear (first paint, pool
+ * realloc, slab count changed, or a content-only replace). Must run AFTER
+ * osd_slab_layout for this widget — it reads the pass-1 statics.
+ *
+ * The band is the whole active chain's buffer extent (the chain-spanning
+ * border + fillets are redrawn each frame, so the band must cover them; a
+ * suffix band would double-blend their AA edges over copied-forward pixels).
+ * The win is skipping the empty tail below the chain — the surface is sized for
+ * MAX_OSDS slabs but only 1–2 are usually live. Unioned with the previous
+ * frame's band so a collapsing chain clears the rows it vacated. */
+int osd_dirty_band(Widget *w, int *y0, int *y1) {
+    int n = 0, chain_h = 0;
+    for (int i = 0; i < MAX_OSDS; i++) {
+        if (!w->s.osd.items[i].active) break;
+        n++;
+        if (osd_visible_h[i] > 0) chain_h = osd_item_y[i] + osd_visible_h[i];
+    }
+#if OSD_ANCHOR_BR
+    /* Chain pinned to the bottom edge; fillets overhang the top by FILLET_R. */
+    int hi = w->h - OSD_TOP_MARGIN;
+    int lo = hi - chain_h - OSD_FILLET_R;
+#else
+    /* Down-growing from the top margin; the leading slab clips off the buffer
+     * top mid-slide, so start the band at row 0 (a handful of cheap rows). */
+    int lo = 0;
+    int hi = OSD_TOP_MARGIN + chain_h;
+#endif
+    if (lo < 0) lo = 0;
+    if (hi > w->h) hi = w->h;
+
+    int force = (osd_band_n != n) || (osd_band_gen != osd_gen);
+    osd_band_gen = osd_gen;
+    /* Union with last frame so vacated rows (a collapsing chain) get cleared. */
+    int b0 = lo < osd_band_top ? lo : osd_band_top;
+    int b1 = hi > osd_band_bot ? hi : osd_band_bot;
+    osd_band_top = lo;
+    osd_band_bot = hi;
+    osd_band_n = n;
+    if (force) return 0;
+    *y0 = b0;
+    *y1 = b1;
+    return 1;
+}
+
 
 void osd_render(Widget *w) {
 #if OSD_PILL_W > 0
@@ -549,6 +602,7 @@ static Widget *osd_ensure(void) {
         osd_bar_cutout_h = 0;
         osd_cutout_scope = NULL;
 #endif
+        osd_band_n = -1;   /* new surface + pool: first paint is full */
         w = osd_make_on(target);
         if (!w) return NULL;
         memcpy(w->s.osd.items, snap, sizeof snap);
@@ -619,6 +673,7 @@ uint32_t osd_post(uint32_t replace_id, const char *summary, const char *body,
     }
 
     pack(w);
+    osd_gen++;      /* content changed: force one full frame (geometry may not move) */
     osd_render(w);  /* refreshes input region from computed heights */
     return o->replace_id;
 }

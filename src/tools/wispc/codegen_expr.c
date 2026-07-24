@@ -145,6 +145,8 @@ CE lower_member(CGCtx *c, Expr *e) {
             snprintf(r.text, sizeof r.text, "tray_status(%s)", it); r.type = T_STR;
         } else if (flen == 5 && memcmp(fld, "index", 5) == 0) {
             snprintf(r.text, sizeof r.text, "(%s)", it); r.type = T_INT;
+        } else if (flen == 9 && memcmp(fld, "menu_open", 9) == 0) {
+            snprintf(r.text, sizeof r.text, "tray_menu_is_open(%s)", it); r.type = T_BOOL;
         } else {
             diag_error(e->loc, "codegen: tray item has no field '%.*s'", (int)flen, fld);
             c->failed = 1;
@@ -245,6 +247,18 @@ CE lower_member(CGCtx *c, Expr *e) {
             r.type = T_STR;
             return r;
         }
+        /* DRV_INOTIFY: only .value is valid, lowers to src_<n>_value. */
+        if (si->drv->drv == DRV_INOTIFY) {
+            if (flen != 5 || memcmp(fld, "value", 5) != 0) {
+                diag_error(e->loc, "codegen: inotify has no field '%.*s'", (int)flen, fld);
+                c->failed = 1;
+                CE z = { .text = "0", .type = T_UNK }; return z;
+            }
+            CE r;
+            snprintf(r.text, sizeof r.text, "src_%s_value", sname(si->decl->name, si->decl->nlen));
+            r.type = T_STR;
+            return r;
+        }
         /* DRV_DBUS: .value lowers to src_<n>_value. .history is post-v0. */
         if (si->drv->drv == DRV_DBUS) {
             if (flen == 7 && memcmp(fld, "history", 7) == 0) {
@@ -260,6 +274,22 @@ CE lower_member(CGCtx *c, Expr *e) {
             CE r;
             snprintf(r.text, sizeof r.text, "src_%s_value", sname(si->decl->name, si->decl->nlen));
             r.type = T_STR;
+            return r;
+        }
+        /* toplevel: fields carry the declaration's match-table index. */
+        if (si->drv->drv == DRV_WISP && !strcmp(si->drv->name, "toplevel")) {
+            int idx = tl_match_index(c->srcs, c->nsrc, si);
+            CE r = { .type = T_UNK };
+            if (flen == 6 && memcmp(fld, "exists", 6) == 0) {
+                snprintf(r.text, sizeof r.text, "tl_exists(%d)", idx); r.type = T_BOOL;
+            } else if (flen == 5 && memcmp(fld, "count", 5) == 0) {
+                snprintf(r.text, sizeof r.text, "tl_count(%d)", idx); r.type = T_INT;
+            } else if (flen == 5 && memcmp(fld, "title", 5) == 0) {
+                snprintf(r.text, sizeof r.text, "tl_title(%d)", idx); r.type = T_STR;
+            } else {
+                diag_error(e->loc, "codegen: toplevel has no field '%.*s'", (int)flen, fld);
+                c->failed = 1;
+            }
             return r;
         }
         int is_str = 0;
@@ -330,7 +360,7 @@ CE lower_ident(CGCtx *c, Expr *e) {
     SrcInst *si = find_inst(c->srcs, c->nsrc, n, L);
     if (si) {
         CE r;
-        if (si->drv->drv == DRV_CLOCK) {
+        if (si->drv->drv == DRV_CLOCK || si->drv->drv == DRV_INOTIFY) {
             snprintf(r.text, sizeof r.text, "src_%s_value", sname(n, L));
             r.type = T_STR;
         } else if (si->drv->drv == DRV_EXEC) {

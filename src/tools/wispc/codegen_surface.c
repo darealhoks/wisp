@@ -4,6 +4,90 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* OR into *m the bit of every source referenced by a display expression. Muts
+ * aren't sources (they change on click, which takes the full-render path), so
+ * they're ignored here — only source ticks drive the partial-repaint masks. */
+static void item_srcs_expr(CGCtx *ctx, Expr *e, uint64_t *m) {
+    if (!e) return;
+    switch (e->kind) {
+    case EX_IDENT: {
+        int b = src_bit(ctx->srcs, ctx->nsrc, e->ident.s, e->ident.n);
+        if (b >= 0) *m |= 1ull << b;
+        return;
+    }
+    case EX_MEMBER: {
+        Expr *base = e->member.base;
+        if (base && base->kind == EX_IDENT) {
+            int b = src_bit(ctx->srcs, ctx->nsrc, base->ident.s, base->ident.n);
+            if (b >= 0) { *m |= 1ull << b; return; }
+        }
+        item_srcs_expr(ctx, base, m);
+        return;
+    }
+    case EX_BIN:   item_srcs_expr(ctx, e->bin.l, m); item_srcs_expr(ctx, e->bin.r, m); return;
+    case EX_UN:    item_srcs_expr(ctx, e->un.e, m); return;
+    case EX_TERN:  item_srcs_expr(ctx, e->tern.cond, m); item_srcs_expr(ctx, e->tern.t, m);
+                   item_srcs_expr(ctx, e->tern.e, m); return;
+    case EX_RANGE: item_srcs_expr(ctx, e->range.lo, m); item_srcs_expr(ctx, e->range.hi, m); return;
+    case EX_CALL:  for (int i = 0; i < e->call.nargs; i++) item_srcs_expr(ctx, e->call.args[i], m); return;
+    case EX_INTERP:
+        for (int i = 0; i < e->interp.nparts; i++)
+            if (e->interp.parts[i].is_expr) item_srcs_expr(ctx, e->interp.parts[i].expr, m);
+        return;
+    default: return;
+    }
+}
+
+static uint64_t item_dep_mask(CGCtx *ctx, const BarItem *it) {
+    uint64_t m = 0;
+    /* A for-cell redraws whenever its iteration source ticks. */
+    if (it->for_src) {
+        int b = src_bit(ctx->srcs, ctx->nsrc, it->for_src, strlen(it->for_src));
+        if (b >= 0) m |= 1ull << b;
+    }
+    if (it->runtime_for_src) {
+        int b = src_bit(ctx->srcs, ctx->nsrc, it->runtime_for_src, strlen(it->runtime_for_src));
+        if (b >= 0) m |= 1ull << b;
+    }
+    Widget *w = it->w;
+    if (w)
+        for (int i = 0; i < w->nitems; i++)
+            if (w->items[i].kind == WB_PROP)
+                item_srcs_expr(ctx, w->items[i].prop->val, &m);
+    return m;
+}
+
+/* Partial repaint applies only to a plain, flat, horizontal bar: the SURFACE
+ * body must be a flat fill (no rounded corners, border, fillets, armpit feet,
+ * gradient, clip, or cutout-source) and carry no slider. Groups/items may still
+ * draw their own pills — those repaint as whole units, restoring the flat
+ * surface bg underneath. A non-flat surface can't restore a cell's backdrop, so
+ * it always takes the full-render path. */
+static int surface_partial_ok(Decl *sur, BarItem *items, int nitems,
+                              int vertical, int has_bord, int armpit,
+                              int armpit_any_outer, int reveal_g, int n_sliders) {
+    (void)items; (void)nitems;
+    if (vertical || has_bord || armpit || armpit_any_outer || reveal_g || n_sliders)
+        return 0;
+    static const char *round_props[] = {
+        "radius", "radius_tl", "radius_tr", "radius_bl", "radius_br",
+        "radius_inner", "radius_outer" };
+    for (size_t i = 0; i < sizeof round_props / sizeof round_props[0]; i++)
+        if (eval_int(surface_prop(sur, round_props[i]), 0) != 0) return 0;
+    static const char *fillet_props[] = {
+        "fillet_tl", "fillet_tr", "fillet_bl", "fillet_br",
+        "fillet_inner_top", "fillet_inner_bottom", "fillet_outer_top",
+        "fillet_outer_bottom", "fillet_inner_left", "fillet_inner_right",
+        "fillet_outer_left", "fillet_outer_right" };
+    for (size_t i = 0; i < sizeof fillet_props / sizeof fillet_props[0]; i++)
+        if (surface_prop(sur, fillet_props[i])) return 0;
+    if (surface_prop(sur, "bg_bottom")) return 0;
+    if (surface_prop(sur, "cutout_into")) return 0;
+    if (eval_int(surface_prop(sur, "clip_top"), 0) != 0) return 0;
+    if (surface_prop(sur, "clip_widgets")) return 0;
+    return 1;
+}
+
 int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     int height        = eval_int   (surface_prop(sur, "height"),         24);
     int width         = eval_int   (surface_prop(sur, "width"),          0);
@@ -150,6 +234,10 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     for (int i = 0; i < nitems; i++)
         if (widget_is_slider(items[i].w)) items[i].slider_idx = n_sliders++;
     assign_handler_idx(items, nitems);
+    for (int i = 0; i < nitems; i++) items[i].dep_mask = item_dep_mask(ctx, &items[i]);
+    int partial_cap = (ctx->nsrc <= 64) &&
+        surface_partial_ok(sur, items, nitems, vertical, has_bord, armpit,
+                           armpit_any_outer, reveal_g, n_sliders);
     if (n_sliders > 0) {
         /* Emit thunks before render_<nm> so they're in scope. */
         for (int i = 0; i < nitems; i++) {
@@ -205,6 +293,14 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     emit_hit_store(o, nm, 8);
     fputs("\n", o);
     reg_collect(nm);
+
+    /* Partial-repaint state: last frame's per-cell advance (-1 = hidden). A
+     * change anywhere shifts the layout, forcing a full render (phase B). Per-
+     * item source-dep masks live on BarItem.dep_mask and are emitted inline at
+     * each gated draw. masks_ok caps the mask at 64 sources. */
+    int masks_ok = ctx->nsrc <= 64;
+    if (partial_cap)
+        fprintf(o, "static int %s_cell_adv[%d];\n\n", nm, n_arr);
 
     ctx->widget_var = "w";
 
@@ -496,7 +592,27 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     fputs("    int __reg_x = __cox, __reg_y = __coy;\n", o);
     fputs("    int __reg_w = __cws, __reg_h = __chs;\n", o);
     fputs("    (void)__reg_x; (void)__reg_y; (void)__reg_w; (void)__reg_h;\n", o);
-    fputs("    clear_buf(sl->px, w->w, w->h, 0);\n", o);
+    /* Partial-repaint decision (phase A). Snapshot + consume the source-dirty
+     * mask; when this bar is eligible, no tween runs, no press is held, and the
+     * previous frame can be copied forward, only the cells whose sources ticked
+     * get repainted (see the gated draws + damage union below). __wds==0 means a
+     * forced/mut redraw with no source tick — always a full render. */
+    if (masks_ok) {
+        fprintf(o, "    uint64_t __wds = bar_dirty_srcs_%s;\n", nm);
+        fprintf(o, "    bar_dirty_srcs_%s = 0;\n", nm);
+        fputs("    int __partial = 0; (void)__wds; (void)__partial;\n", o);
+    }
+    if (partial_cap) {
+        fputs("    int __dmg_x0 = 1 << 30, __dmg_x1 = 0; (void)__dmg_x0; (void)__dmg_x1;\n", o);
+        fputs("    if (w->kind == W_BAR && __wds != 0ull && !__", o);
+        fprintf(o, "%s_pressed_w\n", nm);
+        fputs("#ifdef WISP_HAS_ANIM\n        && anim_active() == 0\n#endif\n", o);
+        fputs("       ) { if (widget_copy_forward(w, sl)) __partial = 1; }\n", o);
+    }
+    if (partial_cap)
+        fputs("    if (!__partial) clear_buf(sl->px, w->w, w->h, 0);\n", o);
+    else
+        fputs("    clear_buf(sl->px, w->w, w->h, 0);\n", o);
     /* Optional `clip_top = N;` surface prop: hide any pixel of the surface
      * body (bg + surface border) above y=N. Widget bg/borders/text/icons are
      * NOT clipped — those flow freely so e.g. a HUD button can stick out of
@@ -571,7 +687,8 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
                 uint32_t bg_bot = eval_color_ctx(ctx, bg_bot_e, bg);
                 fprintf(o, "    fill_rect_vgrad(sl->px, w->w, w->h, __cox, __coy, __cws, __chs, 0x%08xu, 0x%08xu, __clip_top);\n", bg, bg_bot);
             } else {
-                fprintf(o, "    fill_rect_clipped(sl->px, w->w, w->h, __cox, __coy, __cws, __chs, 0x%08xu, __clip_top);\n", bg);
+                fprintf(o, "    %sfill_rect_clipped(sl->px, w->w, w->h, __cox, __coy, __cws, __chs, 0x%08xu, __clip_top);\n",
+                        partial_cap ? "if (!__partial) " : "", bg);
             }
         }
     }
@@ -799,7 +916,24 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     fprintf(o, "    int center_pos = (end_extent - center_total) / 2 + %s;\n", vertical ? "__coy" : "__cox");
     fputs("    if (center_pos < 0 && __cox == 0 && __coy == 0) center_pos = 0;\n", o);
     fputs("    (void)start_pos; (void)end_pos; (void)center_pos;\n\n", o);
+    /* Phase B: layout is known, so detect whether any cell's advance (or
+     * visibility) changed since last frame — that shifts neighbours, so a
+     * partial repaint would leave stale pixels. Cache is refreshed every render
+     * (full or partial). On a shift, undo the copy-forward: repaint the flat bg
+     * and drop to a full draw. */
+    if (partial_cap) {
+        fprintf(o, "    { int __shift = 0;\n");
+        fprintf(o, "      for (int __k = 0; __k < %d; __k++) {\n", n_arr);
+        fputs("          int __na = st[__k].vis ? (st[__k].h > 0 ? st[__k].h : st[__k].tw) : -1;\n", o);
+        fprintf(o, "          if (__na != %s_cell_adv[__k]) __shift = 1;\n", nm);
+        fprintf(o, "          %s_cell_adv[__k] = __na;\n", nm);
+        fputs("      }\n", o);
+        fprintf(o, "      if (__partial && __shift) { __partial = 0; clear_buf(sl->px, w->w, w->h, 0);\n");
+        fprintf(o, "          fill_rect_clipped(sl->px, w->w, w->h, __cox, __coy, __cws, __chs, 0x%08xu, 0); } }\n", bg);
+    }
     fputs("    /* --- draw pass --- */\n", o);
+    ctx->partial_ok = partial_cap;
+    ctx->surface_bg = bg;
     for (int i = 0; i < nitems; i++) {
         if (items[i].group_id >= 0) {
             if (items[i].group_first)
@@ -808,6 +942,7 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
         }
         emit_item_draw(o, &items[i], ctx, vertical, nm);
     }
+    ctx->partial_ok = 0;
 
     /* Snapshot hits for click dispatch — into this widget's per-slot row. */
     emit_hit_snapshot(o, nm);
@@ -840,8 +975,14 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
         }
     }
     /* Apply any cutouts registered against this surface (e.g. an OSD slab
-     * punching a transparent rect through the bar strip beneath it). */
-    fprintf(o, "    cutout_apply(\"%s\", w->output, sl->px, w->w, w->h);\n", nm);
+     * punching a transparent rect through the bar strip beneath it). A cutout
+     * touches pixels outside the dirty cells, so a partial frame must widen its
+     * damage to the whole surface when one fires. */
+    if (partial_cap) {
+        fprintf(o, "    if (cutout_apply(\"%s\", w->output, sl->px, w->w, w->h) && __partial) { __dmg_x0 = 0; __dmg_x1 = w->w; }\n", nm);
+    } else {
+        fprintf(o, "    cutout_apply(\"%s\", w->output, sl->px, w->w, w->h);\n", nm);
+    }
     /* Optional `clip_widgets = true`: in addition to `clip_top` clipping the
      * body bg/border, wipe ALL pixels above the clip line at the very end
      * (after widget content + fillets render). Use this when the surface is
@@ -866,7 +1007,22 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
             fputs("    }\n", o);
         }
     }
-    fputs("    widget_attach(w, sl, 0);\n", o);
+    if (masks_ok) {
+        fprintf(o, "    if (getenv(\"WISP_DIRTY_DEBUG\"))\n");
+        fprintf(o, "        fprintf(stderr, \"[dirty] %s partial=%%d wds=0x%%016llx\\n\", __partial, (unsigned long long)__wds);\n", nm);
+    }
+    /* Partial frame: damage only the union of repainted cells (0-width span when
+     * a ticked source drove no visible cell — attach the copy-forward as-is). */
+    if (partial_cap) {
+        fputs("    if (__partial) {\n", o);
+        fputs("        if (__dmg_x1 > __dmg_x0) widget_attach_rect(w, sl, 0, __dmg_x0, 0, __dmg_x1 - __dmg_x0, w->h);\n", o);
+        fputs("        else widget_attach_rect(w, sl, 0, 0, 0, 0, 0);\n", o);
+        fputs("    } else {\n", o);
+        fputs("        widget_attach(w, sl, 0);\n", o);
+        fputs("    }\n", o);
+    } else {
+        fputs("    widget_attach(w, sl, 0);\n", o);
+    }
     fputs("}\n\n", o);
 
     SurGeom __g = { anchor, layer, margin, width, height, excl_zone,

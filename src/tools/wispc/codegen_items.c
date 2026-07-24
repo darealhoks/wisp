@@ -479,7 +479,7 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
         fprintf(o, "%sint pos;\n", indent);
         fprintf(o, "%sswitch (st[%d].align) {\n", indent, it->st_base);
         fprintf(o, "%s    case 0:  pos = start_pos; start_pos += tw + pad; break;\n", indent);
-        fprintf(o, "%s    case 1:  end_pos -= tw + pad; pos = end_pos; break;\n", indent);
+        fprintf(o, "%s    case 1:  pos = end_pos - tw; end_pos -= tw + pad; break;\n", indent);
         fprintf(o, "%s    default: pos = center_pos; center_pos += tw + pad; break;\n", indent);
         fprintf(o, "%s}\n", indent);
         /* Track rect: main-axis extent = tw (the packed `width`/`height`);
@@ -598,9 +598,26 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
     fprintf(o, "%s    int pos;\n", indent);
     fprintf(o, "%s    switch (st[%s].align) {\n", indent, idx_expr);
     fprintf(o, "%s        case 0:  pos = start_pos; start_pos += __adv + pad; break;\n", indent);
-    fprintf(o, "%s        case 1:  end_pos -= __adv + pad; pos = end_pos; break;\n", indent);
+    fprintf(o, "%s        case 1:  pos = end_pos - __adv; end_pos -= __adv + pad; break;\n", indent);
     fprintf(o, "%s        default: pos = center_pos; center_pos += __adv + pad; break;\n", indent);
     fprintf(o, "%s    }\n", indent);
+    /* align=end mirrors: the pad band sits BEFORE pos, so clears/hits start
+     * there rather than trailing past the content. */
+    fprintf(o, "%s    int __bs = st[%s].align == 1 ? pos - pad : pos;\n", indent, idx_expr);
+    fprintf(o, "%s    (void)__bs;\n", indent);
+    /* Partial repaint gate: skip a cell whose sources didn't tick (its pixels
+     * survive in the copied-forward buffer); overwrite a dirty cell with the
+     * flat surface bg before its content redraws, and grow the damage span. The
+     * layout counters above always run so neighbours still get their positions.
+     * partial_ok is set only for flat horizontal bars — main axis is X here. */
+    if (ctx->partial_ok) {
+        fprintf(o, "%s    if (!__partial || (0x%016llxull & __wds)) {\n",
+                indent, (unsigned long long)it->dep_mask);
+        fprintf(o, "%s    if (__partial) { fill_rect(sl->px, w->w, w->h, __bs, __reg_y, __adv + pad, __reg_h, 0x%08xu);\n",
+                indent, ctx->surface_bg);
+        fprintf(o, "%s        if (__bs < __dmg_x0) __dmg_x0 = __bs;\n", indent);
+        fprintf(o, "%s        if (__bs + __adv + pad > __dmg_x1) __dmg_x1 = __bs + __adv + pad; }\n", indent);
+    }
     if (vertical) {
         /* main axis = Y; bg + border span the region cross-axis (__reg_w)
          * over the item's height (= __adv). */
@@ -779,14 +796,15 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
         fprintf(o, "%s        }\n", indent);
         fprintf(o, "%s    }\n", indent);
     }
+    if (ctx->partial_ok) fprintf(o, "%s    }\n", indent);  /* close partial gate */
     if (clk) {
         int arg_val = it->is_for_cell ? it->cell_idx : it->handler_idx;
         /* Hit rect in compound/surface-local coords. For vertical (main=Y) the
          * cross-axis spans the region's X extent; for horizontal it spans the
          * region's Y extent. Origin offsets come from __reg_x/__reg_y so
          * compound regions translate correctly. */
-        const char *hx = vertical ? "__reg_x" : "pos";
-        const char *hy = vertical ? "pos"     : "__reg_y";
+        const char *hx = vertical ? "__reg_x" : "__bs";
+        const char *hy = vertical ? "__bs"    : "__reg_y";
         const char *hw = vertical ? "__reg_w" : "(__adv + pad)";
         const char *hh = vertical ? "(__adv + pad)" : "__reg_h";
         if (it->is_runtime_for_cell) {
@@ -1083,7 +1101,7 @@ int emit_group_draw(FILE *o, BarItem *items, int first, int nitems,
     if (vertical && ch > 0) fprintf(o, "        __adv = %d;\n", ch);
     fprintf(o, "        int __gpad = %s ? %d : 0;\n", vertical ? "1" : "__gn", pad);
     fprintf(o, "        switch (%d) {\n", (int)al);
-    fprintf(o, "            case 1:  end_pos -= __adv + __gpad; pos = end_pos; break;\n");
+    fprintf(o, "            case 1:  pos = end_pos - __adv; end_pos -= __adv + __gpad; break;\n");
     fprintf(o, "            default: pos = start_pos; start_pos += __adv + __gpad; break;\n");
     fprintf(o, "        }\n");
     if (vertical)
@@ -1092,6 +1110,20 @@ int emit_group_draw(FILE *o, BarItem *items, int first, int nitems,
         fprintf(o, "        int __gy = __reg_y + (__reg_h - %d)/2, __gh = %d, __bx = pos, __bw = __gw; (void)__bw;\n", ch, ch);
     else
         fprintf(o, "        int __gy = __reg_y, __gh = __reg_h, __bx = pos, __bw = __gw; (void)__bw;\n");
+    /* Partial repaint gate at group granularity: a group's pill spans several
+     * cells (its corners are rounded at the ends), so it repaints as one unit —
+     * clear its whole box back to the flat surface bg, then redraw pill + every
+     * member. Skipped entirely when no member's source ticked. The layout
+     * counters above always run so later groups keep their positions. */
+    if (ctx->partial_ok) {
+        uint64_t gmask = 0;
+        for (int k = 0; k < cnt; k++) gmask |= items[first + k].dep_mask;
+        fprintf(o, "        if (!__partial || (0x%016llxull & __wds)) {\n", (unsigned long long)gmask);
+        fprintf(o, "        if (__partial) { fill_rect(sl->px,w->w,w->h, __bx,__gy,__bw,__gh, 0x%08xu);\n",
+                ctx->surface_bg);
+        fprintf(o, "            if (__bx < __dmg_x0) __dmg_x0 = __bx;\n");
+        fprintf(o, "            if (__bx + __bw > __dmg_x1) __dmg_x1 = __bx + __bw; }\n");
+    }
     const char *gg = vertical ? "" : "if (__gn) ";
     if (r > 0) {
         if (cbg  & 0xff000000u) fprintf(o, "        %sfill_rect_rounded(sl->px,w->w,w->h, __bx,__gy,__bw,__gh, %d,%d,%d,%d, 0x%08xu);\n", gg, r, r, r, r, cbg);
@@ -1102,6 +1134,7 @@ int emit_group_draw(FILE *o, BarItem *items, int first, int nitems,
     fprintf(o, "        int __gx = __bx + %d; (void)__gw;\n", padx);
     for (int k = 0; k < cnt; k++)
         emit_group_member(o, &items[first + k], nm, gap);
+    if (ctx->partial_ok) fputs("        }\n", o);  /* close group partial gate */
     fputs("    }\n", o);
     return cnt;
 }

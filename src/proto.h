@@ -154,6 +154,18 @@
 #define EXTWS_STATE_URGENT 2
 #define EXTWS_STATE_HIDDEN 4
 
+/* zwlr_foreign_toplevel_management_unstable_v1 (v3) — wl_toplevel.c. Handle
+ * objects arrive with server-allocated ids (>= 0xff000000), same as ext-ws. */
+#define TL_MGR_REQ_STOP       0
+#define TL_MGR_EV_TOPLEVEL    0
+#define TL_MGR_EV_FINISHED    1
+/* zwlr_foreign_toplevel_handle_v1 (destroy is the 8th request, index 7) */
+#define TL_HANDLE_REQ_DESTROY 7
+#define TL_HANDLE_EV_TITLE    0
+#define TL_HANDLE_EV_APP_ID   1
+#define TL_HANDLE_EV_DONE     5
+#define TL_HANDLE_EV_CLOSED   6
+
 #endif
 
 #ifdef WISP_FRACTIONAL

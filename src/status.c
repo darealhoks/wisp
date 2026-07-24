@@ -13,7 +13,8 @@ Status status;
 
 static char bat_dev[256];
 static char cpu_temp_path[320];
-static char wifi_iface[64];        /* "" = first entry in /proc/net/wireless */
+static char net_iface[64];         /* "" = any iface (wireless: first entry) */
+static char backlight_dev[256];    /* "" = first entry in /sys/class/backlight */
 static char disk_path[256] = "/";
 static long long prev_busy, prev_total;
 
@@ -24,7 +25,8 @@ void status_set_arg(const char *kind, const char *val) {
         if (val[0] == '/') snprintf(cpu_temp_path, sizeof cpu_temp_path, "%s", val);
         else snprintf(cpu_temp_path, sizeof cpu_temp_path, "/sys/class/thermal/%s/temp", val);
     } else if (!strcmp(kind, "bat"))  snprintf(bat_dev, sizeof bat_dev, "%s", val);
-    else if (!strcmp(kind, "wifi"))   snprintf(wifi_iface, sizeof wifi_iface, "%s", val);
+    else if (!strcmp(kind, "net"))    snprintf(net_iface, sizeof net_iface, "%s", val);
+    else if (!strcmp(kind, "backlight")) snprintf(backlight_dev, sizeof backlight_dev, "%s", val);
     else if (!strcmp(kind, "disk"))   snprintf(disk_path, sizeof disk_path, "%s", val);
 }
 
@@ -194,7 +196,7 @@ static void sample_bat(void) {
 #endif
 }
 
-static void sample_vpn(void) {
+void status_sample_vpn(void) {
     FILE *f = fopen("/run/mullvad.handshake", "r");
     if (!f) {
         status.vpn_state = access("/sys/class/net/mullvad", 0) == 0 ? 1 : 0;
@@ -208,30 +210,106 @@ static void sample_vpn(void) {
     status.vpn_state = (now - hs <= VPN_STALE_S) ? 1 : 2;
 }
 
-static void sample_wifi(void) {
+void status_sample_net(void) {
     FILE *f = fopen("/proc/net/wireless", "r");
-    if (!f) { status.wifi_level = -1; return; }
-    char buf[256]; int line = 0;
     status.wifi_level = -1;
-    while (fgets(buf, sizeof buf, f)) {
-        if (++line < 3) continue;
-        char *p = strchr(buf, ':'); if (!p) continue;
-        if (wifi_iface[0]) {
-            char *t = buf; while (*t == ' ') t++;
-            if ((size_t)(p - t) != strlen(wifi_iface) ||
-                strncmp(t, wifi_iface, (size_t)(p - t))) continue;
+    if (f) {
+        char buf[256]; int line = 0;
+        while (fgets(buf, sizeof buf, f)) {
+            if (++line < 3) continue;
+            char *p = strchr(buf, ':'); if (!p) continue;
+            if (net_iface[0]) {
+                char *t = buf; while (*t == ' ') t++;
+                if ((size_t)(p - t) != strlen(net_iface) ||
+                    strncmp(t, net_iface, (size_t)(p - t))) continue;
+            }
+            int st_, link;
+            if (sscanf(p+1, " %d %d", &st_, &link) != 2) continue;
+            (void)st_;
+            if (link <= 0)        status.wifi_level = -1;
+            else if (link >= 55)  status.wifi_level = 3;
+            else if (link >= 40)  status.wifi_level = 2;
+            else if (link >= 25)  status.wifi_level = 1;
+            else                  status.wifi_level = 0;
+            break;
         }
-        int st_, link;
-        if (sscanf(p+1, " %d %d", &st_, &link) != 2) continue;
-        (void)st_;
-        if (link <= 0)        status.wifi_level = -1;
-        else if (link >= 55)  status.wifi_level = 3;
-        else if (link >= 40)  status.wifi_level = 2;
-        else if (link >= 25)  status.wifi_level = 1;
-        else                  status.wifi_level = 0;
+        fclose(f);
+    }
+    /* up = a default route exists (Destination 00000000). Wired-only boxes
+     * have wifi_level -1 but net_up 1 — a widget shows the ethernet glyph. */
+    status.net_up = 0;
+    f = fopen("/proc/net/route", "r");
+    if (!f) return;
+    char line[256];
+    (void)!fgets(line, sizeof line, f);            /* header */
+    while (fgets(line, sizeof line, f)) {
+        char ifn[64]; unsigned long dest;
+        if (sscanf(line, "%63s %lx", ifn, &dest) != 2 || dest != 0) continue;
+        if (net_iface[0] && strcmp(ifn, net_iface)) continue;
+        status.net_up = 1;
         break;
     }
     fclose(f);
+}
+
+#ifdef WISP_HAS_NET_RATES
+/* rx/tx KB/s since the previous call, summed over matching non-lo ifaces.
+ * Divides by real elapsed time so an every=-slowed tick still reads right. */
+static void sample_net_rates(void) {
+    static unsigned long long prev_rx, prev_tx;
+    static long long prev_ms;
+    FILE *f = fopen("/proc/net/dev", "r");
+    if (!f) return;
+    char line[512];
+    unsigned long long rx = 0, tx = 0;
+    while (fgets(line, sizeof line, f)) {
+        char *p = strchr(line, ':'); if (!p) continue;
+        char *t = line; while (*t == ' ') t++;
+        *p = 0;
+        if (!strcmp(t, "lo")) continue;
+        if (net_iface[0] && strcmp(t, net_iface)) continue;
+        unsigned long long r, s;
+        /* rx bytes is field 1 after ':'; tx bytes is field 9. */
+        if (sscanf(p + 1, " %llu %*u %*u %*u %*u %*u %*u %*u %llu", &r, &s) != 2)
+            continue;
+        rx += r; tx += s;
+    }
+    fclose(f);
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    long long now = (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+    if (prev_ms && now > prev_ms && rx >= prev_rx && tx >= prev_tx) {
+        long long dt = now - prev_ms;
+        status.net_rx_kbps = (int)((rx - prev_rx) * 1000 / (unsigned long long)dt / 1024);
+        status.net_tx_kbps = (int)((tx - prev_tx) * 1000 / (unsigned long long)dt / 1024);
+    }
+    prev_rx = rx; prev_tx = tx; prev_ms = now;
+}
+#endif
+
+static void detect_backlight(void) {
+    static int probed;
+    if (backlight_dev[0] || probed) return;
+    probed = 1;
+    DIR *d = opendir("/sys/class/backlight"); if (!d) return;
+    struct dirent *e;
+    while ((e = readdir(d))) {
+        if (e->d_name[0] == '.') continue;
+        snprintf(backlight_dev, sizeof backlight_dev, "%s", e->d_name);
+        break;
+    }
+    closedir(d);
+}
+
+void status_sample_backlight(void) {
+    detect_backlight();
+    if (!backlight_dev[0]) { status.backlight_pct = -1; return; }
+    char path[320];
+    snprintf(path, sizeof path, "/sys/class/backlight/%s/brightness", backlight_dev);
+    int cur = read_int_file(path);
+    snprintf(path, sizeof path, "/sys/class/backlight/%s/max_brightness", backlight_dev);
+    int max = read_int_file(path);
+    status.backlight_pct = (cur < 0 || max <= 0) ? -1 : (cur * 100 + max / 2) / max;
 }
 
 void status_init(void) {
@@ -239,18 +317,30 @@ void status_init(void) {
     status.bat_pct  = -1;
     status.mem_used_kb = -1;
     status.wifi_level = -1;
+    status.backlight_pct = -1;
 }
 
 void status_sample_all(void) {
     sample_cpu(); sample_cpu_temp(); sample_mem(); sample_disk();
-    sample_bat(); sample_vpn(); sample_wifi();
+    sample_bat(); status_sample_vpn(); status_sample_net();
+    status_sample_backlight();
+#ifdef WISP_HAS_NET_RATES
+    sample_net_rates();                    /* prime the delta baseline */
+#endif
 }
 
+void status_sample_bat(void) { sample_bat(); }
+void status_sample_disk(void) { sample_disk(); }
+
+/* vpn/net-link/bat/disk/backlight deliberately absent: rtnetlink drives vpn +
+ * net up/ssid, the slow signal timer refreshes wifi signal, bat and backlight
+ * ride kernel uevents (bat also a slow fallback timer), disk its own slow
+ * timer. Only cpu/mem/temp — and net rates when a config reads them — ride
+ * this shared tick (1 Hz by default; `every=` slows it). */
 void status_tick(int tick_n) {
     sample_cpu(); sample_mem();
     if (tick_n % STATUS_CADENCE_TEMP == 0) sample_cpu_temp();
-    if (tick_n % STATUS_CADENCE_VPN  == 0) sample_vpn();
-    if (tick_n % STATUS_CADENCE_WIFI == 0) sample_wifi();
-    if (tick_n % STATUS_CADENCE_BAT  == 0) sample_bat();
-    if (tick_n % STATUS_CADENCE_DISK == 0) sample_disk();
+#ifdef WISP_HAS_NET_RATES
+    sample_net_rates();
+#endif
 }

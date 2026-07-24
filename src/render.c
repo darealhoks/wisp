@@ -50,6 +50,16 @@ void clear_buf(uint32_t *px, int w, int h, uint32_t c) {
     for (; i < n; i++) px[i] = c;
 }
 
+/* Overwrite (not blend) rows [y0,y1) of a buffer — the OSD partial-repaint
+ * path nulls only the animating band. Logical coords, scaled like clear_buf. */
+void clear_band(uint32_t *px, int w, int h, int y0, int y1, uint32_t c) {
+    w = SC(w); h = SC(h); y0 = SC(y0); y1 = SC(y1);
+    if (y0 < 0) y0 = 0;
+    if (y1 > h) y1 = h;
+    c = premul(c);
+    for (int i = y0 * w; i < y1 * w; i++) px[i] = c;
+}
+
 /* src-over compositing of a straight (non-premultiplied) color modulated by
  * coverage alpha `a` onto one destination pixel. Matches the blend used by
  * fill_rect_rounded so all the AA primitives agree on edge color. */

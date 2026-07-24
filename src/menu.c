@@ -204,6 +204,11 @@ void menu_set_icons(Widget *w, uint32_t *const *icons, int icon_px) {
 static void (*pick_hook)(int idx);
 void menu_set_pick_hook(void (*fn)(int idx)) { pick_hook = fn; }
 
+/* True only inside the click-off cancel (a press on a non-menu surface);
+ * lets the pick hook tell "closed by the click that's about to arrive" apart
+ * from Esc / pick / focus-loss. Set around menu_cancel_all in wisp.c. */
+int menu_clickoff;
+
 /* Fork+exec detached from the daemon, so the child survives this widget's
  * destruction (e.g. `pkill dwl` for logout, which would otherwise kill the
  * pid running it). */

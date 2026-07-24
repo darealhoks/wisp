@@ -662,8 +662,20 @@ static void dbm_event(int32_t id) {
     free(b.b);
 }
 
+/* `tray_item.menu_open` in the DSL: lets the config keep the clicked cell
+ * highlighted for the popup's whole lifetime, not just the press. */
+int tray_menu_is_open(int i) {
+    return open_item >= 0 && open_item == i;
+}
+
 static void on_menu_pick(int idx) {
-    closed_item = open_item; closed_ms = now_ms(); open_item = -1;
+    /* Arm the reopen-swallow only when the close came from the click-off
+     * press — that same click's exec is still in flight and must not reopen
+     * the popup. Esc / pick / focus-loss closes have no trailing click; arming
+     * on those eats the user's next (legitimate) click on the icon. */
+    if (menu_clickoff) { closed_item = open_item; closed_ms = now_ms(); }
+    open_item = -1;
+    changed();
     if (idx < 0 || idx >= n_rows) return;
     if (rows[idx].submenu) { dbm_open(open_service, open_path, rows[idx].id); return; }
     if (rows[idx].enabled) dbm_event(rows[idx].id);
@@ -683,10 +695,11 @@ static void on_layout(const char *sender, R *r, const char *sig,
     if (n_rows > 0) {
         static char labels[DBM_ROWS][ITEM_MAX];
         const char *title = "";
+        int slot = -1;
         for (int i = 0; i < n_rows; i++)
             memcpy(labels[i], rows[i].label, sizeof labels[i]);
         for (int i = 0; i < TRAY_MAX; i++)
-            if (!strcmp(items[i].service, service)) { title = items[i].title; open_item = i; break; }
+            if (!strcmp(items[i].service, service)) { title = items[i].title; slot = i; break; }
         /* The popup lands two round trips after the click, well past
          * menu_create's freshness window — restamp the rect that asked. */
         if (menu_anchor.out) { click_anchor = menu_anchor; click_anchor.ms = now_ms(); }
@@ -696,10 +709,14 @@ static void on_layout(const char *sender, R *r, const char *sig,
          * popup's renderer and geometry. Absent → the launcher default. */
         const WispMenu *style = wisp_menu_find("tray");
         if (style) menu_set_geom(&style->geom);
+        /* menu_create cancels any live menu, which fires the old pick hook and
+         * clears open_item — so claim it only after the new popup exists. */
         Widget *mw = menu_create(title, labels, n_rows, -1);
         if (mw) {
             if (style && style->render) mw->s.menu.render = style->render;
             menu_set_pick_hook(on_menu_pick);
+            open_item = slot;
+            changed();                     /* menu_open flipped for this item */
         }
     }
     free(path);

@@ -18,6 +18,7 @@ Widget *widget_alloc(WidgetKind k) {
             widgets[i].kind = k;
             widgets[i].pool_fd = -1;
             widgets[i].client_fd = -1;
+            widgets[i].last_attached = -1;
             return &widgets[i];
         }
     return NULL;
@@ -56,6 +57,7 @@ void widget_free_pool(Widget *w) {
     if (w->pool_fd >= 0) { close(w->pool_fd); w->pool_fd = -1; }
     w->pool_size = 0;
     w->n_slots = 0;
+    w->last_attached = -1;   /* slots (and their memory) are gone */
 }
 
 static void region_destroy(uint32_t rid) {
@@ -289,12 +291,38 @@ BufSlot *widget_free_slot(Widget *w) {
      * point where the primitives' logical->physical scale can be armed
      * without touching each (partly generated) render entry point. */
     render_set_scale(w->scale120);
+    /* Prefer a free slot that isn't the one we last attached: wlroots releases
+     * buffers almost immediately, so both slots read idle and a naive "first
+     * free" would keep reusing slot 0, clobbering the previous frame that
+     * copy-forward needs. Skipping last_attached keeps the real ping-pong. */
+    for (int i = 0; i < w->n_slots; i++)
+        if (!w->slots[i].busy && i != w->last_attached) return &w->slots[i];
     for (int i = 0; i < w->n_slots; i++)
         if (!w->slots[i].busy) return &w->slots[i];
     return NULL;
 }
 
+/* Copy the last-attached buffer's pixels into slot `dst`, so a partial repaint
+ * starts from the previous frame instead of blank. Safe even after the
+ * compositor released it: it's client-owned memfd memory. Returns 0 when
+ * there's no predecessor frame to copy (startup, pool realloc) — the caller
+ * must then fall back to a full render. */
+int widget_copy_forward(Widget *w, BufSlot *dst) {
+    int i = w->last_attached;
+    if (i < 0 || i >= w->n_slots || &w->slots[i] == dst) return 0;
+    memcpy(dst->px, w->slots[i].px, (size_t)(w->pool_size / w->n_slots));
+    return 1;
+}
+
+/* Full-damage attach: the whole surface changed. */
 void widget_attach(Widget *w, BufSlot *s, int request_frame) {
+    widget_attach_rect(w, s, request_frame, 0, 0, w->w, w->h);
+}
+
+/* Attach with a caller-supplied damage rect (logical/surface-local coords), so
+ * a partial repaint only tells the compositor which cells changed. */
+void widget_attach_rect(Widget *w, BufSlot *s, int request_frame,
+                        int x, int y, int dw, int dh) {
 #ifdef WISP_FRACTIONAL
     /* buffer_scale stays 1 here; the viewport maps the physical buffer back
      * onto the logical size, which is what makes a non-integer scale legal. */
@@ -314,7 +342,7 @@ void widget_attach(Widget *w, BufSlot *s, int request_frame) {
     }
     uint32_t at[3] = { s->id, 0, 0 };
     wl_req(w->surface, SURFACE_REQ_ATTACH, at, 3, -1);
-    uint32_t dm[4] = { 0, 0, (uint32_t)w->w, (uint32_t)w->h };
+    uint32_t dm[4] = { (uint32_t)x, (uint32_t)y, (uint32_t)dw, (uint32_t)dh };
     wl_req(w->surface, SURFACE_REQ_DAMAGE, dm, 4, -1);
     if (request_frame && !w->frame_cb) {
         w->frame_cb = wl_new_id();
@@ -323,6 +351,7 @@ void widget_attach(Widget *w, BufSlot *s, int request_frame) {
     }
     wl_req(w->surface, SURFACE_REQ_COMMIT, NULL, 0, -1);
     s->busy = 1;
+    w->last_attached = (int)(s - w->slots);
     /* Reset any pending "free pool when idle" flag — the surface is no longer
      * idle. Callers that want a one-shot free re-set the flag *after* this
      * returns. Doing it here (rather than in widget_ensure_pool) avoids
@@ -442,8 +471,11 @@ void cutout_drop_output(Output *o) {
         if (cuts[i].active && cuts[i].scope == o) cuts[i].active = 0;
 }
 
-void cutout_apply(const char *self, Output *self_out, uint32_t *px, int sw, int sh) {
-    if (!self || !px) return;
+/* Returns the number of cutouts punched — the bar's partial path widens its
+ * damage to the whole surface when a cutout touched it this frame. */
+int cutout_apply(const char *self, Output *self_out, uint32_t *px, int sw, int sh) {
+    if (!self || !px) return 0;
+    int applied = 0;
     for (int i = 0; i < CUTOUT_MAX; i++) {
         if (!cuts[i].active) continue;
         if (strncmp(cuts[i].target, self, CUTOUT_NAME_MAX) != 0) continue;
@@ -460,5 +492,7 @@ void cutout_apply(const char *self, Output *self_out, uint32_t *px, int sw, int 
             uint32_t *row = px + (cy + j) * sw + cx;
             for (int k = 0; k < cw; k++) row[k] = 0;
         }
+        applied++;
     }
+    return applied;
 }

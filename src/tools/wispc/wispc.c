@@ -47,14 +47,19 @@ static void emit_features(FILE *o, SemaResult *r) {
      * any sampler is active. bar.c references the global `status` struct
      * unconditionally, so HAS_BAR implies HAS_STATUS. */
     int any_src = r->has_src_cpu || r->has_src_mem || r->has_src_temp ||
-                  r->has_src_bat || r->has_src_wifi || r->has_src_disk ||
-                  r->has_src_vpn;
+                  r->has_src_bat || r->has_src_net || r->has_src_disk ||
+                  r->has_src_vpn || r->has_src_backlight;
     if (r->has_bar || any_src) fputs("#define WISP_HAS_STATUS 1\n", o);
     P(has_src_cpu, "SRC_CPU");   P(has_src_mem, "SRC_MEM");   P(has_src_temp, "SRC_TEMP");
-    P(has_src_bat, "SRC_BAT");   P(has_src_wifi, "SRC_WIFI"); P(has_src_disk, "SRC_DISK");
+    P(has_src_bat, "SRC_BAT");   P(has_src_net, "SRC_NET");   P(has_src_disk, "SRC_DISK");
     P(has_src_vpn, "SRC_VPN");   P(has_src_tags, "SRC_TAGS");
-    P(has_src_exec, "SRC_EXEC");
+    P(has_src_exec, "SRC_EXEC"); P(has_src_backlight, "SRC_BACKLIGHT");
+    P(has_power, "POWER");
+    P(has_bluez, "BLUEZ");
+    /* Gates rate sampling in status_tick — see status.c. */
+    P(net_rates_used, "NET_RATES");
     P(has_pipewire, "PIPEWIRE");
+    P(has_toplevel, "TOPLEVEL");
     #undef P
     fputs("\n#endif\n", o);
 }
@@ -72,9 +77,12 @@ static void emit_objects_mk(FILE *o, SemaResult *r) {
     fputs("    $(BUILD)/mango.o \\\n", o);
     fputs("    $(BUILD)/workspace.o \\\n", o);
     int any_src = r->has_src_cpu || r->has_src_mem || r->has_src_temp ||
-                  r->has_src_bat || r->has_src_wifi || r->has_src_disk ||
-                  r->has_src_vpn;
+                  r->has_src_bat || r->has_src_net || r->has_src_disk ||
+                  r->has_src_vpn || r->has_src_backlight;
     if (r->has_bar || any_src)   fputs("    $(BUILD)/status.o \\\n", o);
+    /* netlink.c drives event-driven vpn()/net() (rtnetlink) and bat()/backlight() (uevent). */
+    if (r->has_src_vpn || r->has_src_net || r->has_src_bat || r->has_src_backlight)
+        fputs("    $(BUILD)/netlink.o \\\n", o);
     /* bar.c is replaced by gen_surfaces.c (which provides bar_render/
      * bar_create_on/bar_redraw_all/bar_set_*). */
     if (r->has_hud)              fputs("    $(BUILD)/hud.o \\\n", o);
@@ -95,9 +103,14 @@ static void emit_objects_mk(FILE *o, SemaResult *r) {
     if (r->has_gamma)            fputs("    $(BUILD)/gamma.o \\\n", o);
     if (r->has_media)            fputs("    $(BUILD)/media.o \\\n", o);
     if (r->has_dbus)             fputs("    $(BUILD)/dbus.o \\\n    $(BUILD)/notify.o \\\n", o);
+    /* Shared wire marshal: needed by the session transport and/or power.c. */
+    if (r->has_dbus || r->has_power || r->has_bluez) fputs("    $(BUILD)/dbus_wire.o \\\n", o);
+    if (r->has_power)            fputs("    $(BUILD)/power.o \\\n", o);
+    if (r->has_bluez)            fputs("    $(BUILD)/bluez.o \\\n", o);
     if (r->has_mpris)            fputs("    $(BUILD)/mpris.o \\\n", o);
     if (r->has_tray)             fputs("    $(BUILD)/tray.o \\\n", o);
     if (r->has_pipewire)         fputs("    $(BUILD)/pipewire.o \\\n", o);
+    if (r->has_toplevel)         fputs("    $(BUILD)/wl_toplevel.o \\\n", o);
     if (r->has_anim)             fputs("    $(BUILD)/anim.o \\\n", o);
     fputs("    $(BUILD)/gen_main.o \\\n", o);
     fputs("    $(BUILD)/gen_sources.o \\\n", o);

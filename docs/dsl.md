@@ -67,32 +67,43 @@ These are the sources that work:
 | source | fields | notes |
 |---|---|---|
 | `clock(fmt)` | `value` | ticks per second only if the format shows seconds |
-| `cpu()` | `pct` `load1` | |
-| `mem()` | `pct` `used_mb` | |
-| `temp(zone=)` | `c` | |
+| `cpu(every=)` | `pct` `load1` | |
+| `mem(every=)` | `pct` `used_mb` | |
+| `temp(zone=, every=)` | `c` | |
 | `bat(name=)` | `pct` `charging` | |
-| `wifi(iface=)` | `ssid` `signal` | |
-| `disk(path=)` | `pct` `free_gb` | |
+| `net(iface=)` | `up` `ssid` `signal` `rx_kbps` `tx_kbps` | wired or wifi; `up` = has default route. `rx_kbps`/`tx_kbps` join the shared tick only if read |
+| `backlight(name=)` | `pct` | screen brightness; kernel uevent-driven, no poll (`pct` = -1 if none) |
+| `power_profile()` | `profile` | power-profiles-daemon `ActiveProfile` over the system bus; `""` if ppd absent |
+| `bluez()` | `powered` `connected` `device` `battery` | BlueZ over the system bus; `device`/`battery` track the first connected device (`battery` = -1 if unknown) |
+| `disk(path=)` | `pct` `free_gb` | sampled every 30 s (own slow timer) |
 | `vpn(provider=)` | `state` `ok` | |
-| `tags(labels=, pinned=)` | `title`, `list` | `list` is for `for` only |
+| `tags(labels=, pinned=)` | `title` `list` `occ` `act` `urg` | `list` is for `for` only |
 | `gamma_warm()` | `value` | "1" or "0" |
 | `dnd()` | `value` | "on" or "off" |
 | `ui_hidden()` | `value` | "1" or "0", driven by `wispctl hide` |
 | `exec_line(cmd, every=)` | `value` | first line of stdout, 256 bytes max |
+| `inotify(path=)` | `value` | first line of a file; event-driven, no poll |
 | `dbus_signal(iface, member)` | `value`, `history` | `history` is for `for` only |
+| `mpris()` | `title` `artist` `status` `player` | active media player, via D-Bus |
+| `tray(icon_size=)` | `count` `items` | StatusNotifierItem tray; `items` is for `for` only |
 | `pipewire()` | `vol` `mute` `mic_vol` `mic_mute` `ok` | live sink/source volume; event-driven, no poll |
+| `toplevel(app_id=)` | `exists` `count` `title` | is app_id X open? event-driven, no poll |
 
-The status sources share one timer that fires once a second, and each compares
-its fields against the last sample before dirtying anything. An idle bar does
-not repaint.
+Args in this table are strings — `cpu(every="2s")`, not `cpu(every=2s)`.
+(`tray(icon_size=)` is the one integer exception.)
+
+The status sources share one timer that fires once a second by default, and
+each compares its fields against the last sample before dirtying anything. An
+idle bar does not repaint. `every="2s"` on `cpu()`/`mem()`/`temp()` slows the
+shared timer — it runs at the fastest `every=` among them (minimum 250 ms), so
+this is the knob for trading freshness against the last idle-CPU line item.
 
 `gamma_warm()`, `dnd()` and `ui_hidden()` read daemon state directly. Never
 reach for them through `exec_line("wispctl ...")`, which forks the daemon back
 into itself once a second.
 
 The table above is the whole list — a source the compiler accepts is a source
-it can build. `mpris()` and `inotify()` were removed rather than left as names
-that passed `--check` and failed `--emit`; they come back with their drivers.
+it can build.
 
 ### exec_line
 
@@ -103,6 +114,16 @@ after 120 ms, which is usually enough for the external tool to have applied the
 change. `refresh="instant"` makes that re-poll synchronous. A `set()` on the
 source inside the handler suppresses the re-poll entirely, so you can update the
 display optimistically.
+
+### inotify
+
+    source theme = inotify(path="/home/me/.config/theme-name");
+
+Poll-free file watcher: `value` is the first line of the file (255 bytes max),
+re-read the instant the file is written, created, renamed into place, or
+deleted (empty string when unreadable). The watch is on the parent directory,
+so atomic rename writes — how editors and most status tools save — still fire.
+`path=` must be absolute. Unlike `exec_line`, no fork and no timer ever runs.
 
 ### pipewire
 
@@ -117,6 +138,19 @@ that is the loud failure mode. External changes (mixers, media keys, other
 clients) repaint the bar the instant they land. Still needs wireplumber running
 to populate the default-device metadata. A `media {}` block pulls this source in
 implicitly for the volume/mic keys.
+
+### toplevel
+
+    source mirror_on = toplevel(app_id="at.yrlf.wl_mirror");
+
+A `zwlr_foreign_toplevel_management` client (`src/wl_toplevel.c`) that tracks
+open windows over the main Wayland connection — no fd, poll, or timer of its
+own. `app_id=` is required. `exists` is 1 while any window with that app_id is
+open, `count` is how many, `title` is the most recent one's title (`""` when
+none). Window open/close events repaint the bar the instant they land, so a
+launch/quit button needs no optimistic `set()` or `refresh` re-poll. Multiple
+`toplevel()` sources with different app_ids are independent. Needs a compositor
+exporting the foreign-toplevel protocol (wlroots-based, mango, etc.).
 
 ## const and mut
 
@@ -451,7 +485,19 @@ installed whether or not the block is present.
     gamma { day_k = 6500; night_k = 3400; flat_k = 5000;
             day_hour = 7; night_hour = 20; }
 
-    wallpaper { path = "/path/to/wall.png"; bg = #ff0f1219; }
+    wallpaper { path = "/path/to/wall.png"; bg = #ff0f1219;
+                transition = wipe; wipe_dir = down_right; wipe_soft = 200;
+                fade_ms = 300; }
+
+`bg` fills the output when the file is missing. `transition` picks how
+`wispctl wall <path>` gets from the old image to the new one over `fade_ms`:
+`fade` (the default) cross-dissolves, `dither` flips `dither_px` blocks in
+pseudo-random order, `wipe` sweeps an edge across the output. `wipe_dir` says
+where that edge travels: `right`, `left`, `down`, `up`, `down_right`,
+`down_left`, `up_right`, `up_left`. So `right` reveals the new wallpaper
+starting from the left screen edge, and `down_right` starts from the top-left
+corner with a 45-degree edge. `wipe_soft` is the width in px of the band where
+the two images lerp; set it to 1 for a hard line.
 
     media { }
 
@@ -467,6 +513,7 @@ not using it leaves the code out of the binary entirely.
 | `exec_line(...)` | the exec runner |
 | `dbus_signal(...)` | the D-Bus client |
 | `pipewire()` | the native PipeWire client (`pipewire.c`) |
+| `toplevel(...)` | the foreign-toplevel client (`wl_toplevel.c`) |
 | `tags()` | the workspace backends (mango IPC + ext-workspace) |
 | a surface with `reveal_on_hover` | `hud.c` |
 | `surface osd { spawned_by = osd }` | `osd.c` and D-Bus |

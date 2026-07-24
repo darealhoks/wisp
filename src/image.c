@@ -146,7 +146,12 @@ typedef struct {
     int64_t  mtime;
 } BgHdr;
 
-static int bgcache_path(char *out, size_t n, int W, int H) {
+static int bgcache_path(char *out, size_t n, const char *img_path, int W, int H) {
+    /* FNV-1a of the image path: one cache file per wallpaper, so cycling
+     * themes is a read() instead of a re-decode. */
+    uint32_t hash = 2166136261u;
+    for (const char *p = img_path; *p; p++)
+        hash = (hash ^ (uint8_t)*p) * 16777619u;
     const char *base = getenv("XDG_CACHE_HOME");
     char fall[512];
     if (!base || !base[0]) {
@@ -158,7 +163,7 @@ static int bgcache_path(char *out, size_t n, int W, int H) {
     char dir[640];
     snprintf(dir, sizeof dir, "%s/wisp", base);
     mkdir(dir, 0700);                 /* best-effort; EEXIST is fine */
-    snprintf(out, n, "%s/lockbg-%dx%d.bin", dir, W, H);
+    snprintf(out, n, "%s/bg-%08x-%dx%d.bin", dir, hash, W, H);
     return 0;
 }
 
@@ -178,7 +183,7 @@ uint32_t *image_bgcache_load(const char *img_path, int W, int H) {
     int64_t mt;
     if (image_mtime(img_path, &mt) < 0) return NULL;
     char path[768];
-    if (bgcache_path(path, sizeof path, W, H) < 0) return NULL;
+    if (bgcache_path(path, sizeof path, img_path, W, H) < 0) return NULL;
     if (!bgcache_hdr_ok(path, W, H, mt)) return NULL;
     int fd = open(path, O_RDONLY | O_CLOEXEC);
     if (fd < 0) return NULL;
@@ -201,7 +206,7 @@ void image_bgcache_store(const char *img_path, int W, int H, const uint32_t *px)
     int64_t mt;
     if (image_mtime(img_path, &mt) < 0) return;
     char path[768];
-    if (bgcache_path(path, sizeof path, W, H) < 0) return;
+    if (bgcache_path(path, sizeof path, img_path, W, H) < 0) return;
     if (bgcache_hdr_ok(path, W, H, mt)) return;   /* already current */
     char tmp[800];
     snprintf(tmp, sizeof tmp, "%s.tmp", path);

@@ -88,7 +88,20 @@ int emit_spawned_osd_skeleton(FILE *o, Decl *sur, CGCtx *ctx, const char *nm, in
     fputs("    widget_ensure_pool(w, 2);\n", o);
     fputs("    BufSlot *sl = widget_free_slot(w);\n", o);
     fputs("    if (!sl) return;\n", o);
-    fputs("    clear_buf(sl->px, w->w, w->h, 0);\n", o);
+    /* Partial repaint: clear + redraw only the row band that moved this frame,
+     * carrying the rest of the previous frame forward. Slabs above the band are
+     * settled and untouched, so we skip their fill/draw entirely. Pill keeps the
+     * full path — its surface is tiny. */
+    if (pill) {
+        fputs("    int __b0 = 0, __b1 = w->h, __partial = 0;\n", o);
+        fputs("    (void)__b0; (void)__b1; (void)__partial;\n", o);
+        fputs("    clear_buf(sl->px, w->w, w->h, 0);\n", o);
+    } else {
+        fputs("    int __b0 = 0, __b1 = w->h;\n", o);
+        fputs("    int __partial = osd_dirty_band(w, &__b0, &__b1) && widget_copy_forward(w, sl);\n", o);
+        fputs("    if (__partial) clear_band(sl->px, w->w, w->h, __b0, __b1, 0);\n", o);
+        fputs("    else clear_buf(sl->px, w->w, w->h, 0);\n", o);
+    }
     fprintf(o, "    const Font *f = &font_%d; (void)f;\n",
             eval_int(surface_prop(sur, "font_size"), 14));
     fprintf(o, "    int __slab_w = %d; if (__slab_w <= 0) __slab_w = w->w;\n", slab_w);
@@ -178,20 +191,19 @@ int emit_spawned_osd_skeleton(FILE *o, Decl *sur, CGCtx *ctx, const char *nm, in
         /* The chain reads as one body: only its outer corners round, and the
          * outline is a single pass after the loop over the accumulated extent
          * (a per-slab border would draw seams across every join). */
-        fprintf(o, "        { int __rtl = (__sl == __first) ? %d : 0, __rtr = (__sl == __first) ? %d : 0;\n",
+        fprintf(o, "        int __rtl = (__sl == __first) ? %d : 0, __rtr = (__sl == __first) ? %d : 0;\n",
                 r_tl, r_tr);
-        fprintf(o, "          int __rbr = (__sl == __last) ? %d : 0, __rbl = (__sl == __last) ? %d : 0;\n",
+        fprintf(o, "        int __rbr = (__sl == __last) ? %d : 0, __rbl = (__sl == __last) ? %d : 0;\n",
                 r_br, r_bl);
-        fprintf(o, "          uint32_t __bg = %s;\n", bgtxt);
+        fprintf(o, "        uint32_t __bg = %s;\n", bgtxt);
+        fputs("        if (__reg_y < __ctop) { __ctop = __reg_y; __ctop_bg = __bg; }\n", o);
+        fputs("        if (__reg_y + __reg_h > __cbot) { __cbot = __reg_y + __reg_h; __cbot_bg = __bg; }\n", o);
         /* Flush under a bar: the round-over must not bite into the rows the
          * bar cutout already nulled (wallpaper would show through the bar),
          * so it only applies past the junction. __split is 0 everywhere else,
          * which makes the call plain fill_rect_rounded. */
-        fputs("          fill_rect_rounded_split(sl->px, w->w, w->h, __reg_x, __reg_y, __reg_w,"
+        fputs("        fill_rect_rounded_split(sl->px, w->w, w->h, __reg_x, __reg_y, __reg_w,"
               " __reg_h, __rtl, __rtr, __rbr, __rbl, __split, __bg);\n", o);
-        fputs("          if (__reg_y < __ctop) { __ctop = __reg_y; __ctop_bg = __bg; }\n", o);
-        fputs("          if (__reg_y + __reg_h > __cbot) { __cbot = __reg_y + __reg_h; __cbot_bg = __bg; }\n", o);
-        fputs("        }\n", o);
         (void)cbd; (void)bde;
     }
     /* Hairline between two slabs that have both finished animating — drawn
@@ -302,7 +314,12 @@ int emit_spawned_osd_skeleton(FILE *o, Decl *sur, CGCtx *ctx, const char *nm, in
     }
 
     fputs("    w->s.osd.has_pixels = 1;\n", o);
-    fputs("    widget_attach(w, sl, osd_slab_anim_pending(w));\n", o);
+    if (pill)
+        fputs("    widget_attach(w, sl, osd_slab_anim_pending(w));\n", o);
+    else {
+        fputs("    if (__partial) widget_attach_rect(w, sl, osd_slab_anim_pending(w), 0, __b0, w->w, __b1 - __b0);\n", o);
+        fputs("    else widget_attach(w, sl, osd_slab_anim_pending(w));\n", o);
+    }
     fputs("}\n\n", o);
 
     for (int k = 0; k < 10; k++) pop_local(ctx);

@@ -120,11 +120,73 @@ static void wall_dither(uint32_t *dst, const uint32_t *a, const uint32_t *b,
     }
 }
 
+/* New-frame coverage at coordinate p for an edge at `edge`, soft px wide. */
+static int wipe_cov(int p, int edge, int soft) {
+    int d = edge - p;
+    if (d <= 0) return 0;
+    if (d >= soft) return 255;
+    return d * 255 / soft;
+}
+
+/* Wipe: an edge sweeps along WALL_WIPE_DIR with a soft lerp band at its front.
+ * Coverage is a function of x, y or x+y, so the band is always one contiguous
+ * run per row — only those pixels do any math, the rest of the row is a memcpy
+ * from one frame or the other. */
+static void wall_wipe(uint32_t *dst, const uint32_t *a, const uint32_t *b,
+                      int w, int h, int u) {
+    int soft = WALL_WIPE_SOFT < 1 ? 1 : WALL_WIPE_SOFT;
+    int dir = WALL_WIPE_DIR;
+    int usex = dir != WALL_WIPE_DIR_DOWN && dir != WALL_WIPE_DIR_UP;
+    int usey = dir != WALL_WIPE_DIR_RIGHT && dir != WALL_WIPE_DIR_LEFT;
+    int fx = dir == WALL_WIPE_DIR_LEFT || dir == WALL_WIPE_DIR_DOWN_LEFT
+             || dir == WALL_WIPE_DIR_UP_LEFT;
+    int fy = dir == WALL_WIPE_DIR_UP || dir == WALL_WIPE_DIR_UP_RIGHT
+             || dir == WALL_WIPE_DIR_UP_LEFT;
+    int span = (usex ? w : 0) + (usey ? h : 0);
+    /* Runs past the far edge by `soft` so the band is fully off-screen at u=255. */
+    int edge = (int)(((long)(span + soft) * u) / 255);
+    /* The retarget freeze composes in place (dst == a), so copies from `a` are
+     * no-ops there and memcpy would be aliasing UB. */
+    int alias = dst == a;
+
+    for (int y = 0; y < h; y++) {
+        uint32_t *d = dst + (size_t)y * w;
+        const uint32_t *pa = a + (size_t)y * w, *pb = b + (size_t)y * w;
+        int base = usey ? (fy ? h - 1 - y : y) : 0;
+        if (!usex) {   /* row-constant coverage */
+            int cov = wipe_cov(base, edge, soft);
+            if      (cov == 0)   { if (!alias) memcpy(d, pa, (size_t)w * 4); }
+            else if (cov == 255) memcpy(d, pb, (size_t)w * 4);
+            else                 wall_blend(d, pa, pb, (size_t)w, cov);
+            continue;
+        }
+        /* Band in unmirrored x: cov is 255 before `lo`, 0 from `hi` on. */
+        int lo = edge - soft + 1 - base, hi = edge - base;
+        if (lo < 0) lo = 0;
+        if (lo > w) lo = w;
+        if (hi < lo) hi = lo;
+        if (hi > w) hi = w;
+        if (!fx) {
+            memcpy(d, pb, (size_t)lo * 4);
+            for (int x = lo; x < hi; x++)
+                wall_blend(d + x, pa + x, pb + x, 1, wipe_cov(base + x, edge, soft));
+            if (!alias) memcpy(d + hi, pa + hi, (size_t)(w - hi) * 4);
+        } else {
+            if (!alias) memcpy(d, pa, (size_t)(w - hi) * 4);
+            for (int x = w - hi; x < w - lo; x++)
+                wall_blend(d + x, pa + x, pb + x, 1,
+                           wipe_cov(base + w - 1 - x, edge, soft));
+            memcpy(d + (w - lo), pb + (w - lo), (size_t)lo * 4);
+        }
+    }
+}
+
 /* The one f(from,to,t) seam — every transition type goes through here, so
  * the mid-transition retarget freeze in wall_start_fade generalizes for free. */
 static void wall_compose(uint32_t *dst, const uint32_t *a, const uint32_t *b,
                          int w, int h, int u) {
-    if (WALL_TRANSITION == WALL_TRANSITION_DITHER) wall_dither(dst, a, b, w, h, u);
+    if (WALL_TRANSITION == WALL_TRANSITION_DITHER)    wall_dither(dst, a, b, w, h, u);
+    else if (WALL_TRANSITION == WALL_TRANSITION_WIPE) wall_wipe(dst, a, b, w, h, u);
     else wall_blend(dst, a, b, (size_t)w * h, u);
 }
 
@@ -181,9 +243,7 @@ static void wall_fade_done(void *user) {
 }
 
 /* Build a finished pw*ph frame of `path`: disk cache first, else decode +
- * cover-fit (and seed the cache so the lock/restart path stays cheap).
- * ponytail: the bg cache is one file, so cycling wallpapers re-decodes each
- * switch (~150 ms); key the cache on the image path too if that ever hurts. */
+ * cover-fit (and seed the cache so the lock/restart path stays cheap). */
 static uint32_t *wall_frame_of(const char *path, int pw, int ph, int store) {
     uint32_t *px = image_bgcache_load(path, pw, ph);
     if (px) return px;
@@ -200,7 +260,10 @@ static uint32_t *wall_frame_of(const char *path, int pw, int ph, int store) {
     return px;
 }
 
-static void wall_start_fade(Widget *w, const char *oldpath) {
+/* Pass 1 of a switch: build both fade frames (the expensive decodes) without
+ * starting the clock. Arming is a separate pass so a slow decode for one
+ * output can't eat another output's already-running fade window. */
+static void wall_fade_prepare(Widget *w, const char *oldpath) {
     if (!w->configured || w->w <= 0 || w->h <= 0) { w->s.wall.painted_w = 0; return; }
     int pw = widget_pw(w), ph = widget_ph(w);
 
@@ -235,6 +298,11 @@ static void wall_start_fade(Widget *w, const char *oldpath) {
     w->s.wall.fade_to = to;
     w->s.wall.fade_w = pw;
     w->s.wall.fade_h = ph;
+}
+
+/* Pass 2: start the clock. No decode may happen between two arms — every
+ * output's fade must share the same wall-time window. */
+static void wall_fade_arm(Widget *w) {
     w->s.wall.fade = 0;
     w->s.wall.fade_u_last = -1;
     widget_ensure_pool(w, 2);
@@ -251,7 +319,10 @@ int wall_set(const char *path) {
     if (!strcmp(old, wall_path_rt)) return 0;
     for (int i = 0; i < MAX_OUTPUTS; i++)
         if (outputs[i].active && outputs[i].wall)
-            wall_start_fade(outputs[i].wall, old);
+            wall_fade_prepare(outputs[i].wall, old);
+    for (int i = 0; i < MAX_OUTPUTS; i++)
+        if (outputs[i].active && outputs[i].wall && outputs[i].wall->s.wall.fade_to)
+            wall_fade_arm(outputs[i].wall);
     return 0;
 }
 
