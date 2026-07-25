@@ -67,11 +67,11 @@ typedef struct { const char *kind; const char *human; const char *props; } PropS
 
 static const PropSchema SCHEMAS[] = {
     { "widget", "widget",
-      " align bg body_lines border border_bottom border_left border_right"
+      " align bg body_fit body_lines border border_bottom border_left border_right"
       " border_top border_width elide enter_anim enter_easing exit_anim"
       " exit_easing fg height icon orientation pad pad_x pad_y press_bg radius"
       " radius_bl radius_br radius_tl radius_tr shadow shadow_blur shadow_spread"
-      " shadow_x shadow_y show_value slider text thumb_border thumb_border_width"
+      " shadow_x shadow_y show_value slider text text_align thumb_border thumb_border_width"
       " thumb_color thumb_radius thumb_shape thumb_size track_bg track_fg"
       " track_radius transition_bg transition_border transition_easing"
       " transition_fg transition_size value value_align value_fg value_format"

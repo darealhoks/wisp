@@ -438,8 +438,8 @@ int emit_surfaces(FILE *o, Unit *u, CGCtx *ctx) {
         else if (ctx->srcs[i].drv->drv == DRV_EXEC) {
             /* Sized extern so `sizeof src_<n>_line` is usable inside on_click
              * bodies (set(<src>, ...) lowers to snprintf with sizeof). Must
-             * match the definition in gen_sources.c (256). */
-            fprintf(o, "extern char src_%s_line[256];\n", snm);
+             * match the definition in gen_sources.c (lines*256). */
+            fprintf(o, "extern char src_%s_line[%d];\n", snm, ctx->srcs[i].lines * 256);
             fprintf(o, "void src_%s_refresh(void);\n", snm);
         }
         else if (ctx->srcs[i].drv->drv == DRV_DBUS) {

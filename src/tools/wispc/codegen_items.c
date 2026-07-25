@@ -347,6 +347,15 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
                  cgctx_flush_prelude(ctx, o, indent);
                  fprintf(o, "%sint __bl = %s; if (__bl < 1) __bl = 1;\n", indent, cb.text); }
     else fprintf(o, "%sint __bl = 1;\n", indent);
+    /* body_fit: shrink the reserved slab to the text's real line count, so
+     * body_lines is only a ceiling — stacked cells on a vertical surface sit
+     * flush instead of padding out to the tallest possible one. */
+    if (widget_flag(wd, "body_fit")) {
+        fprintf(o, "%s{ int __fl = 0;\n", indent);
+        fprintf(o, "%s  if (txt && txt[0]) { __fl = 1; for (const char *__q = txt; *__q; __q++) if (*__q == '\\n' && __q[1]) __fl++; }\n", indent);
+        fprintf(o, "%s  if (__fl < 1) __fl = 1;\n", indent);
+        fprintf(o, "%s  if (__fl < __bl) __bl = __fl; }\n", indent);
+    }
 
     if (widthe) {
         CE wd_ce = lower(ctx, widthe); wd_ce = coerce_to_int(ctx, wd_ce);
@@ -440,6 +449,20 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
 
 /* Color CE: lower an expression (const/mut/ternary/literal) to a uint32_t-typed
  * C expression, or fall back to a default literal when the prop is absent. */
+/* text_align pins the multi-line text BLOCK inside the cell across the text
+ * axis: 0 center (default, today's behaviour), 1 top, 2 bottom. Compile-time
+ * only — the choice is per widget declaration, never per item. */
+static int widget_text_align(Widget *w) {
+    Expr *e = widget_prop(w, "text_align");
+    if (!e || e->kind != EX_IDENT) return 0;
+    const char *s = e->ident.s; size_t n = e->ident.n;
+    if (n == 3 && !memcmp(s, "top",   3)) return 1;
+    if (n == 5 && !memcmp(s, "start", 5)) return 1;
+    if (n == 6 && !memcmp(s, "bottom",6)) return 2;
+    if (n == 3 && !memcmp(s, "end",   3)) return 2;
+    return 0;
+}
+
 static CE color_ce(CGCtx *ctx, Expr *e, const char *dflt) {
     CE r;
     if (e) return lower(ctx, e);
@@ -640,7 +663,11 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
          * the elide clamp below takes the trailing one). */
         fprintf(o, "%s    int cx = __reg_x + pad + %d;\n",
                 indent, eval_int(widget_prop(wd, "pad_x"), 0));
-        fprintf(o, "%s    int cy = pos + (__adv - f->line_h * body_lines) / 2; if (cy < pos) cy = pos;\n", indent);
+        switch (widget_text_align(wd)) {
+        case 1:  fprintf(o, "%s    int cy = pos;\n", indent); break;
+        case 2:  fprintf(o, "%s    int cy = pos + __adv - f->line_h * body_lines; if (cy < pos) cy = pos;\n", indent); break;
+        default: fprintf(o, "%s    int cy = pos + (__adv - f->line_h * body_lines) / 2; if (cy < pos) cy = pos;\n", indent); break;
+        }
         if (shc & 0xff000000u)
             fprintf(o, "%s    fill_rounded_shadow(sl->px, w->w, w->h, __reg_x + %d, pos + %d, __reg_w + %d, __adv + %d, %d, %d, 0x%08xu);\n",
                     indent, shx - shspread, shy - shspread, 2 * shspread, 2 * shspread,
@@ -761,10 +788,16 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
          * the content row down inside the slab. */
         /* Center the whole line BLOCK, not one line: a multi-line widget
          * (body_lines > 1) otherwise hangs half its text below the cell. */
-        if (heighte)
-            fprintf(o, "%s    int __ty = __by + (__bh - f->line_h * body_lines) / 2 + %d;\n", indent, pad_y);
-        else
-            fprintf(o, "%s    int __ty = (__h > 0 ? __by + (__reg_h - __h) / 2 : y) + %d;\n", indent, pad_y);
+        int ta = widget_text_align(wd);
+        if (heighte) {
+            if (ta == 1)      fprintf(o, "%s    int __ty = __by + %d;\n", indent, pad_y);
+            else if (ta == 2) fprintf(o, "%s    int __ty = __by + __bh - f->line_h * body_lines + %d;\n", indent, pad_y);
+            else              fprintf(o, "%s    int __ty = __by + (__bh - f->line_h * body_lines) / 2 + %d;\n", indent, pad_y);
+        } else {
+            if (ta == 1)      fprintf(o, "%s    int __ty = (__h > 0 ? __by : y) + %d;\n", indent, pad_y);
+            else if (ta == 2) fprintf(o, "%s    int __ty = (__h > 0 ? __by + (__reg_h - __h) : y) + %d;\n", indent, pad_y);
+            else              fprintf(o, "%s    int __ty = (__h > 0 ? __by + (__reg_h - __h) / 2 : y) + %d;\n", indent, pad_y);
+        }
         fprintf(o, "%s    if (__ty < __reg_y) __ty = __reg_y;\n", indent);
         /* Centering: when width is fixed, compute the actual content width and
          * offset x so icon+text sits in the middle of the cell (within pad_x). */

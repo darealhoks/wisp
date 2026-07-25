@@ -83,6 +83,7 @@ typedef struct {
     const char *fmt; size_t flen;
     int interval_ms;
     int refresh_ms;
+    int lines;              /* exec_line/inotify capture height; buffer = lines*256 */
     const char *arg2; size_t a2len;
 } SrcInst;
 

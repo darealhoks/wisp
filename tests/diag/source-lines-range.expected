@@ -1,0 +1,4 @@
+tests/diag/source-lines-range.wisp:1:65: error: exec_line(lines=999) out of range — 1..64
+  source tail = exec_line("tail -n 5 /tmp/log", every="2s", lines=999);
+                                                                  ^
+  help: each line reserves 256 bytes of static buffer

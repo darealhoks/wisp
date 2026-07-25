@@ -401,6 +401,19 @@ const char *op_C(Op o) {
     }
 }
 
+/* Bytes an interpolated %s part can really produce, when it's a multi-line
+ * exec_line/inotify source — the default 288 budget would truncate it, and
+ * gcc's -Wformat-truncation turns that into a build error. 0 = use default. */
+static int str_part_cap(CGCtx *c, Expr *e) {
+    Expr *b = e;
+    if (e->kind == EX_MEMBER) b = e->member.base;
+    else if (e->kind != EX_IDENT) return 0;
+    if (b->kind != EX_IDENT) return 0;
+    SrcInst *si = find_inst(c->srcs, c->nsrc, b->ident.s, b->ident.n);
+    if (!si || (si->drv->drv != DRV_EXEC && si->drv->drv != DRV_INOTIFY)) return 0;
+    return si->lines * 256;
+}
+
 CE lower(CGCtx *c, Expr *e) {
     CE r = { .text = "0", .type = T_UNK };
     if (!e) return r;
@@ -501,6 +514,7 @@ CE lower(CGCtx *c, Expr *e) {
          * fprintf that would land inside our format string literal. */
         char fmt[1024]; size_t fn = 0;
         size_t budget = 16;
+        int big = 0;   /* extra headroom claimed by multi-line sources */
         #define FMTC(ch) do { if (fn < sizeof fmt - 1) fmt[fn++] = (ch); } while (0)
         #define FMTS(s)  do { for (const char *_p = (s); *_p; _p++) FMTC(*_p); } while (0)
         CE args[16]; int nargs = 0;
@@ -527,7 +541,13 @@ CE lower(CGCtx *c, Expr *e) {
             case T_COLOR:            FMTS("#%08x"); budget += 10;  break;
             /* A string part is the only unbounded one — an OSD body wraps to
              * OSD_MAX_BODY_LINES × OSD_BODY_MAX. Budget for a real one. */
-            case T_STR: default:     FMTS("%s");    budget += 288; break;
+            case T_STR: default: {
+                FMTS("%s");
+                int cap = str_part_cap(c, p->expr);
+                if (cap > 288) { budget += (size_t)cap; big += cap; }
+                else            budget += 288;
+                break;
+            }
             }
         }
         fmt[fn] = 0;
@@ -535,7 +555,7 @@ CE lower(CGCtx *c, Expr *e) {
         #undef FMTS
         int bufsize = (int)budget;
         if (bufsize < 64) bufsize = 64;
-        if (bufsize > 2048) bufsize = 2048;
+        if (bufsize > 2048 + big) bufsize = 2048 + big;
         fprintf(c->prelude, "static char ibuf%d[%d]; ", seq, bufsize);
         fprintf(c->prelude, "snprintf(ibuf%d, %d, \"%s\"", seq, bufsize, fmt);
         for (int i = 0; i < nargs; i++) {

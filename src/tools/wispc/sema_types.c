@@ -275,6 +275,7 @@ static int enum_prop_set(const char *n, size_t L, int *is_flag) {
     P("orientation", E_AXIS, 0);
     P("thumb_shape", E_THUMB, 0);
     P("value_align", E_VALIGN, 0);
+    P("text_align", E_VALIGN, 0);
     P("edge", E_EDGE, 0);
     P("input", E_INPUT, 0);
     P("transition", E_TRANSITION, 0);
@@ -338,6 +339,25 @@ static bool call_has_kw(Expr *c, const char *kw, size_t kl) {
     return false;
 }
 
+/* lines=N on exec_line/inotify sizes a static N*256 buffer, so it must be an
+ * int literal with a bound — the RSS cost is declared, not discovered. */
+static void check_lines_kw(Expr *c, const char *nm) {
+    for (int i = 0; i < c->call.nargs; i++) {
+        const char *kn = c->call.argnames ? c->call.argnames[i] : NULL;
+        size_t n = c->call.anlen ? c->call.anlen[i] : 0;
+        if (!kn || n != 5 || memcmp(kn, "lines", 5) != 0) continue;
+        Expr *v = c->call.args[i];
+        if (v->kind != EX_INT) {
+            diag_error(v->loc, "%s(lines=) expects an integer literal", nm);
+            return;
+        }
+        if (v->i < 1 || v->i > 64) {
+            diag_error(v->loc, "%s(lines=%lld) out of range — 1..64", nm, (long long)v->i);
+            diag_hint(v->loc, "each line reserves 256 bytes of static buffer");
+        }
+    }
+}
+
 void check_source_args(const SrcDef *sd, Expr *c) {
     if (!sd || !c || c->kind != EX_CALL) return;
     const char *nm = sd->name;
@@ -359,9 +379,11 @@ void check_source_args(const SrcDef *sd, Expr *c) {
     } else if (!strcmp(nm, "exec_line")) {
         if (na < 1 || c->call.args[0]->kind != EX_STRING)
             diag_error(c->loc, "exec_line() needs a string command as its first arg");
+        check_lines_kw(c, nm);
     } else if (!strcmp(nm, "inotify")) {
         if (!call_has_kw(c, "path", 4))
             diag_error(c->loc, "inotify() requires an absolute path=\"/…\"");
+        check_lines_kw(c, nm);
     } else if (!strcmp(nm, "toplevel")) {
         if (!call_has_kw(c, "app_id", 6))
             diag_error(c->loc, "toplevel() requires app_id=\"…\"");

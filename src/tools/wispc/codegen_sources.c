@@ -129,6 +129,7 @@ int collect_srcs(Unit *u, SrcInst *out, int max) {
         out[n].decl = d; out[n].drv = drv; out[n].fmt = NULL; out[n].flen = 0;
         out[n].interval_ms = 1000;
         out[n].refresh_ms = 120;
+        out[n].lines = 1;
         out[n].arg2 = NULL; out[n].a2len = 0;
         if (drv->drv == DRV_CLOCK) {
             if (c->call.nargs != 1 || c->call.args[0]->kind != EX_STRING) {
@@ -165,10 +166,16 @@ int collect_srcs(Unit *u, SrcInst *out, int max) {
                         out[n].refresh_ms = parse_dur_ms(s, L);
                     }
                 }
+                if (kn && kl == 5 && memcmp(kn, "lines", 5) == 0 &&
+                    c->call.args[k]->kind == EX_INT) {
+                    out[n].lines = (int)c->call.args[k]->i;
+                }
             }
             /* every="0" = one-shot: probe at startup + on refresh() only. */
             if (out[n].interval_ms && out[n].interval_ms < 50) out[n].interval_ms = 50;
             if (out[n].refresh_ms < 0)  out[n].refresh_ms = 0;
+            if (out[n].lines < 1)  out[n].lines = 1;
+            if (out[n].lines > 64) out[n].lines = 64;   /* sema errors first; this is the backstop */
         } else if (drv->drv == DRV_DBUS) {
             if (c->call.nargs < 2 ||
                 c->call.args[0]->kind != EX_STRING ||
@@ -211,8 +218,11 @@ int collect_srcs(Unit *u, SrcInst *out, int max) {
                     c->call.args[k]->kind == EX_STRING) {
                     out[n].fmt  = c->call.args[k]->str.s;
                     out[n].flen = c->call.args[k]->str.n;
+                } else if (kn && kl == 5 && memcmp(kn, "lines", 5) == 0 &&
+                           c->call.args[k]->kind == EX_INT) {
+                    out[n].lines = (int)c->call.args[k]->i;
                 } else {
-                    diag_error(d->loc, "codegen: inotify() takes only path=\"…\"");
+                    diag_error(d->loc, "codegen: inotify() takes only path=\"…\", lines=N");
                     return -1;
                 }
             }
@@ -220,6 +230,8 @@ int collect_srcs(Unit *u, SrcInst *out, int max) {
                 diag_error(d->loc, "codegen: inotify() requires an absolute file path=\"/…\"");
                 return -1;
             }
+            if (out[n].lines < 1)  out[n].lines = 1;
+            if (out[n].lines > 64) out[n].lines = 64;   /* sema errors first; this is the backstop */
         } else if (drv->drv == DRV_WISP && !strcmp(drv->name, "toplevel")) {
             /* toplevel(app_id="…") — app_id is required; stored in fmt for the
              * match-table emission and used as the source's match key. */
@@ -472,8 +484,8 @@ void emit_sources(FILE *o, SrcInst *srcs, int nsrc) {
             fprintf(o, "int  src_%s_pipe = -1;\n", nm);
             fprintf(o, "static pid_t src_%s_pid = 0;\n", nm);
             fprintf(o, "static int   src_%s_blen = 0;\n", nm);
-            fprintf(o, "char src_%s_line[256];\n", nm);
-            fprintf(o, "static char src_%s_buf[256];\n", nm);
+            fprintf(o, "char src_%s_line[%d];\n", nm, s->lines * 256);
+            fprintf(o, "static char src_%s_buf[%d];\n", nm, s->lines * 256);
             fputs  ("void epoll_add_fd(int); void epoll_del_fd(int);\n", o);
             fprintf(o, "static void src_%s_kick(void) {\n", nm);
             fprintf(o, "    if (src_%s_pipe >= 0) return; /* previous run still in flight */\n", nm);
@@ -523,8 +535,15 @@ void emit_sources(FILE *o, SrcInst *srcs, int nsrc) {
             fprintf(o, "        src_%s_pid = 0;\n", nm);
             fputs  ("    }\n", o);
             fprintf(o, "    src_%s_buf[src_%s_blen] = 0;\n", nm, nm);
-            fprintf(o, "    char *nl = (char*)memchr(src_%s_buf, '\\n', (size_t)src_%s_blen);\n", nm, nm);
-            fputs  ("    if (nl) *nl = 0;\n", o);
+            if (s->lines == 1) {
+                fprintf(o, "    char *nl = (char*)memchr(src_%s_buf, '\\n', (size_t)src_%s_blen);\n", nm, nm);
+                fputs  ("    if (nl) *nl = 0;\n", o);
+            } else {
+                /* lines>1: keep internal newlines (the renderer splits on them),
+                 * strip only the trailing ones the shell adds. */
+                fprintf(o, "    while (src_%s_blen > 0 && src_%s_buf[src_%s_blen - 1] == '\\n')\n", nm, nm, nm);
+                fprintf(o, "        src_%s_buf[--src_%s_blen] = 0;\n", nm, nm);
+            }
             fprintf(o, "    memcpy(src_%s_line, src_%s_buf, sizeof src_%s_line);\n", nm, nm, nm);
             fprintf(o, "    src_%s_line[sizeof src_%s_line - 1] = 0;\n", nm, nm);
             fprintf(o, "    on_%s_change();\n", nm);
@@ -567,17 +586,25 @@ void emit_sources(FILE *o, SrcInst *srcs, int nsrc) {
             char *base = strrchr(path, '/') + 1;  /* collect_srcs guarantees '/' */
             char *dir  = strndup0(path, base == path + 1 ? 1 : (size_t)(base - path - 1));
             fprintf(o, "int  src_%s_fd = -1;\n", nm);
-            fprintf(o, "char src_%s_value[256];\n", nm);
+            fprintf(o, "char src_%s_value[%d];\n", nm, s->lines * 256);
             fprintf(o, "static void src_%s_read(void) {\n", nm);
             fprintf(o, "    src_%s_value[0] = 0;\n", nm);
             fprintf(o, "    FILE *f = fopen(\"%s\", \"r\");\n", path);
             fputs  ("    if (!f) return;\n", o);
-            fprintf(o, "    if (fgets(src_%s_value, sizeof src_%s_value, f)) {\n", nm, nm);
-            fprintf(o, "        char *nl = strchr(src_%s_value, '\\n');\n", nm);
-            fputs  ("        if (nl) *nl = 0;\n", o);
-            fputs  ("    } else {\n", o);
-            fprintf(o, "        src_%s_value[0] = 0;\n", nm);
-            fputs  ("    }\n", o);
+            if (s->lines == 1) {
+                fprintf(o, "    if (fgets(src_%s_value, sizeof src_%s_value, f)) {\n", nm, nm);
+                fprintf(o, "        char *nl = strchr(src_%s_value, '\\n');\n", nm);
+                fputs  ("        if (nl) *nl = 0;\n", o);
+                fputs  ("    } else {\n", o);
+                fprintf(o, "        src_%s_value[0] = 0;\n", nm);
+                fputs  ("    }\n", o);
+            } else {
+                /* lines>1: one bounded slurp, internal newlines kept for the
+                 * renderer's line split; only trailing ones stripped. */
+                fprintf(o, "    size_t n = fread(src_%s_value, 1, sizeof src_%s_value - 1, f);\n", nm, nm);
+                fprintf(o, "    src_%s_value[n] = 0;\n", nm);
+                fprintf(o, "    while (n > 0 && src_%s_value[n - 1] == '\\n') src_%s_value[--n] = 0;\n", nm, nm);
+            }
             fputs  ("    fclose(f);\n", o);
             fputs  ("}\n", o);
             fprintf(o, "void src_%s_init(void) {\n", nm);
