@@ -6,9 +6,9 @@ the daemon has no idea a config file ever existed.
 
 That has one consequence worth stating up front: **every edit needs a rebuild.**
 
-    make install && wispctl reload
+    wispctl rebuild <config>
 
-Start from `configs/bee.wisp`. It is the config this rice runs and it uses most
+Start from `configs/bee.wisp`. It is the config my rice runs and it uses most
 of the language.
 
 ## Shape of a file

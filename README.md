@@ -1,39 +1,28 @@
 # wisp <img src="wisp.png" width="32" height="32" align="absmiddle" alt="">
 
-**W**idget **I**nterface, **S**ingle **P**rocess — one Wayland daemon that draws
-a whole desktop shell. All it needs is `wlr-layer-shell-unstable-v1`, plus
-`ext-workspace-v1` if you want workspace tags (sway, niri, labwc, cosmic,
-kwin, patched dwl — see the support table below). Developed on [mangoWM](https://github.com/DreamMaoMao/mango),
-which is served by a small IPC fallback instead.
+> [!WARNING]
+> Due to the extremely minimal nature of this project, bugs can still occur. I have been daily driving wisp for a few months now so most issues should be gone but its still experimental software. 
 
-Bar, hover panels, notification slabs, app menu, session lock, night-mode gamma
-and wallpaper are not separate features. They are **surfaces**: the same layer
-of Wayland surface, configured differently. What you declare is what exists.
+**W**idget **I**nterface, **S**ingle **P**rocess - one Wayland daemon that draws a whole desktop shell. All it needs is `wlr-layer-shell-unstable-v1`.
 
-Everything visible or interactive is declared in a `.wisp` file, which the
-bundled compiler `wispc` lowers to C and links into the daemon. There is no
-runtime config file and no plugin loading. Writing `tags()` links the
-workspace client; declaring an osd surface links the D-Bus client; a config that mentions
-neither produces a binary containing neither.
+Bar, hover panels, notification slabs, app menu, session lock, night-mode gamma and wallpaper are not separate features. They are **surfaces**: the same layer of Wayland surface, configured differently.
 
-The process links **libc and libm**. Wayland and D-Bus are spoken as raw wire,
-so there is no `libwayland`, `libxkbcommon`, `libdbus`, `cairo`, `pango`,
-`pixman` or `glib`. The default font backend bakes a TTF into const tables at
-build time, leaving the daemon with no font dependency at all.
+Everything is declared in a `.wisp` file, which the bundled compiler `wispc` lowers to C and links into the daemon. Writing `tags()` links the workspace client; declaring an osd surface links the D-Bus client; a config that mentions neither produces a binary containing neither.
 
-Idle costs zero ticks per second, by construction rather than by tuning:
-nothing polls, animations run only while a tween is active, the bar skips
-redraws by hashing its contents, and hidden surfaces release their SHM pools.
-The config this repo runs (`configs/bee.wisp`, baked backend) sits at about
-2.9 MB RSS idle with a 167 KB stripped binary. Your numbers depend on what you declared and which font
-backend you picked.
+The process links **libc and libm**. Wayland and D-Bus are spoken as raw wire, so there is no other dependency.
+
+Idle costs nothing, my config `configs/bee.wisp` idle consumes:
+**CPU:** 1 cpu tick per 10 seconds (measured on a i5-1135G7, without the cpu/temp/mem polls in the config this number is a plain 0)
+**RAM:** 3.1 MB RSS (PSS is only 950KB, measured on 1080p)
+**DISK:** 250 KB stripped binary
+Your numbers depend on what you declared. 
 
 ## Docs
 
-- [install.md](docs/install.md) — installing, build knobs, font backends
-- [tutorial.md](docs/tutorial.md) — one bar from an empty file to workspace clicks
-- [dsl.md](docs/dsl.md) — the language, complete
-- [wispctl.md](docs/wispctl.md) — the control client, and what `reload` really does
+- [install.md](docs/install.md) - installing, build knobs
+- [tutorial.md](docs/tutorial.md) - one bar from an empty file
+- [dsl.md](docs/dsl.md) - the wisp language, complete
+- [wispctl.md](docs/wispctl.md) - the control client
 
 ## Quick start
 
@@ -47,9 +36,6 @@ make install         # → ~/.local/bin (override with PREFIX=)
 ```
 
 Then drive it: `wispctl apps`, `wispctl volume up`, `wispctl notify 1 hi`.
-
-`configs/bee.wisp` is the config this desktop actually runs, and the best
-reference once the docs run out.
 
 ## Compositor support
 

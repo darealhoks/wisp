@@ -302,18 +302,10 @@ minimal top-centred pill instead of joining the stack (see
 
     wispctl volume up
 
-## What you built
-
-Roughly 60 lines that compile into a daemon linking libc and libm, drawing a bar
-that costs nothing while it sits still.
-
-Notice what you never did: no plugin was enabled, no module list was configured.
-Writing `tags()` linked the workspace client. Declaring the osd surface linked the D-Bus
-client. A config without them produces a binary that does not contain that code
-at all.
+## The end
 
 From here, read [dsl.md](dsl.md) for everything the language has that this
 tutorial skipped: sliders, animations, hover-revealed HUDs, compounds, corner
 fillets, and the gamma, wallpaper, lock and media blocks.
 
-Then read `configs/bee.wisp`, which is all of it in use.
+Then read `configs/bee.wisp` or `configs/dwlarp.wisp`, which is most of it in use.
