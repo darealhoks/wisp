@@ -72,6 +72,8 @@ static void emit_objects_mk(FILE *o, SemaResult *r) {
     fputs("    $(BUILD)/wl.o \\\n", o);
     fputs("    $(BUILD)/widget.o \\\n", o);
     fputs("    $(BUILD)/render.o \\\n", o);
+    /* elide/wrap text fitting — the generated widget path always references it. */
+    fputs("    $(BUILD)/textfit.o \\\n", o);
     fputs("    $(BUILD)/ctl.o \\\n", o);
     fputs("    $(BUILD)/xkb.o \\\n", o);
     fputs("    $(BUILD)/mango.o \\\n", o);

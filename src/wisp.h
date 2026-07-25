@@ -512,9 +512,16 @@ void draw_glyph(uint32_t *px, int sw, int sh, int x, int y,
                 const Font *f, const Glyph *g, uint32_t fg);
 /* draw_text, but truncated to `max_w` px with a trailing ellipsis. Text whose
  * length is attacker-controlled (a D-Bus notification summary) must not be
- * allowed to run past its cell. */
+ * allowed to run past its cell. (textfit.c) */
 void draw_text_elided(uint32_t *px, int sw, int sh, int x, int y,
                       const Font *f, const char *s, int max_w, uint32_t fg);
+/* Word-wrap `s` to `max_w` px / `max_lines` lines into `out` as one
+ * "\n"-joined string; returns the line count. Overflow gets an ellipsis. */
+int text_wrap(const Font *f, const char *s, int max_w, int max_lines,
+              char *out, int out_sz);
+/* text_wrap into a shared scratch buffer — valid until the next call. */
+const char *text_wrapped(const Font *f, const char *s, int max_w, int max_lines,
+                         int *nlines);
 
 /* ============================================================ */
 /* Status sampling (status.c)                                    */
@@ -939,6 +946,8 @@ typedef struct Anim {
     Widget    *owner;
     AnimDone   on_done;
     void      *user;
+    int        repeat;     /* remaining runs incl. the current one; 1 = no repeat */
+    int        alternate;  /* ping-pong from/to on each cycle boundary */
 } Anim;
 
 extern Anim anims[ANIM_MAX];
@@ -963,10 +972,12 @@ typedef struct { int has; int last; double cur; } SizeSlot;
 
 uint32_t anim_start_num(void *target, AnimType type, double from, double to,
                         int duration_ms, Easing e, const double bez[4],
-                        Widget *owner, AnimDone on_done, void *user);
+                        Widget *owner, AnimDone on_done, void *user,
+                        int repeat, int alternate);
 uint32_t anim_start_color(uint32_t *target, uint32_t from, uint32_t to,
                           int duration_ms, Easing e, const double bez[4],
-                          Widget *owner, AnimDone on_done, void *user);
+                          Widget *owner, AnimDone on_done, void *user,
+                          int repeat, int alternate);
 void     anim_cancel_for(void *target);
 void     anim_tick(int64_t now);
 int      anim_fd(void);

@@ -275,9 +275,9 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
         fprintf(o, "%s#ifdef WISP_HAS_ANIM\n", indent);
         fprintf(o, "%s{ VisSlot *__s = &%s_vis%d[__wi][%s];\n", indent, surf_nm, item_idx, ve_idx);
         fprintf(o, "%s  if (!__s->has) { __s->prev = vis; __s->rev = vis ? 1.0 : 0.0; __s->has = 1; }\n", indent);
-        fprintf(o, "%s  else if (!__s->prev && vis) { anim_start_num(&__s->rev, ANIM_T_FLOAT, __s->rev, 1.0, %d, %s, NULL, w, NULL, NULL); __s->prev = 1; }\n",
+        fprintf(o, "%s  else if (!__s->prev && vis) { anim_start_num(&__s->rev, ANIM_T_FLOAT, __s->rev, 1.0, %d, %s, NULL, w, NULL, NULL, 1, 0); __s->prev = 1; }\n",
                 indent, ve_in > 0 ? ve_in : 1, widget_easing_id(wd, "enter_easing"));
-        fprintf(o, "%s  else if (__s->prev && !vis) { anim_start_num(&__s->rev, ANIM_T_FLOAT, __s->rev, 0.0, %d, %s, NULL, w, NULL, NULL); __s->prev = 0; }\n",
+        fprintf(o, "%s  else if (__s->prev && !vis) { anim_start_num(&__s->rev, ANIM_T_FLOAT, __s->rev, 0.0, %d, %s, NULL, w, NULL, NULL, 1, 0); __s->prev = 0; }\n",
                 indent, ve_out > 0 ? ve_out : 1, widget_easing_id(wd, "exit_easing"));
         fprintf(o, "%s  rev = __s->rev; if (rev > 0.004) vis = 1; }\n", indent);
         fprintf(o, "%s#endif\n", indent);
@@ -347,12 +347,25 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
                  cgctx_flush_prelude(ctx, o, indent);
                  fprintf(o, "%sint __bl = %s; if (__bl < 1) __bl = 1;\n", indent, cb.text); }
     else fprintf(o, "%sint __bl = 1;\n", indent);
+    /* `wrap`: measure against the WRAPPED text, so the content-fit width and
+     * body_fit's line count see the lines that will actually be drawn. The draw
+     * pass re-wraps — text_wrapped()'s scratch is shared, so the pointer can't
+     * be held across items. Column = the region room minus pad_x, same budget
+     * `elide` clamps to. */
+    fprintf(o, "%sconst char *__mtxt = txt;\n", indent);
+    fprintf(o, "%s(void)__mtxt;\n", indent);
+    if (widget_flag(wd, "wrap")) {
+        fprintf(o, "%sif (txt && txt[0]) {\n", indent);
+        fprintf(o, "%s    int __ww = __reg_w - %d;\n", indent, 2 * pad_xm);
+        fprintf(o, "%s    __mtxt = text_wrapped(f, txt, __ww, __bl, (int *)0);\n", indent);
+        fprintf(o, "%s}\n", indent);
+    }
     /* body_fit: shrink the reserved slab to the text's real line count, so
      * body_lines is only a ceiling — stacked cells on a vertical surface sit
      * flush instead of padding out to the tallest possible one. */
     if (widget_flag(wd, "body_fit")) {
         fprintf(o, "%s{ int __fl = 0;\n", indent);
-        fprintf(o, "%s  if (txt && txt[0]) { __fl = 1; for (const char *__q = txt; *__q; __q++) if (*__q == '\\n' && __q[1]) __fl++; }\n", indent);
+        fprintf(o, "%s  if (__mtxt && __mtxt[0]) { __fl = 1; for (const char *__q = __mtxt; *__q; __q++) if (*__q == '\\n' && __q[1]) __fl++; }\n", indent);
         fprintf(o, "%s  if (__fl < 1) __fl = 1;\n", indent);
         fprintf(o, "%s  if (__fl < __bl) __bl = __fl; }\n", indent);
     }
@@ -367,8 +380,8 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
         fprintf(o, "%sint tw = 0;\n", indent);
         fprintf(o, "%sif (cp || pms)  tw += cp_width(f, cp, pm, pms);\n", indent);
         fprintf(o, "%sif ((cp || pms) && txt && txt[0]) tw += 2;\n", indent);
-        fprintf(o, "%sif (txt) {\n", indent);
-        fprintf(o, "%s    const char *__p = txt; int __w = 0;\n", indent);
+        fprintf(o, "%sif (__mtxt) {\n", indent);
+        fprintf(o, "%s    const char *__p = __mtxt; int __w = 0;\n", indent);
         fprintf(o, "%s    while (__p && *__p) {\n", indent);
         fprintf(o, "%s        const char *__nl = __p; while (*__nl && *__nl != '\\n') __nl++;\n", indent);
         fprintf(o, "%s        char __tmp[256]; int __L = (int)(__nl - __p); if (__L > 255) __L = 255;\n", indent);
@@ -619,6 +632,12 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
     fprintf(o, "%s    if (st[%s].press_bg & 0xff000000u && __%s_pressed_st == (%s) && __%s_pressed_w == w) bg = st[%s].press_bg;\n",
             indent, idx_expr, nm, idx_expr, nm, idx_expr);
     fprintf(o, "%s    int body_lines = st[%s].body_lines;\n", indent, idx_expr);
+    /* Re-wrap for the draw: the measure pass's scratch has been reused by every
+     * item measured after this one. body_lines is the (already body_fit-clamped)
+     * ceiling, so both passes produce the same lines. */
+    if (widget_flag(wd, "wrap"))
+        fprintf(o, "%s    if (txt && txt[0]) txt = text_wrapped(f, txt, __reg_w - %d, body_lines, (int *)0);\n",
+                indent, 2 * eval_int(widget_prop(wd, "pad_x"), 0));
     fprintf(o, "%s    int pos;\n", indent);
     fprintf(o, "%s    switch (st[%s].align) {\n", indent, idx_expr);
     fprintf(o, "%s        case 0:  pos = start_pos; start_pos += __adv + pad; break;\n", indent);

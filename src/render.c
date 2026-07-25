@@ -943,28 +943,4 @@ void draw_text(uint32_t *px, int sw, int sh, int x, int y,
     }
 }
 
-void draw_text_elided(uint32_t *px, int sw, int sh, int x, int y,
-                      const Font *f, const char *s, int max_w, uint32_t fg) {
-    if (max_w <= 0) return;
-    if (text_width(f, s) <= max_w) { draw_text(px, sw, sh, x, y, f, s, fg); return; }
-    int budget = max_w - text_width(f, "\xe2\x80\xa6");
-    if (budget < 0) budget = 0;
-    /* Cut on a codepoint boundary — a split UTF-8 sequence would render as
-     * replacement junk. */
-    int n = 0, wpx = 0;
-    while (s[n]) {
-        uint32_t cp; int k = utf8_decode(s + n, &cp);
-        if (!k) break;
-        const Glyph *g = font_find(f, cp);
-        int gw = g ? g->adv : f->px_size / 2;
-        if (wpx + gw > budget) break;
-        n += k; wpx += gw;
-    }
-    char buf[288];
-    if (n > (int)sizeof buf - 4) n = (int)sizeof buf - 4;
-    memcpy(buf, s, n);
-    memcpy(buf + n, "\xe2\x80\xa6", 3);
-    buf[n + 3] = 0;
-    draw_text(px, sw, sh, x, y, f, buf, fg);
-}
 

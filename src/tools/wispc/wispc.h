@@ -133,7 +133,9 @@ struct Stmt {
         struct { const char *name; size_t nlen; const char **kw; size_t *kwlen; Expr **val; int n; } emit;
         struct { const char *name; size_t nlen; Expr *val; } set;
         struct { Stmt **list; int n; } block;
-        struct { const char *name; size_t nlen; Expr *to; Expr *duration; Expr *easing; } anim;
+        /* repeat = total runs (NULL → 1); alternate = ping-pong each run. */
+        struct { const char *name; size_t nlen; Expr *to; Expr *duration; Expr *easing;
+                 Expr *repeat; int alternate; } anim;
     };
 };
 
@@ -253,7 +255,9 @@ struct Decl {
     bool is_menu; int memoji;
     MenuItem *mitems; int nmitems;
     union {
-        struct { Expr *call; } source;          /* RHS is a call expr */
+        /* on_change: optional `{ on_change() = …; }` body on the decl. hkind
+         * records what was actually written so sema can reject on_click etc. */
+        struct { Expr *call; Stmt *on_change; WBKind hkind; Loc hloc; } source;
         struct { SBody *items; int n; } surface;
         struct { Expr *val; } konst;            /* const/mut share */
         struct { Prop **props; int n; } block;  /* lock/gamma/wallpaper */

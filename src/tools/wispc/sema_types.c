@@ -351,8 +351,8 @@ static void check_lines_kw(Expr *c, const char *nm) {
             diag_error(v->loc, "%s(lines=) expects an integer literal", nm);
             return;
         }
-        if (v->i < 1 || v->i > 64) {
-            diag_error(v->loc, "%s(lines=%lld) out of range — 1..64", nm, (long long)v->i);
+        if (v->i < 1 || v->i > 256) {
+            diag_error(v->loc, "%s(lines=%lld) out of range — 1..256", nm, (long long)v->i);
             diag_hint(v->loc, "each line reserves 256 bytes of static buffer");
         }
     }
@@ -383,6 +383,8 @@ void check_source_args(const SrcDef *sd, Expr *c) {
     } else if (!strcmp(nm, "inotify")) {
         if (!call_has_kw(c, "path", 4))
             diag_error(c->loc, "inotify() requires an absolute path=\"/…\"");
+        if (call_has_kw(c, "key", 3) && call_has_kw(c, "lines", 5))
+            diag_error(c->loc, "inotify(key=) sources are single-line; lines= not allowed");
         check_lines_kw(c, nm);
     } else if (!strcmp(nm, "toplevel")) {
         if (!call_has_kw(c, "app_id", 6))

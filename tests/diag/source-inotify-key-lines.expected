@@ -1,0 +1,3 @@
+tests/diag/source-inotify-key-lines.wisp:1:13: error: inotify(key=) sources are single-line; lines= not allowed
+  source st = inotify(path="/tmp/state", key="critical", lines=4);
+              ^

@@ -115,79 +115,6 @@ static Widget *osd_stack(void) {
     return NULL;
 }
 
-/* Walk the prefix of `s` whose pixel width fits `budget`, returning byte count. */
-static int prefix_fitting(const Font *f, const char *s, int budget) {
-    int n = 0, w = 0;
-    while (s[n]) {
-        uint32_t cp; int k = utf8_decode(s + n, &cp);
-        if (!k) break;
-        const Glyph *g = font_find(f, cp);
-        int gw = g ? g->adv : f->px_size / 2;
-        if (w + gw > budget) break;
-        n += k; w += gw;
-    }
-    return n;
-}
-
-/* Word-wrap `s` into at most `max_lines` lines, each <= max_w pixels.
- * Final line gets an ellipsis only if input doesn't fit within max_lines. */
-static int wrap_body(const Font *f, const char *s, int max_w, int max_lines,
-                     char out[][OSD_BODY_MAX]) {
-    int line = 0;
-    int sp_w = text_width(f, " ");
-    char cur[OSD_BODY_MAX] = ""; int cur_len = 0, cur_w = 0;
-
-    while (*s && line < max_lines) {
-        while (*s == ' ' || *s == '\t' || *s == '\n') s++;
-        if (!*s) break;
-        const char *we = s;
-        while (*we && *we != ' ') we++;
-        int wl = (int)(we - s);
-        if (wl >= (int)sizeof cur) wl = sizeof cur - 1;
-        char word[OSD_BODY_MAX];
-        memcpy(word, s, wl); word[wl] = 0;
-        int ww = text_width(f, word);
-        int add_sp = cur_len > 0 ? sp_w : 0;
-        if (cur_w + add_sp + ww > max_w) {
-            if (cur_len == 0) {
-                int cut = prefix_fitting(f, word, max_w);
-                if (cut == 0) cut = 1;
-                memcpy(out[line], word, cut); out[line][cut] = 0;
-                line++;
-                s += cut;
-                continue;
-            }
-            memcpy(out[line], cur, cur_len); out[line][cur_len] = 0;
-            line++; cur[0] = 0; cur_len = 0; cur_w = 0;
-            continue;
-        }
-        if (add_sp) { cur[cur_len++] = ' '; cur[cur_len] = 0; cur_w += sp_w; }
-        memcpy(cur + cur_len, word, wl); cur_len += wl; cur[cur_len] = 0;
-        cur_w += ww;
-        s = we;
-    }
-    if (cur_len > 0 && line < max_lines) {
-        memcpy(out[line], cur, cur_len); out[line][cur_len] = 0;
-        line++;
-    }
-    if (*s && line > 0) {
-        char *last = out[line - 1];
-        int ell_w = text_width(f, "\xe2\x80\xa6");
-        int lw = text_width(f, last);
-        while (lw + ell_w > max_w) {
-            int len = (int)strlen(last);
-            if (!len) break;
-            int back = 1;
-            while (back < len && (last[len - back] & 0xc0) == 0x80) back++;
-            last[len - back] = 0;
-            lw = text_width(f, last);
-        }
-        size_t ll = strlen(last);
-        if (ll + 3 < OSD_BODY_MAX) { memcpy(last + ll, "\xe2\x80\xa6", 3); last[ll + 3] = 0; }
-    }
-    return line;
-}
-
 static int find_replace(Widget *w, uint32_t rid) {
     if (!rid) return -1;
     for (int i = 0; i < MAX_OSDS; i++)
@@ -343,7 +270,7 @@ static double slab_anim_p(const Osd *o, int64_t now) {
 /* Pass-1 state, shared by every layout backend and by the generated slab
  * renderer via osd_slab_geom(). Valid only for the widget most recently passed
  * to osd_slab_layout() — there is one stack widget at a time. */
-static char   osd_wrapped[MAX_OSDS][OSD_MAX_BODY_LINES][OSD_BODY_MAX];
+static char   osd_wrapped[MAX_OSDS][OSD_MAX_BODY_LINES * OSD_BODY_MAX];
 static int    osd_nbody[MAX_OSDS];
 static int    osd_item_y[MAX_OSDS];
 static int    osd_visible_h[MAX_OSDS];
@@ -360,12 +287,14 @@ int osd_slab_layout(Widget *w) {
     for (int i = 0; i < MAX_OSDS; i++) {
         Osd *o = &w->s.osd.items[i];
         osd_nbody[i] = 0;
+        osd_wrapped[i][0] = 0;
         if (!o->active) break;
         int tx = slab_text_x(o);
         int body_w = OSD_W - OSD_PAD_X - tx;
         if (body_w < 0) body_w = 0;
         if (o->body[0])
-            osd_nbody[i] = wrap_body(f, o->body, body_w, OSD_MAX_BODY_LINES, osd_wrapped[i]);
+            osd_nbody[i] = text_wrap(f, o->body, body_w, OSD_MAX_BODY_LINES,
+                                     osd_wrapped[i], sizeof osd_wrapped[i]);
         o->h = slab_height_for(osd_nbody[i], o->progress >= 0);
 
         osd_anim_p[i] = slab_anim_p(o, now);
@@ -407,6 +336,7 @@ int osd_pill_layout(Widget *w) {
     Osd *o = &w->s.osd.items[0];
     if (!o->active) return 0;
     osd_nbody[0] = 0;
+    osd_wrapped[0][0] = 0;
     osd_item_y[0] = 0;
     o->h = OSD_PILL_H;
     osd_anim_p[0] = slab_anim_p(o, now_ms());
@@ -429,23 +359,10 @@ int osd_bar_split(void) {
 /* Both exist so the generated renderer never re-derives time or input state:
  * it draws, and asks the runtime for the rest. */
 /* The wrapped body as one "\n"-joined string, so the DSL's body_lines text
- * renderer draws the same lines osd_slab_layout measured. Rebuilt per call —
- * only two widgets ever ask, and only while a slab is on screen.
+ * renderer draws the same lines osd_slab_layout measured.
  * ponytail: wrap width is still osd_slab_layout's OSD_W-derived column, not
  * the declaring widget's; thread the widget width in if a preset diverges. */
-const char *osd_slab_body(int i) {
-    static char joined[OSD_MAX_BODY_LINES * OSD_BODY_MAX];
-    int n = 0;
-    for (int li = 0; li < osd_nbody[i]; li++) {
-        if (n && n < (int)sizeof joined - 1) joined[n++] = '\n';
-        int k = (int)strlen(osd_wrapped[i][li]);
-        if (k > (int)sizeof joined - 1 - n) k = (int)sizeof joined - 1 - n;
-        memcpy(joined + n, osd_wrapped[i][li], k);
-        n += k;
-    }
-    joined[n] = 0;
-    return joined;
-}
+const char *osd_slab_body(int i) { return osd_wrapped[i]; }
 int osd_slab_nbody(int i) { return osd_nbody[i]; }
 
 void osd_stack_input_region(Widget *w) { update_input_region(w); }

@@ -80,7 +80,8 @@ static int alloc_slot(void) {
 
 uint32_t anim_start_num(void *target, AnimType type, double from, double to,
                         int duration_ms, Easing e, const double bez[4],
-                        Widget *owner, AnimDone on_done, void *user) {
+                        Widget *owner, AnimDone on_done, void *user,
+                        int repeat, int alternate) {
     anim_cancel_for(target);
     int i = alloc_slot();
     if (i < 0) return 0;
@@ -98,6 +99,8 @@ uint32_t anim_start_num(void *target, AnimType type, double from, double to,
     a->owner = owner;
     a->on_done = on_done;
     a->user = user;
+    a->repeat = repeat > 0 ? repeat : 1;
+    a->alternate = alternate;
     anim_active_count++;
     anim_tfd_arm();
     return (uint32_t)(i + 1);
@@ -105,7 +108,8 @@ uint32_t anim_start_num(void *target, AnimType type, double from, double to,
 
 uint32_t anim_start_color(uint32_t *target, uint32_t from, uint32_t to,
                           int duration_ms, Easing e, const double bez[4],
-                          Widget *owner, AnimDone on_done, void *user) {
+                          Widget *owner, AnimDone on_done, void *user,
+                          int repeat, int alternate) {
     anim_cancel_for(target);
     int i = alloc_slot();
     if (i < 0) return 0;
@@ -123,6 +127,8 @@ uint32_t anim_start_color(uint32_t *target, uint32_t from, uint32_t to,
     a->owner = owner;
     a->on_done = on_done;
     a->user = user;
+    a->repeat = repeat > 0 ? repeat : 1;
+    a->alternate = alternate;
     anim_active_count++;
     anim_tfd_arm();
     return (uint32_t)(i + 1);
@@ -196,8 +202,13 @@ static uint32_t lerp_color(uint32_t a, uint32_t b, double u) {
            ((uint32_t)cr[2] << 16) | ((uint32_t)cr[3] << 24);
 }
 
+/* Emitted by codegen only when the config declares at least one mut; the weak
+ * ref keeps ownerless tweens linkable in configs that have none. */
+extern void wispgen_anim_mut_changed(void) __attribute__((weak));
+
 void anim_tick(int64_t now) {
     int repaint[MAX_WIDGETS] = {0};
+    int mut_changed = 0;
     int done_slots[ANIM_MAX]; int n_done = 0;
     /* Update EVERY target before any render: two tweens on one owner (grow +
      * shrink pill) must be sampled at the same tick, or the painted widths
@@ -236,6 +247,17 @@ void anim_tick(int64_t now) {
         if (changed && a->owner) {
             int idx = (int)(a->owner - widgets);
             if (idx >= 0 && idx < MAX_WIDGETS) repaint[idx] = 1;
+        } else if (changed) {
+            mut_changed = 1;
+        }
+        if (done && a->repeat > 1) {
+            a->repeat--;
+            if (a->alternate) {
+                double tmp = a->from; a->from = a->to; a->to = tmp;
+                uint32_t tc = a->from_c; a->from_c = a->to_c; a->to_c = tc;
+            }
+            a->start_ms = now;
+            done = 0;
         }
         if (done) done_slots[n_done++] = i;
     }
@@ -248,6 +270,7 @@ void anim_tick(int64_t now) {
 #endif
         bar_render(ow);
     }
+    if (mut_changed && wispgen_anim_mut_changed) wispgen_anim_mut_changed();
     for (int k = 0; k < n_done; k++) {
         Anim *a = &anims[done_slots[k]];
         AnimDone cb = a->on_done; void *u2 = a->user;

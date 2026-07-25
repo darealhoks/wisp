@@ -694,17 +694,25 @@ static void emit_stmt_inner(FILE *o, CGCtx *ctx, Stmt *st, const char *indent,
             diag_error(st->loc, "cannot animate a string mut");
             return;
         }
-        /* Owner widget: `w` is in scope inside <surf>_on_click handlers.
-         * Outside click context the codegen-emitted ctx doesn't bind `w` yet
-         * — for now pass NULL (acceptable: bar_redraw_all() on the next status
-         * tick will catch up). */
-        const char *owner = "w";
+        /* Owner widget: `w` is in scope inside <surf>_on_click handlers; a NULL
+         * owner (source on_change, any other context) repaints via anim.c's
+         * wispgen_anim_mut_changed(). */
+        const char *owner = ctx->no_owner ? "NULL" : "w";
+        const char *rep = "1";
+        char rep_buf[1040];
+        if (st->anim.repeat) {
+            CE rc = lower(ctx, st->anim.repeat);
+            snprintf(rep_buf, sizeof rep_buf, "(int)(%s)", rc.text);
+            rep = rep_buf;
+        }
         if (type_id) {
-            fprintf(o, "%s%s(&mut_%s, %s, (double)(mut_%s), (double)(%s), (int)(%s), %s, %s, %s, NULL, NULL);\n",
-                    indent, fn, nm, type_id, nm, to.text, dur.text, easing_id, bez_arg, owner);
+            fprintf(o, "%s%s(&mut_%s, %s, (double)(mut_%s), (double)(%s), (int)(%s), %s, %s, %s, NULL, NULL, %s, %d);\n",
+                    indent, fn, nm, type_id, nm, to.text, dur.text, easing_id, bez_arg, owner,
+                    rep, st->anim.alternate);
         } else {
-            fprintf(o, "%s%s(&mut_%s, mut_%s, (uint32_t)(%s), (int)(%s), %s, %s, %s, NULL, NULL);\n",
-                    indent, fn, nm, nm, to.text, dur.text, easing_id, bez_arg, owner);
+            fprintf(o, "%s%s(&mut_%s, mut_%s, (uint32_t)(%s), (int)(%s), %s, %s, %s, NULL, NULL, %s, %d);\n",
+                    indent, fn, nm, nm, to.text, dur.text, easing_id, bez_arg, owner,
+                    rep, st->anim.alternate);
         }
         /* Mark surfaces that read this mut dirty so any side-effects (visible/
          * static layout) recompute on next tick. */

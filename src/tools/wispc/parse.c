@@ -442,8 +442,22 @@ static Stmt *parse_stmt(P *p) {
         s->anim.to = parse_expr(p);
         expect(p, TK_COMMA, "',' in animate()");
         s->anim.duration = parse_expr(p);
-        expect(p, TK_COMMA, "',' in animate()");
-        s->anim.easing = parse_expr(p);
+        /* Trailing args in any order: easing ident/call, `repeat = <expr>`,
+         * bare `alternate`. All optional. */
+        while (eat(p, TK_COMMA)) {
+            Tok a = cur(p);
+            if (a.kind == TK_IDENT && a.len == 9 && !memcmp(a.s, "alternate", 9) &&
+                lex_peek(&p->L).kind != TK_ASSIGN) {
+                lex_next(&p->L);
+                s->anim.alternate = 1;
+            } else if (a.kind == TK_IDENT && a.len == 6 && !memcmp(a.s, "repeat", 6) &&
+                       lex_peek(&p->L).kind == TK_ASSIGN) {
+                lex_next(&p->L); lex_next(&p->L);
+                s->anim.repeat = parse_expr(p);
+            } else {
+                s->anim.easing = parse_expr(p);
+            }
+        }
         expect(p, TK_RPAREN, "')'");
         return s;
     }
@@ -645,6 +659,38 @@ static Decl *parse_source(P *p) {
     else { lex_next(&p->L); d->name = arena_strn(p->a, n.s, n.len); d->nlen = n.len; }
     expect(p, TK_ASSIGN, "'='");
     d->source.call = parse_expr(p);
+    /* Optional handler body before the ';'. Any on_* keyword parses; sema is
+     * what rejects everything but on_change(). */
+    if (at(p, TK_LBRACE)) {
+        Loc bopen = cur(p).loc;
+        lex_next(&p->L);
+        while (!at(p, TK_RBRACE) && !at(p, TK_EOF)) {
+            Tok t = cur(p);
+            WBKind hk;
+            switch (t.kind) {
+            case TK_KW_ON_CHANGE:  hk = WB_ONCHANGE;  break;
+            case TK_KW_ON_CLICK:   hk = WB_ONCLICK;   break;
+            case TK_KW_ON_PRESS:   hk = WB_ONPRESS;   break;
+            case TK_KW_ON_RELEASE: hk = WB_ONRELEASE; break;
+            case TK_KW_ON_DRAG:    hk = WB_ONDRAG;    break;
+            case TK_KW_ON_RCLICK:  hk = WB_ONRCLICK;  break;
+            case TK_KW_ON_MCLICK:  hk = WB_ONMCLICK;  break;
+            default:
+                diag_error(t.loc, "expected `on_change()` in a source body");
+                skip_decl(p);
+                return d;
+            }
+            lex_next(&p->L);
+            expect(p, TK_LPAREN, "'('");
+            expect(p, TK_RPAREN, "')'");
+            expect(p, TK_ASSIGN, "'='");
+            d->source.hkind = hk;
+            d->source.hloc = t.loc;
+            d->source.on_change = parse_stmt(p);
+            expect(p, TK_SEMI, "';'");
+        }
+        expect_rbrace(p, bopen);
+    }
     expect(p, TK_SEMI, "';'");
     if (d->source.call && d->source.call->kind != EX_CALL)
         diag_error(d->source.call->loc, "source RHS must be a call");

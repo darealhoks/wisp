@@ -313,7 +313,7 @@ static void wall_fade_arm(Widget *w) {
     w->want_pool_free = 0;
 #if WALL_FADE_MS > 0
     anim_start_num(&w->s.wall.fade, ANIM_T_FLOAT, 0, 1, WALL_FADE_MS,
-                   EASE_IN_OUT, NULL, w, wall_fade_done, w);
+                   EASE_IN_OUT, NULL, w, wall_fade_done, w, 1, 0);
 #else
     wall_fade_done(w);   /* fade disabled: attach the target frame immediately */
 #endif

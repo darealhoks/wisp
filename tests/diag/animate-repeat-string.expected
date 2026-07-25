@@ -1,0 +1,3 @@
+tests/diag/animate-repeat-string.wisp:6:61: error: animate() repeat= must be a number, got string
+  		on_click() = animate(fade, 1.0, 200ms, ease_out, repeat = "3");
+  		                                                          ^

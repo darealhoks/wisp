@@ -295,7 +295,7 @@ void emit_color_slot(FILE *o, const char *ind, const char *var, const char *slot
     fprintf(o, "%s#ifdef WISP_HAS_ANIM\n", ind);
     fprintf(o, "%s{ TransSlot *__s = &%s_tr%d_%s[__wi][%s];\n", ind, sc->surf, sc->item, slot, sc->idx);
     fprintf(o, "%s  if (!__s->has) { __s->cur = __%s_tgt; __s->last = __%s_tgt; __s->has = 1; }\n", ind, var, var);
-    fprintf(o, "%s  else if (__s->last != __%s_tgt) { anim_start_color(&__s->cur, __s->cur, __%s_tgt, %d, %s, NULL, w, NULL, NULL); __s->last = __%s_tgt; }\n",
+    fprintf(o, "%s  else if (__s->last != __%s_tgt) { anim_start_color(&__s->cur, __s->cur, __%s_tgt, %d, %s, NULL, w, NULL, NULL, 1, 0); __s->last = __%s_tgt; }\n",
             ind, var, var, dur, sc->ease, var);
     fprintf(o, "%s  %s = __s->cur; }\n", ind, var);
     fprintf(o, "%s#else\n%s  %s = __%s_tgt;\n%s#endif\n", ind, ind, var, var, ind);
@@ -309,7 +309,7 @@ void emit_size_slot(FILE *o, const char *ind, const char *var, const char *slot,
     fprintf(o, "%s#ifdef WISP_HAS_ANIM\n", ind);
     fprintf(o, "%s{ SizeSlot *__s = &%s_tr%d_%s[__wi][%s];\n", ind, sc->surf, sc->item, slot, sc->idx);
     fprintf(o, "%s  if (!__s->has) { __s->cur = %s; __s->last = %s; __s->has = 1; }\n", ind, var, var);
-    fprintf(o, "%s  else if (__s->last != %s) { anim_start_num(&__s->cur, ANIM_T_FLOAT, __s->cur, %s, %d, %s, NULL, w, NULL, NULL); __s->last = %s; }\n",
+    fprintf(o, "%s  else if (__s->last != %s) { anim_start_num(&__s->cur, ANIM_T_FLOAT, __s->cur, %s, %d, %s, NULL, w, NULL, NULL, 1, 0); __s->last = %s; }\n",
             ind, var, var, dur, sc->ease, var);
     fprintf(o, "%s  %s = anim_px(__s->cur)%s; }\n", ind, var, even ? " & ~1" : "");
     fprintf(o, "%s#endif\n", ind);

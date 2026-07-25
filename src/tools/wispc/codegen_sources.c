@@ -126,6 +126,7 @@ int collect_srcs(Unit *u, SrcInst *out, int max) {
                        (int)c->call.nlen, c->call.name);
             return -1;
         }
+        memset(&out[n], 0, sizeof out[n]);   /* caller's array is stack-uninit */
         out[n].decl = d; out[n].drv = drv; out[n].fmt = NULL; out[n].flen = 0;
         out[n].interval_ms = 1000;
         out[n].refresh_ms = 120;
@@ -175,7 +176,7 @@ int collect_srcs(Unit *u, SrcInst *out, int max) {
             if (out[n].interval_ms && out[n].interval_ms < 50) out[n].interval_ms = 50;
             if (out[n].refresh_ms < 0)  out[n].refresh_ms = 0;
             if (out[n].lines < 1)  out[n].lines = 1;
-            if (out[n].lines > 64) out[n].lines = 64;   /* sema errors first; this is the backstop */
+            if (out[n].lines > 256) out[n].lines = 256;   /* sema errors first; this is the backstop */
         } else if (drv->drv == DRV_DBUS) {
             if (c->call.nargs < 2 ||
                 c->call.args[0]->kind != EX_STRING ||
@@ -221,8 +222,12 @@ int collect_srcs(Unit *u, SrcInst *out, int max) {
                 } else if (kn && kl == 5 && memcmp(kn, "lines", 5) == 0 &&
                            c->call.args[k]->kind == EX_INT) {
                     out[n].lines = (int)c->call.args[k]->i;
+                } else if (kn && kl == 3 && memcmp(kn, "key", 3) == 0 &&
+                           c->call.args[k]->kind == EX_STRING) {
+                    out[n].key  = c->call.args[k]->str.s;
+                    out[n].klen = c->call.args[k]->str.n;
                 } else {
-                    diag_error(d->loc, "codegen: inotify() takes only path=\"…\", lines=N");
+                    diag_error(d->loc, "codegen: inotify() takes only path=\"…\", lines=N, key=\"…\"");
                     return -1;
                 }
             }
@@ -230,8 +235,9 @@ int collect_srcs(Unit *u, SrcInst *out, int max) {
                 diag_error(d->loc, "codegen: inotify() requires an absolute file path=\"/…\"");
                 return -1;
             }
+            if (out[n].key) out[n].lines = 1;   /* sema rejects key=+lines= first */
             if (out[n].lines < 1)  out[n].lines = 1;
-            if (out[n].lines > 64) out[n].lines = 64;   /* sema errors first; this is the backstop */
+            if (out[n].lines > 256) out[n].lines = 256;   /* sema errors first; this is the backstop */
         } else if (drv->drv == DRV_WISP && !strcmp(drv->name, "toplevel")) {
             /* toplevel(app_id="…") — app_id is required; stored in fmt for the
              * match-table emission and used as the source's match key. */
@@ -591,7 +597,21 @@ void emit_sources(FILE *o, SrcInst *srcs, int nsrc) {
             fprintf(o, "    src_%s_value[0] = 0;\n", nm);
             fprintf(o, "    FILE *f = fopen(\"%s\", \"r\");\n", path);
             fputs  ("    if (!f) return;\n", o);
-            if (s->lines == 1) {
+            if (s->key) {
+                /* key="k": first line starting `k=` wins; absent key = "" so
+                 * widgets can ternary on it like an empty file. */
+                char *key = strndup0(s->key, s->klen);
+                fputs  ("    char ln[256];\n", o);
+                fputs  ("    while (fgets(ln, sizeof ln, f)) {\n", o);
+                fprintf(o, "        if (strncmp(ln, \"%s=\", %zu) != 0) continue;\n", key, s->klen + 1);
+                fputs  ("        char *nl = strchr(ln, '\\n');\n", o);
+                fputs  ("        if (nl) *nl = 0;\n", o);
+                fprintf(o, "        snprintf(src_%s_value, sizeof src_%s_value, \"%%s\", ln + %zu);\n",
+                        nm, nm, s->klen + 1);
+                fputs  ("        break;\n", o);
+                fputs  ("    }\n", o);
+                free(key);
+            } else if (s->lines == 1) {
                 fprintf(o, "    if (fgets(src_%s_value, sizeof src_%s_value, f)) {\n", nm, nm);
                 fprintf(o, "        char *nl = strchr(src_%s_value, '\\n');\n", nm);
                 fputs  ("        if (nl) *nl = 0;\n", o);
@@ -856,6 +876,43 @@ void emit_sources(FILE *o, SrcInst *srcs, int nsrc) {
 /* gen_bindings.c                                                */
 /* ============================================================ */
 
+/* Lower a source's `on_change()` body into on_<name>_change(), under two
+ * guards that apply to the user handler ONLY — the dirty flags above stay
+ * unconditional:
+ *   (a) real change — kinds that fire once per poll/event regardless of value
+ *       (clock/exec_line/inotify/dbus_signal) get a last-value compare;
+ *       DRV_STATUS already returned early via __chg, and the rest only fire
+ *       on a genuine event.
+ *   (b) no boot pulse — the first sample primes the copy and runs nothing. */
+static void emit_src_on_change(FILE *o, CGCtx *ctx, SrcInst *si, SemaResult *r) {
+    DrvKind dk = si->drv->drv;
+    int cmp = (dk == DRV_CLOCK || dk == DRV_EXEC || dk == DRV_DBUS || dk == DRV_INOTIFY);
+    fputs("    {\n", o);
+    fputs("        static int __hinit = 0;\n", o);
+    if (cmp) {
+        /* Bare source ident = primary field; all four kinds lower to a char buf. */
+        Expr id;
+        memset(&id, 0, sizeof id);
+        id.kind = EX_IDENT;
+        id.loc = si->decl->loc;
+        id.ident.s = si->decl->name;
+        id.ident.n = si->decl->nlen;
+        CE v = lower(ctx, &id);
+        fputs("        static char __hlast[256];\n", o);
+        fprintf(o, "        int __hchg = (strcmp(__hlast, %s) != 0);\n", v.text);
+        fprintf(o, "        snprintf(__hlast, sizeof __hlast, \"%%s\", %s);\n", v.text);
+    } else {
+        fputs("        int __hchg = 1;\n", o);
+    }
+    fputs("        if (!__hinit) { __hinit = 1; }\n", o);
+    fputs("        else if (__hchg) {\n", o);
+    ctx->no_owner = 1;
+    emit_stmt(o, ctx, si->decl->source.on_change, "            ", r);
+    ctx->no_owner = 0;
+    fputs("        }\n", o);
+    fputs("    }\n", o);
+}
+
 void emit_bindings(FILE *o, SrcInst *srcs, int nsrc, SemaResult *r,
                           CGCtx *ctx) {
     fputs("/* Generated by wispc. Do not edit. */\n", o);
@@ -915,6 +972,19 @@ void emit_bindings(FILE *o, SrcInst *srcs, int nsrc, SemaResult *r,
             fprintf(o, "%s mut_%s = (%s)(%s);\n", cty, nm, cty, init.text);
         }
     }
+    /* Value buffers live in gen_sources.c; an on_change() body reads them from
+     * this TU. Sized like the definition so `sizeof` in a set() still works. */
+    for (int i = 0; i < nsrc; i++) {
+        if (!srcs[i].decl->source.on_change) continue;
+        const char *nm = sname(srcs[i].decl->name, srcs[i].decl->nlen);
+        switch (srcs[i].drv->drv) {
+        case DRV_CLOCK:
+        case DRV_INOTIFY:
+        case DRV_DBUS:   fprintf(o, "extern char src_%s_value[];\n", nm); break;
+        case DRV_EXEC:   fprintf(o, "extern char src_%s_line[%d];\n", nm, srcs[i].lines * 256); break;
+        default: break;
+        }
+    }
     fputc('\n', o);
     for (int i = 0; i < nsrc; i++) {
         const char *nm = sname(srcs[i].decl->name, srcs[i].decl->nlen);
@@ -950,6 +1020,31 @@ void emit_bindings(FILE *o, SrcInst *srcs, int nsrc, SemaResult *r,
                     break;
                 }
             }
+        }
+        if (srcs[i].decl->source.on_change)
+            emit_src_on_change(o, ctx, &srcs[i], r);
+        fputs("}\n\n", o);
+    }
+    /* anim.c weak-calls this when a tween with no owner widget moved a mut —
+     * such a tween has no widget to repaint, so dirty every surface reading a
+     * mut. The main loop flushes dirty_* at the end of the same iteration. */
+    int has_mut = 0;
+    for (int i = 0; i < ctx->nkonst; i++) if (ctx->konst[i]->kind == D_MUT) has_mut = 1;
+    if (has_mut) {
+        fputs("void wispgen_anim_mut_changed(void) {\n", o);
+        for (int j = 0; j < r->nsurfaces; j++) {
+            const char **deps = r->surface_deps[j];
+            int hit = 0;
+            for (int k = 0; deps && deps[k] && !hit; k++) {
+                for (int i = 0; i < ctx->nkonst; i++) {
+                    Decl *m = ctx->konst[i];
+                    if (m->kind != D_MUT) continue;
+                    if (strcmp(deps[k], sname(m->name, m->nlen))) continue;
+                    hit = 1;
+                    break;
+                }
+            }
+            if (hit) fprintf(o, "    dirty_%s = 1;\n", r->surface_names[j]);
         }
         fputs("}\n\n", o);
     }

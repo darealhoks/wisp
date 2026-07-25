@@ -1,0 +1,3 @@
+tests/diag/source-body-not-onchange.wisp:2:2: error: source body allows only on_change()
+  	on_click() = exec("true");
+  	^

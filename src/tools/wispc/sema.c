@@ -75,7 +75,7 @@ static const PropSchema SCHEMAS[] = {
       " thumb_color thumb_radius thumb_shape thumb_size track_bg track_fg"
       " track_radius transition_bg transition_border transition_easing"
       " transition_fg transition_size value value_align value_fg value_format"
-      " value_gap value_max value_scale visible width x_offset y_offset " },
+      " value_gap value_max value_scale visible width wrap x_offset y_offset " },
     { "surface", "surface",
       " anchor anchor_gap armpit_bl armpit_br armpit_color armpit_inner"
       " armpit_outer armpit_tl armpit_tr axis bg bg_bottom body_lines body_max"
@@ -428,6 +428,13 @@ static void walk_stmt(S *s, Stmt *st) {
         }
         walk_expr(s, st->anim.to);
         walk_expr(s, st->anim.duration);
+        if (st->anim.repeat) {
+            walk_expr(s, st->anim.repeat);
+            Ty rt = ty_of(s, st->anim.repeat);
+            if (rt == TY_STR || rt == TY_COLOR)
+                diag_error(st->anim.repeat->loc,
+                           "animate() repeat= must be a number, got %s", ty_name(rt));
+        }
         /* easing is bare ident or a call (cubic_bezier(...)); allow without normal undef-check */
         if (st->anim.easing && st->anim.easing->kind == EX_CALL)
             for (int i = 0; i < st->anim.easing->call.nargs; i++)
@@ -767,6 +774,17 @@ SemaResult *sema_check(Arena *a, Unit *u) {
         walk_expr(&s, s.s.kon[i]->konst.val);
         typecheck_expr(&s, s.s.kon[i]->konst.val);
     }
+
+    /* Pass 2b: source on_change() bodies. Deps recorded here belong to no
+     * surface, so drop them before the per-surface pass snapshots its own. */
+    for (int i = 0; i < s.s.nsrc; i++) {
+        Decl *d = s.s.src[i];
+        if (!d->source.on_change) continue;
+        if (d->source.hkind != WB_ONCHANGE)
+            diag_error(d->source.hloc, "source body allows only on_change()");
+        walk_stmt(&s, d->source.on_change);
+    }
+    s.ndeps = 0;
 
     /* Pass 3: per-surface analysis. */
     for (int i = 0; i < s.s.nsur; i++) analyze_surface(&s, s.s.sur[i]);

@@ -84,6 +84,7 @@ typedef struct {
     int interval_ms;
     int refresh_ms;
     int lines;              /* exec_line/inotify capture height; buffer = lines*256 */
+    const char *key; size_t klen;   /* inotify(key=): extract `key=value` line */
     const char *arg2; size_t a2len;
 } SrcInst;
 
@@ -166,6 +167,8 @@ struct CGCtx {
      * cell is first overwritten with `surface_bg` before its content redraws.
      * Set only around an eligible plain bar surface's draw loop. */
     int   partial_ok;
+    /* No widget `w` in scope (source on_change bodies) — animate() owner NULL. */
+    int   no_owner;
     uint32_t surface_bg;
     FILE *prelude;
     char *prelude_buf; size_t prelude_sz;
