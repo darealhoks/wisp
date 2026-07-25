@@ -251,6 +251,26 @@ themes. The set of glyphs available is baked from your font by `tools/bake.c`.
 `bg`, `border`, `radius`, `press_bg` and `shadow` dress the widget's own slab.
 `visible` skips it in layout, or plays its exit animation if it has one.
 
+### Multi-line text
+
+`body_lines` reserves N text rows for the widget. Three markers shape what goes
+in them:
+
+    widget todo {
+      text = todo_src; body_lines = 200;
+      wrap; body_fit; pad = 4;
+    }
+
+`elide;` truncates a too-long single line with an ellipsis. `wrap;` re-flows the
+text into the widget's column instead: newlines in the input are **hard**
+breaks, blank lines survive, and only a line that overshoots the column is
+broken (a single word wider than the column is cut mid-word). Running past
+`body_lines` ellipsises the last line. `body_fit;` shrinks the reserved slab to
+the real line count, making `body_lines` a ceiling rather than a fixed height —
+so stacked cells on a vertical surface sit flush.
+
+One wrapped block caps at 16 KB of laid-out text.
+
 ### Sliders
 
 Declare the marker, bind a `mut`:
@@ -364,7 +384,8 @@ passes sema, and is then silently dropped by codegen. Nothing tells you.
 ## Groups
 
 A group packs several widgets into one rounded container, the way waybar's
-`group/` does. Members draw without their own borders inside it.
+`group/` does. Members keep their own cell dressing — `bg`, `border`,
+`border_width` and `radius` on a member paint inside the container.
 
     group sysgrp {
       align = right;
@@ -381,8 +402,9 @@ ternary there is a build error. Member `fg`, `bg`, `text` and `icon` may be
 dynamic.
 
 Groups take widgets and nothing else. No sliders, no `for`, no transitions, no
-`body_lines`. They work on horizontal surfaces only, and a group on
-`axis = vertical` is a codegen error.
+`body_lines`. On `axis = vertical` a group is a *band*: it takes one row of the
+stack (its `height`) and its members still lay out left to right inside that
+row — the only way to put two differently styled texts on one line.
 
 ## Compounds
 

@@ -266,6 +266,23 @@ static int cmd_rebuild(const char *name) {
     return 0;
 }
 
+/* update — re-run the curl-pipable installer (it always fetches latest), then
+ * re-exec the freshly installed wispctl to rebuild + reload. Exec, not a call:
+ * this process is the OLD binary; rebuild must run in the new one. */
+static int cmd_update(void) {
+    const char *url =
+        "https://raw.githubusercontent.com/darealhoks/wisp/main/install.sh";
+    char cmd[512];
+    /* ponytail: system() + curl-or-wget; PREFIX passes through the env. */
+    snprintf(cmd, sizeof cmd,
+             "{ curl -fsSL %s 2>/dev/null || wget -qO- %s; } | sh", url, url);
+    int st = system(cmd);
+    if (st != 0) { fprintf(stderr, "wispctl: update failed\n"); return 1; }
+    execvp("wispctl", (char *const[]){ "wispctl", "rebuild", NULL });
+    perror("wispctl: exec wispctl");
+    return 1;
+}
+
 /* Commands below a module heading only exist if that module is declared in the
  * .wisp the running daemon was built from; the daemon replies "err" otherwise. */
 static const char USAGE[] =
@@ -278,6 +295,8 @@ static const char USAGE[] =
 "  rebuild [config]          recompile from a .wisp, install, reload.\n"
 "                            config = a name in ~/.config/wisp (or a path);\n"
 "                            omitted = the last one used\n"
+"  update                    fetch + install the latest wisp from github,\n"
+"                            then rebuild + reload\n"
 "  quit                      stop the daemon\n"
 "  hide on|off|toggle|status hide surfaces that gate on ui_hidden()\n"
 "  wall <path>               switch the wallpaper (png only, crossfade); lasts until\n"
@@ -335,6 +354,8 @@ int main(int argc, char **argv) {
      * directly so the session can still be locked when the wisp daemon is
      * down or crashed. The lock binary owns its own Wayland connection and
      * outlives wisp. */
+    if (!strcmp(argv[1], "update"))
+        return cmd_update();
     if (!strcmp(argv[1], "rebuild"))
         return cmd_rebuild(argc > 2 ? argv[2] : NULL);
     if (!strcmp(argv[1], "lock")) {

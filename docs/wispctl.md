@@ -53,6 +53,14 @@ old process before reloading, so the switch is a transition instead of a
 blank frame. After the reload it re-warms the other configs' build caches in
 the background.
 
+## update
+
+    wispctl update
+
+re-runs the curl-pipable installer (which always fetches the latest wisp from
+github), then rebuilds the current config with the new sources and reloads.
+Honors `PREFIX` like the installer does.
+
 ## reload
 
     make install && wispctl reload

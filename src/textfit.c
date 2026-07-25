@@ -74,8 +74,17 @@ int text_wrap(const Font *f, const char *s, int max_w, int max_lines,
     cur[0] = 0;
 
     while (*s && line < max_lines) {
-        while (*s == ' ' || *s == '\t' || *s == '\n') s++;
-        if (!*s) break;
+        /* '\n' is a HARD break: flush even an empty accumulator, so blank lines
+         * in line-structured input (a todo list, a header/separator block)
+         * survive instead of being reflowed away. */
+        if (*s == '\n') {
+            s++;
+            if (!push_line(out, out_sz, &n, line, cur, cur_len)) break;
+            line++; cur[0] = 0; cur_len = 0; cur_w = 0;
+            continue;
+        }
+        while (*s == ' ' || *s == '\t') s++;
+        if (!*s || *s == '\n') continue;
         const char *we = s;
         while (*we && *we != ' ' && *we != '\n') we++;
         int wl = (int)(we - s);
@@ -113,9 +122,10 @@ int text_wrap(const Font *f, const char *s, int max_w, int max_lines,
 const char *text_wrapped(const Font *f, const char *s, int max_w, int max_lines,
                          int *nlines) {
     /* ponytail: one shared scratch, valid until the next call — the generated
-     * measure/draw passes consume it immediately. 4 KB caps a wrapped block;
+     * measure/draw passes consume it immediately. 16 KB caps a wrapped block —
+     * 4 KB silently ellipsised a body_lines=200 panel long before its ceiling;
      * give it its own buffer if a config ever needs more. */
-    static char buf[4096];
+    static char buf[16384];
     int n = text_wrap(f, s, max_w, max_lines, buf, sizeof buf);
     if (nlines) *nlines = n;
     return buf;

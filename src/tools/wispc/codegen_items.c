@@ -356,7 +356,11 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
     fprintf(o, "%s(void)__mtxt;\n", indent);
     if (widget_flag(wd, "wrap")) {
         fprintf(o, "%sif (txt && txt[0]) {\n", indent);
-        fprintf(o, "%s    int __ww = __reg_w - %d;\n", indent, 2 * pad_xm);
+        /* Vertical draw insets content by `pad + pad_x` and the trailing pad_x
+         * stays free, so the column must lose `pad + 2*pad_x` — measuring with
+         * only 2*pad_x overshoots the region and clips the last glyph. */
+        fprintf(o, "%s    int __ww = __reg_w - %d;\n", indent,
+                vertical ? padE + 2 * pad_xm : 2 * pad_xm);
         fprintf(o, "%s    __mtxt = text_wrapped(f, txt, __ww, __bl, (int *)0);\n", indent);
         fprintf(o, "%s}\n", indent);
     }
@@ -635,9 +639,14 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
     /* Re-wrap for the draw: the measure pass's scratch has been reused by every
      * item measured after this one. body_lines is the (already body_fit-clamped)
      * ceiling, so both passes produce the same lines. */
-    if (widget_flag(wd, "wrap"))
+    if (widget_flag(wd, "wrap")) {
+        /* Same column the measure pass used — the declared `pad` constant, not
+         * st[].pad, so a reveal tween can't re-break the lines mid-animation. */
+        int wrap_inset = 2 * eval_int(widget_prop(wd, "pad_x"), 0);
+        if (vertical) wrap_inset += eval_int(widget_prop(wd, "pad"), 0);
         fprintf(o, "%s    if (txt && txt[0]) txt = text_wrapped(f, txt, __reg_w - %d, body_lines, (int *)0);\n",
-                indent, 2 * eval_int(widget_prop(wd, "pad_x"), 0));
+                indent, wrap_inset);
+    }
     fprintf(o, "%s    int pos;\n", indent);
     fprintf(o, "%s    switch (st[%s].align) {\n", indent, idx_expr);
     fprintf(o, "%s        case 0:  pos = start_pos; start_pos += __adv + pad; break;\n", indent);
@@ -1082,12 +1091,13 @@ static void emit_group_member(FILE *o, BarItem *it, const char *nm, int gap) {
     /* A member's declared height sizes its own bg/border; without one it fills
      * the group band. Otherwise a 20px icon cell got a full-band-tall pill. */
     fprintf(o, "            int __mh = st[%s].ch > 0 ? st[%s].ch : __gh, __my = __gy + (__gh - __mh)/2;\n", sb, sb);
-    if (any_round) {
+    if (any_round)
         fprintf(o, "            if (bg  & 0xff000000u) fill_rect_rounded(sl->px,w->w,w->h, __gx,__my,__ma,__mh, %d,%d,%d,%d, bg);\n", mr, mr, mr, mr);
-        fprintf(o, "            if (bdr & 0xff000000u) fill_rect_rounded_border(sl->px,w->w,w->h, __gx,__my,__ma,__mh, %d,%d,%d,%d, %d,1,1,1,1,0, bdr);\n", mr, mr, mr, mr, mbw);
-    } else {
+    else
         fprintf(o, "            if (bg  & 0xff000000u) fill_rect(sl->px,w->w,w->h, __gx,__my,__ma,__mh, bg);\n");
-    }
+    /* Border is radius-independent — the SDF handles r=0 — so a member with
+     * `border` and no `radius` paints instead of silently resolving a colour. */
+    fprintf(o, "            if (bdr & 0xff000000u) fill_rect_rounded_border(sl->px,w->w,w->h, __gx,__my,__ma,__mh, %d,%d,%d,%d, %d,1,1,1,1,0, bdr);\n", mr, mr, mr, mr, mbw);
     fprintf(o, "            int __ty = __gy + (__gh - f->line_h)/2;\n");
     fprintf(o, "            int __cw = 0; if (cp || pms) __cw += cp_width(f, cp, pm, pms); if ((cp || pms) && txt && txt[0]) __cw += 2;\n");
     fprintf(o, "            if (txt) { const char *__p=txt; while(*__p&&*__p!='\\n')__p++; char __t2[256]; int __L=(int)(__p-txt); if(__L>255)__L=255; memcpy(__t2,txt,__L); __t2[__L]=0; __cw += text_width(f,__t2); }\n");
