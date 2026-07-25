@@ -12,10 +12,9 @@ Make a file to work in:
 
 and point the build at it:
 
-    make install WISP=configs/mine.wisp && wispctl reload
+    wispctl rebuild mine
 
-That command is the whole loop. You will run it after every step below. The
-selection is sticky, so after the first time `make install` alone is enough.
+That command is the whole loop. You will run it after every step below.
 
 ## A bar that exists
 

@@ -9,7 +9,7 @@ Bar, hover panels, notification slabs, app menu, session lock, night-mode gamma 
 
 Everything is declared in a `.wisp` file, which the bundled compiler `wispc` lowers to C and links into the daemon. Writing `tags()` links the workspace client; declaring an osd surface links the D-Bus client; a config that mentions neither produces a binary containing neither.
 
-The process links **libc and libm**. Wayland and D-Bus are spoken as raw wire, so there is no other dependency.
+The process links **libc and libm**. Wayland and D-Bus are spoken as raw wire, so there is no other dependency. If you wanna use the lock, `libpam` and its headers are needed (i didn't rewrite that from scratch for security reasons) but the main daemon never links it - its only used by the `wisp-lock` binary.
 
 Idle costs nothing, my config `configs/bee.wisp` idle consumes:
 **CPU:** 1 cpu tick per 10 seconds (measured on a i5-1135G7, without the cpu/temp/mem polls in the config this number is a plain 0)
