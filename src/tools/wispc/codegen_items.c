@@ -35,8 +35,7 @@ static int collect_for_items(ForBlock *f, BarItem *out, int n, int max,
                              CGCtx *ctx, int *err) {
         {
             /* iter must be IDENT.list (tags) or IDENT.history (dbus_signal). */
-            const char *tags_src = NULL, *dbus_src = NULL;
-            int tray_src = 0;
+            const char *tags_src = NULL, *dbus_src = NULL, *tray_src = NULL;
             /* `for row in rows` — a menu's visible filtered rows. Not a
              * declared source: the rows live in the surface's own state. */
             int menu_rows = f->iter && f->iter->kind == EX_IDENT &&
@@ -60,7 +59,7 @@ static int collect_for_items(ForBlock *f, BarItem *out, int n, int max,
                 else if (si && f->iter->member.flen == 5 &&
                          memcmp(f->iter->member.field, "items", 5) == 0 &&
                          strcmp(si->drv->name, "tray") == 0)
-                    tray_src = 1;
+                    tray_src = sname(si->decl->name, si->decl->nlen);
             }
             if (!tags_src && !dbus_src && !menu_rows && !tray_src) {
                 diag_error(f->loc, "codegen: for-iter must be `rows`, <tags-src>.list, <dbus_signal-src>.history or <tray-src>.items");
@@ -88,6 +87,7 @@ static int collect_for_items(ForBlock *f, BarItem *out, int n, int max,
                 out[n] = (BarItem){0}; out[n].slider_idx = -1; out[n].group_id = -1;
                 out[n].w = f->cells[0];
                 out[n].is_runtime_for_cell = true;
+                out[n].runtime_for_src = strdup(tray_src);
                 out[n].runtime_for_count = "tray_count()";
                 out[n].runtime_for_iter = "it";
                 out[n].runtime_for_kind = LB_TRAY_IT;
@@ -1084,6 +1084,10 @@ static void emit_group_member(FILE *o, BarItem *it, const char *nm, int gap) {
     int clk = widget_clickable(wd);
     fprintf(o, "        if (st[%s].vis) {\n", sb);
     fprintf(o, "            int __ma = (st[%s].h>0?st[%s].h:st[%s].tw);\n", sb, sb, sb);
+    /* Paint is gated (a partial frame may skip this group), but the hit rect
+     * and cursor advance below are NOT: click regions must survive frames
+     * that don't repaint the group, or the cell goes click-dead. */
+    fprintf(o, "            if (__gdraw) {\n");
     fprintf(o, "            const char *txt = st[%s].txt; uint32_t cp = st[%s].cp; const uint32_t *pm = st[%s].pm; int pms = st[%s].pms;\n", sb, sb, sb, sb);
     fprintf(o, "            uint32_t fg = st[%s].fg, bg = st[%s].bg, bdr = st[%s].border; (void)bdr;\n", sb, sb, sb);
     fprintf(o, "            if (st[%s].press_bg & 0xff000000u && __%s_pressed_st == (%s) && __%s_pressed_w == w) bg = st[%s].press_bg;\n",
@@ -1104,6 +1108,7 @@ static void emit_group_member(FILE *o, BarItem *it, const char *nm, int gap) {
     fprintf(o, "            int __cx = __gx + (__ma - __cw)/2; if (__cx < __gx) __cx = __gx;\n");
     fprintf(o, "            if ((cp || pms) && (!txt || !txt[0])) draw_cp_centered(sl->px,w->w,w->h,__gx,__gy,__ma,__gh,f,cp,fg,pm,pms);\n");
     fprintf(o, "            else { if (cp || pms) { __cx += draw_cp(sl->px,w->w,w->h,__cx,__ty,f,cp,fg,pm,pms); if (txt&&txt[0]) { draw_text(sl->px,w->w,w->h,__cx,__ty,f,\" \",fg); __cx+=2; } } if (txt) draw_text(sl->px,w->w,w->h,__cx,__ty,f,txt,fg); }\n");
+    fprintf(o, "            }\n");
     if (clk) {
         int kind = it->is_runtime_for_cell ? 2 : it->is_for_cell ? 1 : 0;
         char arg[16];
@@ -1176,18 +1181,21 @@ int emit_group_draw(FILE *o, BarItem *items, int first, int nitems,
     /* Partial repaint gate at group granularity: a group's pill spans several
      * cells (its corners are rounded at the ends), so it repaints as one unit —
      * clear its whole box back to the flat surface bg, then redraw pill + every
-     * member. Skipped entirely when no member's source ticked. The layout
-     * counters above always run so later groups keep their positions. */
+     * member. When no member's source ticked, only the PAINT is skipped
+     * (__gdraw=0): layout and hit-rect registration still run, so later groups
+     * keep their positions and skipped cells stay clickable. */
     if (ctx->partial_ok) {
         uint64_t gmask = 0;
         for (int k = 0; k < cnt; k++) gmask |= items[first + k].dep_mask;
-        fprintf(o, "        if (!__partial || (0x%016llxull & __wds)) {\n", (unsigned long long)gmask);
-        fprintf(o, "        if (__partial) { fill_rect(sl->px,w->w,w->h, __bx,__gy,__bw,__gh, 0x%08xu);\n",
+        fprintf(o, "        int __gdraw = !__partial || (0x%016llxull & __wds);\n", (unsigned long long)gmask);
+        fprintf(o, "        if (__gdraw && __partial) { fill_rect(sl->px,w->w,w->h, __bx,__gy,__bw,__gh, 0x%08xu);\n",
                 ctx->surface_bg);
         fprintf(o, "            if (__bx < __dmg_x0) __dmg_x0 = __bx;\n");
         fprintf(o, "            if (__bx + __bw > __dmg_x1) __dmg_x1 = __bx + __bw; }\n");
+    } else {
+        fputs("        int __gdraw = 1; (void)__gdraw;\n", o);
     }
-    const char *gg = vertical ? "" : "if (__gn) ";
+    const char *gg = vertical ? "if (__gdraw) " : "if (__gdraw && __gn) ";
     if (r > 0) {
         if (cbg  & 0xff000000u) fprintf(o, "        %sfill_rect_rounded(sl->px,w->w,w->h, __bx,__gy,__bw,__gh, %d,%d,%d,%d, 0x%08xu);\n", gg, r, r, r, r, cbg);
         if (cbor & 0xff000000u) fprintf(o, "        %sfill_rect_rounded_border(sl->px,w->w,w->h, __bx,__gy,__bw,__gh, %d,%d,%d,%d, %d,1,1,1,1,0, 0x%08xu);\n", gg, r, r, r, r, bw, cbor);
@@ -1197,7 +1205,6 @@ int emit_group_draw(FILE *o, BarItem *items, int first, int nitems,
     fprintf(o, "        int __gx = __bx + %d; (void)__gw;\n", padx);
     for (int k = 0; k < cnt; k++)
         emit_group_member(o, &items[first + k], nm, gap);
-    if (ctx->partial_ok) fputs("        }\n", o);  /* close group partial gate */
     fputs("    }\n", o);
     return cnt;
 }
