@@ -233,6 +233,8 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     int n_sliders = 0;
     for (int i = 0; i < nitems; i++)
         if (widget_is_slider(items[i].w)) items[i].slider_idx = n_sliders++;
+    for (int i = 0; i < nitems; i++)
+        items[i].graph_idx = graph_reg_idx(items[i].w);   /* -1 if not a graph */
     assign_handler_idx(items, nitems);
     for (int i = 0; i < nitems; i++) items[i].dep_mask = item_dep_mask(ctx, &items[i]);
     int partial_cap = (ctx->nsrc <= 64) &&

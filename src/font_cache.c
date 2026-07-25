@@ -97,14 +97,17 @@ void font_trim(void) {
 }
 
 const Font *font_at_scale(const Font *f, int s120) {
-    /* One twin per (font, px size). Two declared sizes x a handful of scales
-     * fits easily; overflow falls back to the native strike (blocky, not
-     * broken). Keyed on the rounded pixel size, so 1.25x and 1.3x that land on
-     * the same ppem share one twin. */
-    static struct { const Font *base; int px; Font *twin; } tw[8];
+    /* One twin per (font, px size): the exact rounded strike for an output
+     * scale, sharpening both up AND down — a color-emoji strike is a fixed
+     * native size, so a fractional/downscaled output wants a smaller twin, not
+     * the oversized base drawn 1:1. Keyed on the rounded pixel size, so 1.25x
+     * and 1.3x that land on the same ppem share one twin. Overflow (more live
+     * (font,size) pairs than slots) falls back to the native strike (blocky,
+     * not broken). */
+    static struct { const Font *base; int px; Font *twin; } tw[16];
     static int n_tw;
     int px = (f->px_size * s120 + 60) / 120;
-    if (px <= f->px_size) return f;
+    if (px == f->px_size || px < 1) return f;
     for (int i = 0; i < n_tw; i++)
         if (tw[i].base == f && tw[i].px == px) return tw[i].twin;
     if (n_tw == (int)(sizeof tw / sizeof *tw)) return f;

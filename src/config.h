@@ -167,6 +167,10 @@
 #ifndef OSD_ICON_GAP
 #define OSD_ICON_GAP        12
 #endif
+#ifndef OSD_ICON_W
+/* 0 = no fixed icon column declared; fall back to measuring the icon glyph. */
+#define OSD_ICON_W           0
+#endif
 
 #ifndef OSD_BG
 #define OSD_BG          0xff0f1219u   /* solid; wallpaper shadow tone */
@@ -213,6 +217,15 @@
 #endif
 #ifndef GAMMA_NIGHT_HOUR
 #define GAMMA_NIGHT_HOUR 20
+#endif
+/* Minutes of linear crossfade centered on each schedule edge; 0 = hard step. */
+#ifndef GAMMA_FADE_MIN
+#define GAMMA_FADE_MIN  30
+#endif
+/* Tween length for manual switches (HUD/wispctl); 0 = instant, and compiles
+ * the tween out entirely. */
+#ifndef GAMMA_TRANSITION_MS
+#define GAMMA_TRANSITION_MS 0
 #endif
 
 /* ---------- Session lock (swaylock replacement) ----------

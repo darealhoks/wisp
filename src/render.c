@@ -297,6 +297,21 @@ void fill_rect(uint32_t *px, int sw, int sh, int x, int y, int w, int h, uint32_
     fill_rect_px(px, SC(sw), SC(sh), SC(x), SC(y), SC(w), SC(h), c);
 }
 
+void draw_sparkline(uint32_t *px, int sw, int sh, int x, int y, int w, int h,
+                    const float *ring, int len, int head, int cap,
+                    double vmax, uint32_t fg) {
+    if (!(fg & 0xff000000u) || vmax <= 0 || len <= 0 || w <= 0 || h <= 0) return;
+    int n = len < w ? len : w;   /* one 1px column per sample, newest at right */
+    for (int i = 0; i < n; i++) {
+        int s = ((head - 1 - i) % cap + cap) % cap;   /* i=0 → most recent */
+        double v = ring[s];
+        if (v < 0) v = 0; else if (v > vmax) v = vmax;
+        int ch = (int)(v / vmax * h + 0.5);
+        if (ch <= 0) continue;
+        fill_rect(px, sw, sh, x + w - 1 - i, y + h - ch, 1, ch, fg);
+    }
+}
+
 /* Src-over blit of a premultiplied ARGB square, nearest-sampled from its
  * logical `s` to the physical size so a scaled output doesn't shrink it. */
 void blit_argb(uint32_t *px, int sw, int sh, int x, int y,

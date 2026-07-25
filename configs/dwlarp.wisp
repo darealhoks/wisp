@@ -389,6 +389,8 @@ gamma {
 	flat_k    = 2400;
 	day_hour  = 7;
 	night_hour = 20;
+	fade_min   = 30;   // schedule crossfade width, 0 = hard step
+	transition_ms = 300;  // tween manual/wispctl switches
 }
 
 wallpaper {

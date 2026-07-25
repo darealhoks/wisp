@@ -251,11 +251,14 @@ int emit_spawned_osd_skeleton(FILE *o, Decl *sur, CGCtx *ctx, const char *nm, in
     fputs("    }\n", o);
 
     /* Outline the whole chain as one shape; sides on a flush screen edge stay
-     * open. Mid-slide overflow past the buffer is clipped by the primitives. */
+     * open. Mid-slide overflow past the buffer is clipped by the primitives.
+     * clip_top = __split for the same reason the fill splits there: above the
+     * junction the bar cutout has nulled those rows, so a bottom arc drawn
+     * into them mid-slide paints outline over the bar. */
     if (slab_bord_w > 0 && (slab_bord & 0xff000000u))
         fprintf(o, "    if (__cbot > __ctop)\n"
                    "        fill_rect_rounded_border(sl->px, w->w, w->h, __chain_x, __ctop, __slab_w,"
-                   " __cbot - __ctop, %d, %d, %d, %d, %d, %d, %d, %d, %d, 0, 0x%08xu);\n",
+                   " __cbot - __ctop, %d, %d, %d, %d, %d, %d, %d, %d, %d, __split, 0x%08xu);\n",
                 r_tl, r_tr, r_br, r_bl, slab_bord_w,
                 !fl_t, !fl_r, !fl_b, !fl_l, slab_bord);
 

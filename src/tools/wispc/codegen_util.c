@@ -240,6 +240,62 @@ int widget_is_slider(Widget *w) {
     }
     return 0;
 }
+
+/* A graph (sparkline) widget carries `graph = <src>.<field>`. */
+int widget_is_graph(Widget *w) { return widget_prop(w, "graph") != NULL; }
+
+#define GRAPH_MAX 32
+static GraphReg g_graphs[GRAPH_MAX];
+static int g_ngraph;
+
+void            graph_reg_reset(void)   { g_ngraph = 0; }
+int             graph_reg_count(void)   { return g_ngraph; }
+const GraphReg *graph_reg_at(int i)     { return &g_graphs[i]; }
+int graph_reg_idx(Widget *w) {
+    for (int i = 0; i < g_ngraph; i++) if (g_graphs[i].w == w) return i;
+    return -1;
+}
+
+static void graph_reg_one(Widget *w, CGCtx *ctx) {
+    Expr *ge = widget_prop(w, "graph");
+    if (!ge) return;
+    if (ge->kind != EX_MEMBER || ge->member.base->kind != EX_IDENT) {
+        diag_error(w->loc, "graph = must name a source field, e.g. `graph = cpu.pct`");
+        return;
+    }
+    const char *sn = ge->member.base->ident.s; size_t snl = ge->member.base->ident.n;
+    SrcInst *si = find_inst(ctx->srcs, ctx->nsrc, sn, snl);
+    if (!si) { diag_error(w->loc, "graph source '%.*s' is not a declared source", (int)snl, sn); return; }
+    int is_str = 0;
+    const char *ce = drv_field_expr(si->drv, ge->member.field, ge->member.flen, &is_str);
+    if (!ce || is_str) {
+        diag_error(w->loc, "graph plots a numeric field of a status source "
+                   "(cpu/mem/temp/bat/disk/backlight); '%.*s.%.*s' is not one",
+                   (int)snl, sn, (int)ge->member.flen, ge->member.field);
+        return;
+    }
+    if (g_ngraph >= GRAPH_MAX) { diag_error(w->loc, "too many graph widgets (max %d)", GRAPH_MAX); return; }
+    int cap = eval_int(widget_prop(w, "graph_samples"), 60);
+    if (cap < 2) cap = 2; else if (cap > 256) cap = 256;
+    g_graphs[g_ngraph++] = (GraphReg){ .w = w, .src = strndup0(sn, snl), .cexpr = ce, .cap = cap };
+}
+
+void graph_reg_scan(Unit *u, CGCtx *ctx) {
+    for (int d = 0; d < u->n; d++) {
+        Decl *dc = u->decls[d];
+        if (dc->kind != D_SURFACE || dc->is_menu) continue;
+        if (surface_prop(dc, "spawned_by")) continue;   /* templates: no graphs */
+        for (int i = 0; i < dc->surface.n; i++) {
+            SBody *b = &dc->surface.items[i];
+            if (b->kind == SB_WIDGET) graph_reg_one(b->widget, ctx);
+            else if (b->kind == SB_GROUP)
+                for (int k = 0; k < b->group->nmembers; k++)
+                    if (widget_is_graph(b->group->members[k]))
+                        diag_error(b->group->members[k]->loc,
+                                   "graph widgets are not allowed inside a group");
+        }
+    }
+}
 /* Step 6.1: declarative transition props. A widget carrying `transition_bg = 200ms`
  * (or _fg / _border) makes that colour interpolate on change. Easing defaults to
  * EASE_OUT; override with `transition_easing = linear|ease_in|ease_out|ease_in_out`. The actual

@@ -71,7 +71,7 @@ static int collect_for_items(ForBlock *f, BarItem *out, int n, int max,
             }
             if (menu_rows) {
                 if (n >= max) { *err = 1; return n; }
-                out[n] = (BarItem){0}; out[n].slider_idx = -1; out[n].group_id = -1;
+                out[n] = (BarItem){0}; out[n].slider_idx = -1; out[n].graph_idx = -1; out[n].group_id = -1;
                 out[n].w = f->cells[0];
                 out[n].is_runtime_for_cell = true;
                 out[n].runtime_for_count =
@@ -84,7 +84,7 @@ static int collect_for_items(ForBlock *f, BarItem *out, int n, int max,
                 n++;
             } else if (tray_src) {
                 if (n >= max) { *err = 1; return n; }
-                out[n] = (BarItem){0}; out[n].slider_idx = -1; out[n].group_id = -1;
+                out[n] = (BarItem){0}; out[n].slider_idx = -1; out[n].graph_idx = -1; out[n].group_id = -1;
                 out[n].w = f->cells[0];
                 out[n].is_runtime_for_cell = true;
                 out[n].runtime_for_src = strdup(tray_src);
@@ -98,7 +98,7 @@ static int collect_for_items(ForBlock *f, BarItem *out, int n, int max,
                 char *src_dup = strdup(tags_src);
                 for (int k = 0; k < 9 /* MAX_TAGS */; k++) {
                     if (n >= max) { *err = 1; return n; }
-                    out[n] = (BarItem){0}; out[n].slider_idx = -1; out[n].group_id = -1;
+                    out[n] = (BarItem){0}; out[n].slider_idx = -1; out[n].graph_idx = -1; out[n].group_id = -1;
                     out[n].w = f->cells[0]; out[n].is_for_cell = true; out[n].cell_idx = k;
                     out[n].for_var = f->var; out[n].for_var_n = f->vlen;
                     out[n].for_src = src_dup;
@@ -107,7 +107,7 @@ static int collect_for_items(ForBlock *f, BarItem *out, int n, int max,
             } else {
                 if (n >= max) { *err = 1; return n; }
                 char *src_dup = strdup(dbus_src);
-                out[n] = (BarItem){0}; out[n].slider_idx = -1; out[n].group_id = -1;
+                out[n] = (BarItem){0}; out[n].slider_idx = -1; out[n].graph_idx = -1; out[n].group_id = -1;
                 out[n].w = f->cells[0];
                 out[n].is_runtime_for_cell = true;
                 out[n].runtime_for_src = src_dup;
@@ -134,7 +134,7 @@ int collect_bar_items(SBody *body, int nbody, BarItem *out, int max,
         SBody *b = &body[i];
         if (b->kind == SB_WIDGET) {
             if (n >= max) { *err = 1; return n; }
-            out[n] = (BarItem){0}; out[n].slider_idx = -1; out[n].group_id = -1;
+            out[n] = (BarItem){0}; out[n].slider_idx = -1; out[n].graph_idx = -1; out[n].group_id = -1;
             out[n].w = b->widget; n++;
         } else if (b->kind == SB_GROUP) {
             Group *g = b->group;
@@ -148,7 +148,7 @@ int collect_bar_items(SBody *body, int nbody, BarItem *out, int max,
                     if (*err) return n;
                 } else {
                     if (n >= max) { *err = 1; return n; }
-                    out[n] = (BarItem){0}; out[n].slider_idx = -1;
+                    out[n] = (BarItem){0}; out[n].slider_idx = -1; out[n].graph_idx = -1;
                     out[n].w = g->members[k];
                     n++;
                 }
@@ -168,6 +168,19 @@ int collect_bar_items(SBody *body, int nbody, BarItem *out, int max,
     return n;
 }
 
+/* Main-axis room already eaten by the start-aligned items before this one —
+ * on a horizontal surface that is the icon column and friends. Emitted
+ * identically into the measure and draw passes: both must wrap at the same
+ * width or the measured line count won't match what is drawn, and a column
+ * wider than the drawable room gets every line elided (an OSD body wrapping
+ * to the full slab width, then losing its tail under the icon's offset). */
+static void emit_wrap_left(FILE *o, const char *indent, const char *idx_expr) {
+    fprintf(o, "%sint __wleft = 0;\n", indent);
+    fprintf(o, "%sfor (int __k = 0; __k < (%s); __k++)\n", indent, idx_expr);
+    fprintf(o, "%s    if (st[__k].vis && st[__k].align == 0) __wleft += st[__k].tw + st[__k].pad;\n",
+            indent);
+}
+
 /* Two-phase emission: measure pass fills st[i] (computed text, icon, colors,
  * extent, alignment), draw pass uses st[i] to draw at the correct position
  * for left/right/center along the main axis (horizontal: width/x; vertical:
@@ -184,10 +197,10 @@ int collect_bar_items(SBody *body, int nbody, BarItem *out, int max,
 void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
                               const char *surf_nm, int item_idx) {
     Widget *wd = it->w;
-    /* Slider measure: a slider just claims an item slot with its main-axis
-     * extent (from `width` / `height` prop, or surface-axis fallback). Cross
-     * axis fills the surface. Pad/align reuse the bar-item flex pack. */
-    if (it->slider_idx >= 0) {
+    /* Slider/graph measure: claims an item slot with its main-axis extent
+     * (from `width` / `height` prop, or surface-axis fallback). Cross axis
+     * fills the surface. Pad/align reuse the bar-item flex pack. */
+    if (it->slider_idx >= 0 || it->graph_idx >= 0) {
         Expr *widthe = widget_prop(wd, vertical ? "height" : "width");
         Align al = eval_align(widget_prop(wd, "align"));
         int pad = eval_int(widget_prop(wd, "pad"), 0);
@@ -359,8 +372,12 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
         /* Vertical draw insets content by `pad + pad_x` and the trailing pad_x
          * stays free, so the column must lose `pad + 2*pad_x` — measuring with
          * only 2*pad_x overshoots the region and clips the last glyph. */
-        fprintf(o, "%s    int __ww = __reg_w - %d;\n", indent,
-                vertical ? padE + 2 * pad_xm : 2 * pad_xm);
+        if (vertical) {
+            fprintf(o, "%s    int __ww = __reg_w - %d;\n", indent, padE + 2 * pad_xm);
+        } else {
+            emit_wrap_left(o, "            ", idx_expr);
+            fprintf(o, "%s    int __ww = __reg_w - __wleft - %d;\n", indent, 2 * pad_xm);
+        }
         fprintf(o, "%s    __mtxt = text_wrapped(f, txt, __ww, __bl, (int *)0);\n", indent);
         fprintf(o, "%s}\n", indent);
     }
@@ -491,6 +508,50 @@ static CE color_ce(CGCtx *ctx, Expr *e, const char *dflt) {
 /* Emit draw block for one item. `vertical` selects axis. */
 void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *nm) {
     Widget *wd = it->w;
+    if (it->graph_idx >= 0) {
+        const char *indent = "        ";
+        /* ponytail: the slot-rect prologue mirrors the slider block below;
+         * factor into a helper if a third slot-widget kind ever appears. */
+        fprintf(o, "    if (st[%d].vis) {\n", it->st_base);
+        fprintf(o, "%sint tw = st[%d].tw, pad = st[%d].pad;\n", indent, it->st_base, it->st_base);
+        fprintf(o, "%sint pos;\n", indent);
+        fprintf(o, "%sswitch (st[%d].align) {\n", indent, it->st_base);
+        fprintf(o, "%s    case 0:  pos = start_pos; start_pos += tw + pad; break;\n", indent);
+        fprintf(o, "%s    case 1:  pos = end_pos - tw; end_pos -= tw + pad; break;\n", indent);
+        fprintf(o, "%s    default: pos = center_pos; center_pos += tw + pad; break;\n", indent);
+        fprintf(o, "%s}\n", indent);
+        int cross_ext = eval_int(widget_prop(wd, vertical ? "width" : "height"), 0);
+        if (vertical) {
+            if (cross_ext > 0)
+                fprintf(o, "%sint rw = %d, rx = __reg_x + (__reg_w - %d) / 2, ry = pos, rh = tw;\n",
+                        indent, cross_ext, cross_ext);
+            else
+                fprintf(o, "%sint rx = __reg_x, ry = pos, rw = __reg_w, rh = tw;\n", indent);
+        } else {
+            if (cross_ext > 0)
+                fprintf(o, "%sint rh = %d, ry = __reg_y + (__reg_h - %d) / 2, rx = pos, rw = tw;\n",
+                        indent, cross_ext, cross_ext);
+            else
+                fprintf(o, "%sint rx = pos, ry = __reg_y, rw = tw, rh = __reg_h;\n", indent);
+        }
+        CE c_bg = color_ce(ctx, widget_prop(wd, "bg"),      "0u");
+        CE c_fg = color_ce(ctx, widget_prop(wd, "graph_fg"), "0xffffffffu");
+        int rad = eval_int(widget_prop(wd, "radius"), 0);
+        double vmax = eval_double(widget_prop(wd, "graph_max"), 100.0);
+        if (vmax <= 0) vmax = 100.0;
+        const GraphReg *gr = graph_reg_at(it->graph_idx);
+        cgctx_flush_prelude(ctx, o, indent);
+        fprintf(o, "%sif ((uint32_t)(%s) & 0xff000000u) fill_rect_rounded(sl->px, w->w, w->h,"
+                   " rx, ry, rw, rh, %d, %d, %d, %d, (uint32_t)(%s));\n",
+                indent, c_bg.text, rad, rad, rad, rad, c_bg.text);
+        fprintf(o, "%sextern float wg_ring_%d[]; extern int wg_head_%d, wg_len_%d;\n",
+                indent, it->graph_idx, it->graph_idx, it->graph_idx);
+        fprintf(o, "%sdraw_sparkline(sl->px, w->w, w->h, rx, ry, rw, rh, wg_ring_%d, wg_len_%d,"
+                   " wg_head_%d, %d, %f, (uint32_t)(%s));\n",
+                indent, it->graph_idx, it->graph_idx, it->graph_idx, gr->cap, vmax, c_fg.text);
+        fprintf(o, "    }\n");
+        return;
+    }
     if (it->slider_idx >= 0) {
         Expr *ve  = widget_prop(wd, "value");
         char vmut[128]; vmut[0] = 0;
@@ -644,8 +705,9 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
          * st[].pad, so a reveal tween can't re-break the lines mid-animation. */
         int wrap_inset = 2 * eval_int(widget_prop(wd, "pad_x"), 0);
         if (vertical) wrap_inset += eval_int(widget_prop(wd, "pad"), 0);
-        fprintf(o, "%s    if (txt && txt[0]) txt = text_wrapped(f, txt, __reg_w - %d, body_lines, (int *)0);\n",
-                indent, wrap_inset);
+        if (!vertical) emit_wrap_left(o, "            ", idx_expr);
+        fprintf(o, "%s    if (txt && txt[0]) txt = text_wrapped(f, txt, __reg_w - %s%d, body_lines, (int *)0);\n",
+                indent, vertical ? "" : "__wleft - ", wrap_inset);
     }
     fprintf(o, "%s    int pos;\n", indent);
     fprintf(o, "%s    switch (st[%s].align) {\n", indent, idx_expr);
@@ -848,10 +910,18 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
         fprintf(o, "%s            char __tmp[256]; int __L = (int)(__nl - __p); if (__L > 255) __L = 255;\n", indent);
         fprintf(o, "%s            memcpy(__tmp, __p, __L); __tmp[__L] = 0;\n", indent);
         /* `elide` clamps each line to whatever room is left in the region —
-         * without it a long summary just runs off the slab. */
-        if (widget_flag(wd, "elide"))
-            fprintf(o, "%s            draw_text_elided(sl->px, w->w, w->h, x, __ty + __ln * f->line_h, f, __tmp, __reg_x + __reg_w - x - %d, fg);\n",
+         * without it a long summary just runs off the slab. The room stops at
+         * the first end-aligned item's column, not at the region edge: those
+         * are drawn after this one, so end_pos hasn't been walked back yet and
+         * an OSD summary would elide straight over the "42%". */
+        if (widget_flag(wd, "elide")) {
+            fprintf(o, "%s            int __rsv = 0;\n", indent);
+            fprintf(o, "%s            for (int __k = 0; __k < (int)(sizeof st / sizeof st[0]); __k++)\n", indent);
+            fprintf(o, "%s                if (st[__k].vis && st[__k].align == 1 && __k != (%s)) __rsv += st[__k].tw + st[__k].pad;\n",
+                    indent, idx_expr);
+            fprintf(o, "%s            draw_text_elided(sl->px, w->w, w->h, x, __ty + __ln * f->line_h, f, __tmp, __reg_x + __reg_w - __rsv - x - %d, fg);\n",
                     indent, pad_x > 0 ? pad_x : 0);
+        }
         else
             fprintf(o, "%s            draw_text(sl->px, w->w, w->h, x, __ty + __ln * f->line_h, f, __tmp, fg);\n", indent);
         fprintf(o, "%s            __ln++;\n%s            if (!*__nl) break;\n%s            __p = __nl + 1;\n", indent, indent, indent);

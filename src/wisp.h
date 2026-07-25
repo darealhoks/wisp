@@ -499,6 +499,13 @@ void draw_slider(uint32_t *px, int sw, int sh, int x, int y, int w, int h,
                  int vertical, double value,
                  uint32_t track_bg, uint32_t track_fg, const SliderStyle *st);
 
+/* Filled sparkline: the newest `min(len,w)` samples of a ring buffer as 1px
+ * columns flush to the right edge, height = clamp(v/vmax)*h. Coords logical
+ * (scaled + clipped by fill_rect). `head` is the next-write index. */
+void draw_sparkline(uint32_t *px, int sw, int sh, int x, int y, int w, int h,
+                    const float *ring, int len, int head, int cap,
+                    double vmax, uint32_t fg);
+
 /* Premultiplied ARGB square (app icon, decoded PNG) blitted src-over. */
 void blit_argb(uint32_t *px, int sw, int sh, int x, int y,
                const uint32_t *src, int s);
@@ -945,6 +952,7 @@ typedef struct Anim {
     double     bez[4];
     Widget    *owner;
     AnimDone   on_done;
+    AnimDone   on_frame;   /* optional; fires each frame the value changed */
     void      *user;
     int        repeat;     /* remaining runs incl. the current one; 1 = no repeat */
     int        alternate;  /* ping-pong from/to on each cycle boundary */
@@ -979,6 +987,9 @@ uint32_t anim_start_color(uint32_t *target, uint32_t from, uint32_t to,
                           Widget *owner, AnimDone on_done, void *user,
                           int repeat, int alternate);
 void     anim_cancel_for(void *target);
+/* Attach a per-frame callback to a running tween (id from anim_start_*). For
+ * ownerless tweens that drive something other than a widget's pixels. */
+void     anim_on_frame(uint32_t id, AnimDone cb, void *user);
 void     anim_tick(int64_t now);
 int      anim_fd(void);
 int      anim_active(void);       /* >0 while any tween runs */

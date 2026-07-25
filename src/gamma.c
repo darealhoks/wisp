@@ -2,9 +2,10 @@
  * external wlsunset process: schedule lives here, HUD toggle drives it via
  * `wispctl gamma flat|off|auto|...`.
  *
- * Hard-step at GAMMA_NIGHT_HOUR (warm) and GAMMA_DAY_HOUR (cool). A short
- * 30-minute crossfade smooths the transition so the bar tag flip-over isn't
- * a single visible jump.
+ * Hard-step at GAMMA_NIGHT_HOUR (warm) and GAMMA_DAY_HOUR (cool), softened by
+ * a GAMMA_FADE_MIN crossfade centered on each edge (0 = hard step). Manual
+ * mode changes (HUD button, wispctl) step instantly unless GAMMA_TRANSITION_MS
+ * asks for a tween.
  *
  * Blackbody → sRGB approximation is Tanner Helland's polynomial. Accurate
  * enough for warming-the-screen-at-night; not a colorimetric tool. */
@@ -47,36 +48,29 @@ static void temp_to_rgb(int kelvin, double *r, double *g, double *b) {
     *r = dr / 255.0; *g = dg / 255.0; *b = db / 255.0;
 }
 
-static int schedule_target_k(int *fade_pct_out) {
+static int schedule_target_k(void) {
     time_t t = time(NULL);
     struct tm lt;
     localtime_r(&t, &lt);
     int mins = lt.tm_hour * 60 + lt.tm_min;
     int day_mins   = GAMMA_DAY_HOUR   * 60;
     int night_mins = GAMMA_NIGHT_HOUR * 60;
-    /* 30-min linear fade centered on each transition. */
-    int fade = 30;
-    int k;
-    int fp = 100;
-    if (mins >= day_mins - fade/2 && mins < day_mins + fade/2) {
-        /* dawn: night → day */
-        int p = mins - (day_mins - fade/2);
-        double a = (double)p / fade;
-        k = (int)(GAMMA_NIGHT_K + (GAMMA_DAY_K - GAMMA_NIGHT_K) * a + 0.5);
-        fp = (int)(a * 100);
-    } else if (mins >= night_mins - fade/2 && mins < night_mins + fade/2) {
-        /* dusk: day → night */
-        int p = mins - (night_mins - fade/2);
-        double a = (double)p / fade;
-        k = (int)(GAMMA_DAY_K + (GAMMA_NIGHT_K - GAMMA_DAY_K) * a + 0.5);
-        fp = (int)(a * 100);
-    } else if (mins >= day_mins && mins < night_mins) {
-        k = GAMMA_DAY_K;
-    } else {
-        k = GAMMA_NIGHT_K;
+    /* Linear fade centered on each transition; 0 disables it (hard step). */
+    int fade = GAMMA_FADE_MIN;
+    if (fade > 0) {
+        if (mins >= day_mins - fade/2 && mins < day_mins + fade/2) {
+            /* dawn: night → day */
+            double a = (double)(mins - (day_mins - fade/2)) / fade;
+            return (int)(GAMMA_NIGHT_K + (GAMMA_DAY_K - GAMMA_NIGHT_K) * a + 0.5);
+        }
+        if (mins >= night_mins - fade/2 && mins < night_mins + fade/2) {
+            /* dusk: day → night */
+            double a = (double)(mins - (night_mins - fade/2)) / fade;
+            return (int)(GAMMA_DAY_K + (GAMMA_NIGHT_K - GAMMA_DAY_K) * a + 0.5);
+        }
     }
-    if (fade_pct_out) *fade_pct_out = fp;
-    return k;
+    if (mins >= day_mins && mins < night_mins) return GAMMA_DAY_K;
+    return GAMMA_NIGHT_K;
 }
 
 static int mode_target_k(void) {
@@ -86,7 +80,7 @@ static int mode_target_k(void) {
     case GM_FLAT:  return GAMMA_FLAT_K;
     case GM_OFF:   return 0;
     case GM_AUTO:
-    default:       return schedule_target_k(NULL);
+    default:       return schedule_target_k();
     }
 }
 
@@ -169,21 +163,78 @@ void gamma_on_failed(Output *o) {
 /* Weak: only defined when a .wisp declares a gamma_warm()/dnd() source. */
 extern void wispgen_wisp_state_changed(void) __attribute__((weak));
 
+#if GAMMA_TRANSITION_MS > 0
+static double tween_k;      /* animated Kelvin while a manual switch runs */
+static int    tween_to;     /* real target (may be 0 = OFF/identity) */
+static int    tweening;
+
+/* OFF is kelvin 0 (identity ramp), which isn't on the blackbody line — tween
+ * through DAY_K instead so the fade doesn't dive into deep red on its way. */
+static int tween_k_of(int k) { return k ? k : GAMMA_DAY_K; }
+
+static void tween_frame(void *u) {
+    (void)u;
+    apply_kelvin_all((int)(tween_k + 0.5));
+}
+
+static void tween_end(void *u) {
+    (void)u;
+    tweening = 0;
+    apply_kelvin_all(tween_to);
+}
+
+/* Is anything on screen yet? OFF applies kelvin 0, so last_applied_k alone
+ * can't tell "passthrough" from "never bound". */
+static int have_ramp(void) {
+    for (int i = 0; i < MAX_OUTPUTS; i++)
+        if (outputs[i].active && outputs[i].gamma_size)
+            return 1;
+    return 0;
+}
+
+static int current_k(void) {
+    for (int i = 0; i < MAX_OUTPUTS; i++)
+        if (outputs[i].active && outputs[i].gamma_size)
+            return outputs[i].last_applied_k;
+    return 0;
+}
+#endif
+
 void gamma_set_mode(GammaMode m) {
     mode = m;
     last_minute = -1;        /* force re-eval on next tick if AUTO */
-    apply_kelvin_all(mode_target_k());
+    int target = mode_target_k();
+#if GAMMA_TRANSITION_MS > 0
+    int from = current_k();
+    if (have_ramp() && tween_k_of(from) != tween_k_of(target)) {
+        tween_to = target;
+        tweening = 1;
+        uint32_t id = anim_start_num(&tween_k, ANIM_T_FLOAT,
+                                     tween_k_of(from), tween_k_of(target),
+                                     GAMMA_TRANSITION_MS, EASE_OUT, NULL,
+                                     NULL, tween_end, NULL, 1, 0);
+        if (id) { anim_on_frame(id, tween_frame, NULL); goto done; }
+        tweening = 0;        /* no free slot — fall through to the hard step */
+    }
+#endif
+    apply_kelvin_all(target);
+#if GAMMA_TRANSITION_MS > 0
+done:;
+#endif
     if (wispgen_wisp_state_changed) wispgen_wisp_state_changed();
 }
 
 void gamma_tick(int tick_n) {
     (void)tick_n;
     if (mode != GM_AUTO) return;
+#if GAMMA_TRANSITION_MS > 0
+    if (tweening) return;    /* don't fight the manual fade into AUTO */
+#endif
     time_t t = time(NULL);
     struct tm lt; localtime_r(&t, &lt);
     if (lt.tm_min == last_minute) return;
     last_minute = lt.tm_min;
-    apply_kelvin_all(schedule_target_k(NULL));
+    apply_kelvin_all(schedule_target_k());
     /* AUTO may have crossed a day/night edge; dirty-flags make this free. */
     if (wispgen_wisp_state_changed) wispgen_wisp_state_changed();
 }
@@ -192,7 +243,7 @@ int gamma_is_warm(void) {
     if (mode == GM_OFF || mode == GM_DAY) return 0;
     if (mode == GM_NIGHT || mode == GM_FLAT) return 1;
     /* AUTO: warm whenever current target < day temperature. */
-    return schedule_target_k(NULL) < GAMMA_DAY_K;
+    return schedule_target_k() < GAMMA_DAY_K;
 }
 
 const char *gamma_mode_str(void) {

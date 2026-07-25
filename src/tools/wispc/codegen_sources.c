@@ -985,6 +985,15 @@ void emit_bindings(FILE *o, SrcInst *srcs, int nsrc, SemaResult *r,
         default: break;
         }
     }
+    /* Sparkline rings: one per graph widget, sampled from the plotted source's
+     * on_change (below) and read by the surface draw (gen_surfaces.c, extern). */
+    for (int gi = 0; gi < graph_reg_count(); gi++) {
+        const GraphReg *gr = graph_reg_at(gi);
+        fprintf(o, "float wg_ring_%d[%d]; int wg_head_%d, wg_len_%d;\n", gi, gr->cap, gi, gi);
+        fprintf(o, "void wg_push_%d(double v) { wg_ring_%d[wg_head_%d] = (float)v;"
+                   " wg_head_%d = (wg_head_%d + 1) %% %d; if (wg_len_%d < %d) wg_len_%d++; }\n",
+                gi, gi, gi, gi, gi, gr->cap, gi, gr->cap, gi);
+    }
     fputc('\n', o);
     for (int i = 0; i < nsrc; i++) {
         const char *nm = sname(srcs[i].decl->name, srcs[i].decl->nlen);
@@ -1021,6 +1030,12 @@ void emit_bindings(FILE *o, SrcInst *srcs, int nsrc, SemaResult *r,
                 }
             }
         }
+        /* Feed any sparkline ring plotting this source. Placed after the status
+         * change-guard's early return, so a graph samples only on real change —
+         * one sample per tick-that-moved, zero idle cost. */
+        for (int gi = 0; gi < graph_reg_count(); gi++)
+            if (!strcmp(graph_reg_at(gi)->src, nm))
+                fprintf(o, "    wg_push_%d((double)(%s));\n", gi, graph_reg_at(gi)->cexpr);
         if (srcs[i].decl->source.on_change)
             emit_src_on_change(o, ctx, &srcs[i], r);
         fputs("}\n\n", o);

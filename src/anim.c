@@ -49,6 +49,14 @@ static void anim_tfd_disarm(void) {
 
 int anim_fd(void) { return anim_tfd; }
 
+void anim_on_frame(uint32_t id, AnimDone cb, void *user) {
+    if (!id || id > ANIM_MAX) return;
+    Anim *a = &anims[id - 1];
+    if (!a->active) return;
+    a->on_frame = cb;
+    a->user = user;
+}
+
 void anim_cancel_for(void *target) {
     for (int i = 0; i < ANIM_MAX; i++) {
         if (anims[i].active && anims[i].target == target) {
@@ -244,6 +252,7 @@ void anim_tick(int64_t now) {
             break;
         }
         }
+        if (changed && a->on_frame) a->on_frame(a->user);
         if (changed && a->owner) {
             int idx = (int)(a->owner - widgets);
             if (idx >= 0 && idx < MAX_WIDGETS) repaint[idx] = 1;

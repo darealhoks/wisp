@@ -36,6 +36,23 @@ WBody      *widget_onclick(Widget *w);
 WBody      *widget_handler(Widget *w, WBKind k);
 int         widget_clickable(Widget *w);
 int         widget_is_slider(Widget *w);
+int         widget_is_graph(Widget *w);
+
+/* Graph (sparkline) registry: one global entry per graph widget so the ring
+ * storage + sampler (gen_bindings.c) and the draw (gen_surfaces.c) agree on an
+ * index, and each sampled source knows which rings to push. Filled by a scan
+ * before emit_bindings; looked up by widget pointer during surface emit. */
+typedef struct {
+    Widget *w;
+    const char *src;      /* source name whose on_change pushes this ring */
+    const char *cexpr;    /* C expression for the sampled numeric field */
+    int cap;              /* ring capacity (samples) */
+} GraphReg;
+void            graph_reg_reset(void);
+void            graph_reg_scan(Unit *u, CGCtx *ctx);
+int             graph_reg_count(void);
+const GraphReg *graph_reg_at(int i);
+int             graph_reg_idx(Widget *w);   /* -1 if not registered */
 int         transition_dur(Widget *wd, const char *which);
 const char *transition_easing_id(Widget *wd);
 const char *surface_easing_id(Decl *sur, const char *prop_name);
@@ -215,6 +232,7 @@ typedef struct {
     int    runtime_for_cap;
     int    st_base;
     int    slider_idx;
+    int    graph_idx;       /* -1 = not a graph; else index into the graph registry */
     int    handler_idx;
     int    group_id;        /* -1 = not in a group; else group index */
     bool   group_first;     /* first member of its group (draws container) */

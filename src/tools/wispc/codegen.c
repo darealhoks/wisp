@@ -595,6 +595,8 @@ static void emit_overrides(FILE *o, Unit *u, CGCtx *ctx) {
         {"flat_k",     "GAMMA_FLAT_K",     0},
         {"day_hour",   "GAMMA_DAY_HOUR",   0},
         {"night_hour", "GAMMA_NIGHT_HOUR", 0},
+        {"fade_min",   "GAMMA_FADE_MIN",   0},
+        {"transition_ms","GAMMA_TRANSITION_MS",0},
     };
     emit_block_overrides(o, find_block(u, D_GAMMA), "gamma", gammamap,
                          (int)(sizeof gammamap / sizeof gammamap[0]), ctx);
@@ -678,6 +680,20 @@ static void emit_overrides(FILE *o, Unit *u, CGCtx *ctx) {
                 fprintf(o, "#undef %s\n#define %s %d\n",
                         map[i].macro, map[i].macro, eval_int(e, 0));
             }
+        }
+        /* The icon widget's declared width IS the text column's left edge — the
+         * slot is reserved whether or not the notification carries an icon.
+         * osd.c wraps the body against this; measuring the icon glyph instead
+         * made an icon-less slab wrap wider than the room the layout left, and
+         * `elide` then chopped every wrapped line. */
+        for (int i = 0; i < osd->surface.n; i++) {
+            if (osd->surface.items[i].kind != SB_WIDGET) continue;
+            Widget *iw = osd->surface.items[i].widget;
+            if (!iw->name || iw->nlen != 4 || memcmp(iw->name, "icon", 4) != 0) continue;
+            Expr *we = widget_prop(iw, "width");
+            if (we && we->kind == EX_INT)
+                fprintf(o, "#undef OSD_ICON_W\n#define OSD_ICON_W %d\n", eval_int(we, 0));
+            break;
         }
         /* anchor: only top-center (default) and bottom|right are wired in
          * osd.c; `bottom` anywhere in the anchor expr selects the latter. */
@@ -779,6 +795,12 @@ int codegen_emit(const char *dir, Unit *u, SemaResult *r) {
             if (nkonst < 64) konst[nkonst++] = u->decls[i];
 
     CGCtx ctx = { .srcs = srcs, .nsrc = nsrc, .konst = konst, .nkonst = nkonst, .r = r };
+
+    /* Scan graph widgets before emit_bindings, which lowers the sampler push
+     * into each source's on_change (gen_bindings.c). Surfaces are emitted after
+     * and look their graph_idx up from this same registry. */
+    graph_reg_reset();
+    graph_reg_scan(u, &ctx);
 
     char path[1024]; FILE *f;
     snprintf(path, sizeof path, "%s/gen_overrides.h", dir);
