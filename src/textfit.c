@@ -93,7 +93,12 @@ int text_wrap(const Font *f, const char *s, int max_w, int max_lines,
         memcpy(word, s, wl); word[wl] = 0;
         int ww = text_width(f, word);
         int add_sp = cur_len > 0 ? sp_w : 0;
-        if (cur_w + add_sp + ww > max_w) {
+        /* Break on byte capacity too, not just pixel width: zero-advance glyphs
+         * (combining marks, U+200B) fit unbounded bytes under max_w and would
+         * overflow cur. (cur_len>0 ⇒ a flush frees the space, so no infinite loop.) */
+        int byte_full = cur_len > 0 &&
+            cur_len + (add_sp ? 1 : 0) + wl > (int)sizeof cur - 1;
+        if (cur_w + add_sp + ww > max_w || byte_full) {
             if (cur_len == 0) {
                 /* A single word wider than the column: hard-cut it. */
                 int cut = fit_prefix(f, word, max_w);

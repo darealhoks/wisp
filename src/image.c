@@ -19,6 +19,9 @@
 #define STBI_NO_HDR
 #define STBI_NO_LINEAR
 #define STBI_NO_FAILURE_STRINGS
+/* Cap decode dimensions: a tray app supplies icon files (via IconThemePath), so a
+ * crafted small PNG could otherwise decompression-bomb the w*h*4 allocation. */
+#define STBI_MAX_DIMENSIONS (1 << 14)
 #include <stb/stb_image.h>
 
 static char *expand_home(const char *p) {
