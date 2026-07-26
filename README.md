@@ -1,49 +1,86 @@
 # wisp <img src="wisp.png" width="32" height="32" align="absmiddle" alt="">
 
+**W**idget **I**nterface, **S**ingle **P**rocess — one Wayland daemon that draws
+a whole desktop shell, from a file you write.
+
+![wisp running the riverie config](desktop.png)
+
+A normal Wayland desktop runs a bar, a notification daemon, a locker, a gamma
+tool and a wallpaper setter: five daemons, five config formats, five sets of
+dependencies. wisp is one process that does all of it — because a bar, a hover
+panel, a notification slab, an app menu and a lock screen are the same thing, a
+layer-shell surface, configured differently.
+
+And you configure it in its own language. Not a theme file, not a plugin API: a
+`.wisp` file that the bundled compiler `wispc` lowers to C and links into the
+daemon. Writing `tags()` links the workspace client. Declaring an `osd` surface
+links the D-Bus client. A config that mentions neither produces a binary
+containing neither — you don't disable features, you never build them.
+
+**0 CPU ticks idle · 3.1 MB RSS · 250 KB binary · links libc and libm, nothing
+else.** Wayland and D-Bus are spoken as raw wire.
+
+## The language
+
+```wisp
+source bat_s = bat("BAT0");
+
+widget bat {
+    icon = bat_s.charging  ? 0xf0084
+         : bat_s.pct >= 50 ? 0xf241
+         :                   0xf244;
+    text = " {bat_s.pct}%";
+    fg   = bat_s.pct < 15 ? RED
+         : bat_s.pct < 25 ? ORANGE : TEXT;
+}
+```
+
+That is the whole battery block: a source, a widget, and expressions over the
+source. No polling loop, no format string mini-language, no shell script piping
+`acpi` into a JSON blob. When `bat_s.pct` changes, wisp recomputes exactly the
+widgets whose expressions read it and repaints exactly the damaged rectangle. The
+rest of the frame is not touched, and when nothing changes no timer fires at all.
+
+Surfaces are declared the same way, so `radius`, `anchor`, animations and
+visibility conditions are all just fields — see [dsl.md](docs/dsl.md) for the
+complete language.
+
+## Install
+
 > [!WARNING]
-> Due to the extremely minimal nature of this project, bugs can still occur. I have been daily driving wisp for a few months now so most issues should be gone but its still experimental software. 
-
-**W**idget **I**nterface, **S**ingle **P**rocess - one Wayland daemon that draws a whole desktop shell. All it needs is `wlr-layer-shell-unstable-v1`.
-
-Bar, hover panels, notification slabs, app menu, session lock, night-mode gamma and wallpaper are not separate features. They are **surfaces**: the same layer of Wayland surface, configured differently.
-
-Everything is declared in a `.wisp` file, which the bundled compiler `wispc` lowers to C and links into the daemon. Writing `tags()` links the workspace client; declaring an osd surface links the D-Bus client; a config that mentions neither produces a binary containing neither.
-
-The process links **libc and libm**. Wayland and D-Bus are spoken as raw wire, so there is no other dependency. If you wanna use the lock, `libpam` and its headers are needed (i didn't rewrite that from scratch for security reasons) but the main daemon never links it - its only used by the `wisp-lock` binary.
-
-Idle costs nothing, my config `configs/riverie.wisp` idle consumes:
-- **CPU:** 1 cpu tick per 10 seconds (measured on a i5-1135G7, without the cpu/temp/mem polls in the config, this number is a plain 0)
-- **RAM:** 3.1 MB RSS (PSS is only 950KB, measured on 1080p)
-- **DISK:** 250 KB stripped binary
-Your numbers depend on what you declared. 
-
-## Docs
-
-- [install.md](docs/install.md) - installing, build knobs
-- [tutorial.md](docs/tutorial.md) - one bar from an empty file
-- [dsl.md](docs/dsl.md) - the wisp language, complete
-- [wispctl.md](docs/wispctl.md) - the control client
-
-## Quick start
+> This is experimental software. I have daily driven wisp for a few months and
+> the sharp edges I hit are gone, but you will find ones I didn't.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/darealhoks/wisp/main/install.sh | sh
 wispctl rebuild riverie  # compile an example config, install, run
-wisp                 # or: autostart = wisp
+wisp                     # or: autostart = wisp
 
 # from a checkout instead:
-make install         # → ~/.local/bin (override with PREFIX=)
+make install             # → ~/.local/bin (override with PREFIX=)
 ```
 
 Then drive it: `wispctl apps`, `wispctl volume up`, `wispctl notify 1 hi`.
 
+The lock screen needs `libpam` and its headers — I did not rewrite PAM from
+scratch, for the obvious security reason. The daemon never links it; only the
+separate `wisp-lock` binary does.
+
+## Docs
+
+- [install.md](docs/install.md) — installing, build knobs
+- [tutorial.md](docs/tutorial.md) — one bar from an empty file
+- [dsl.md](docs/dsl.md) — the wisp language, complete
+- [wispctl.md](docs/wispctl.md) — the control client
+
 ## Compositor support
 
-wisp needs `wlr-layer-shell` to run; each other feature lights up only if the
-compositor speaks its protocol, else stays dark while the rest works.
-Workspaces read from `ext-workspace-v1`, mango's IPC, hyprland's IPC, or
-river's status protocol; compositors with just their own tag IPC (wayfire)
-show no tags.
+wisp needs `wlr-layer-shell-unstable-v1` to run. Every other feature lights up
+only if your compositor speaks the relevant protocol, and stays dark without
+breaking the rest.
+
+<details>
+<summary>Per-compositor table</summary>
 
 | Compositor | Bar (layer-shell) | Workspaces | Gamma | Toplevels | Lock | Fractional scale |
 |---|---|---|---|---|---|---|
@@ -68,11 +105,17 @@ show no tags.
 
 Checked against newest releases, July 2026; support moves, so check your version.
 
+</details>
+
 ## License
 
 MIT — see [LICENSE](LICENSE). Third-party notices (stb_image, libschrift,
 gemoji) are in [THIRD_PARTY.md](THIRD_PARTY.md).
 
 ---
+
+Numbers above measured with [configs/riverie.wisp](configs/riverie.wisp) on an i5-1135G7 at
+1080p: 1 CPU tick per 10 s with its 2-second cpu/mem/temp polls, a flat 0
+without them; 3.1 MB RSS, 950 KB PSS. Your numbers depend on what you declared.
 
 This tool was written with the assistance of AI (Claude Opus and Fable).
