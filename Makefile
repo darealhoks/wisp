@@ -442,4 +442,17 @@ check-diag: $(WISPC_BOOT)
 	if [ $$fail -ne 0 ]; then echo "check-diag: FAIL"; exit 1; fi; \
 	echo "check-diag: PASS"
 
-.PHONY: all tools install install-tools install-share uninstall clean distclean check check-diag
+# Fuzz the D-Bus wire reader (the session-bus attack surface) under ASan.
+# Needs clang+libFuzzer and a built config for wisp.h's generated includes, so
+# it borrows build/bee/gen-tw. Run: make fuzz && ./build/fuzz/fuzz_dbus -max_len=512 fuzz/corpus
+FUZZ_GENDIR := $(ROOT)/bee/gen-tw
+fuzz: $(FUZZ_GENDIR)/features.h
+	@mkdir -p $(ROOT)/fuzz fuzz/corpus
+	clang -fsanitize=fuzzer,address -g -O1 -I$(SRCDIR) -iquote $(FUZZ_GENDIR) \
+	    fuzz/fuzz_dbus.c $(SRCDIR)/dbus_wire.c -o $(ROOT)/fuzz/fuzz_dbus
+	@echo "built $(ROOT)/fuzz/fuzz_dbus — run: ./$(ROOT)/fuzz/fuzz_dbus fuzz/corpus"
+
+$(FUZZ_GENDIR)/features.h:
+	@echo "fuzz: build a config first (make install)"; exit 1
+
+.PHONY: all tools install install-tools install-share uninstall clean distclean check check-diag fuzz
