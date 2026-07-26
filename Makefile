@@ -446,7 +446,7 @@ check-diag: $(WISPC_BOOT)
 # Needs clang+libFuzzer and a built config for wisp.h's generated includes, so
 # it borrows build/bee/gen-tw. Run: make fuzz && ./build/fuzz/fuzz_dbus -max_len=512 fuzz/corpus
 FUZZ_GENDIR := $(ROOT)/bee/gen-tw
-fuzz: fuzz-dbus fuzz-dispatch
+fuzz: fuzz-dbus fuzz-dispatch fuzz-wl
 
 fuzz-dbus: $(FUZZ_GENDIR)/features.h
 	@mkdir -p $(ROOT)/fuzz fuzz/corpus
@@ -465,7 +465,19 @@ fuzz-dispatch: $(FUZZ_GENDIR)/features.h
 	    fuzz/fuzz_dispatch.c -o $(ROOT)/fuzz/fuzz_dispatch
 	@echo "built $(ROOT)/fuzz/fuzz_dispatch — run: ./$(ROOT)/fuzz/fuzz_dispatch fuzz/corpus fuzz/seeds"
 
+# Deepest Wayland harness: the compositor-facing wire parser. Compiles the
+# real wl.c/workspace.c/river.c/wl_toplevel.c/mango.c/hyprland.c into one TU so
+# the router + every id-routed event handler + the mango/Hyprland text IPC run
+# on fuzz bytes; stubs only render/widget/gamma/seat leaves.
+fuzz-wl: $(FUZZ_GENDIR)/features.h
+	@mkdir -p $(ROOT)/fuzz fuzz/corpus
+	clang -fsanitize=fuzzer,address -g -O1 -Wall -Wextra -I$(SRCDIR) \
+	    -include $(FUZZ_GENDIR)/features.h -include $(FUZZ_GENDIR)/gen_overrides.h \
+	    -iquote $(FUZZ_GENDIR) \
+	    fuzz/fuzz_wl.c -o $(ROOT)/fuzz/fuzz_wl
+	@echo "built $(ROOT)/fuzz/fuzz_wl — run: ./$(ROOT)/fuzz/fuzz_wl fuzz/corpus fuzz/seeds"
+
 $(FUZZ_GENDIR)/features.h:
 	@echo "fuzz: build a config first (make install)"; exit 1
 
-.PHONY: all tools install install-tools install-share uninstall clean distclean check check-diag fuzz fuzz-dbus fuzz-dispatch
+.PHONY: all tools install install-tools install-share uninstall clean distclean check check-diag fuzz fuzz-dbus fuzz-dispatch fuzz-wl
