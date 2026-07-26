@@ -446,13 +446,26 @@ check-diag: $(WISPC_BOOT)
 # Needs clang+libFuzzer and a built config for wisp.h's generated includes, so
 # it borrows build/bee/gen-tw. Run: make fuzz && ./build/fuzz/fuzz_dbus -max_len=512 fuzz/corpus
 FUZZ_GENDIR := $(ROOT)/bee/gen-tw
-fuzz: $(FUZZ_GENDIR)/features.h
+fuzz: fuzz-dbus fuzz-dispatch
+
+fuzz-dbus: $(FUZZ_GENDIR)/features.h
 	@mkdir -p $(ROOT)/fuzz fuzz/corpus
 	clang -fsanitize=fuzzer,address -g -O1 -I$(SRCDIR) -iquote $(FUZZ_GENDIR) \
 	    fuzz/fuzz_dbus.c $(SRCDIR)/dbus_wire.c -o $(ROOT)/fuzz/fuzz_dbus
 	@echo "built $(ROOT)/fuzz/fuzz_dbus — run: ./$(ROOT)/fuzz/fuzz_dbus fuzz/corpus"
 
+# Deeper harness: full messages through dispatch_one + the tray/notify reply
+# parsers. Force-includes the preset's features.h/gen_overrides.h (same as the
+# real build) because it compiles dbus.c/notify.c/tray.c, which pull wisp.h.
+fuzz-dispatch: $(FUZZ_GENDIR)/features.h
+	@mkdir -p $(ROOT)/fuzz fuzz/corpus
+	clang -fsanitize=fuzzer,address -g -O1 -Wall -Wextra -I$(SRCDIR) \
+	    -include $(FUZZ_GENDIR)/features.h -include $(FUZZ_GENDIR)/gen_overrides.h \
+	    -iquote $(FUZZ_GENDIR) \
+	    fuzz/fuzz_dispatch.c -o $(ROOT)/fuzz/fuzz_dispatch
+	@echo "built $(ROOT)/fuzz/fuzz_dispatch — run: ./$(ROOT)/fuzz/fuzz_dispatch fuzz/corpus fuzz/seeds"
+
 $(FUZZ_GENDIR)/features.h:
 	@echo "fuzz: build a config first (make install)"; exit 1
 
-.PHONY: all tools install install-tools install-share uninstall clean distclean check check-diag fuzz
+.PHONY: all tools install install-tools install-share uninstall clean distclean check check-diag fuzz fuzz-dbus fuzz-dispatch
