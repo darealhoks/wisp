@@ -68,6 +68,11 @@ show no tags.
 
 Checked against newest releases, July 2026; support moves, so check your version.
 
+## License
+
+MIT — see [LICENSE](LICENSE). Third-party notices (stb_image, libschrift,
+gemoji) are in [THIRD_PARTY.md](THIRD_PARTY.md).
+
 ---
 
 This tool was written with the assistance of AI (Claude Opus and Fable).

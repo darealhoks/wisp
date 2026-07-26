@@ -1,5 +1,6 @@
-/* glyf outlines → alpha8 coverage bitmaps. Signed-area scanline AA (the
- * stb_truetype / libschrift accumulate-then-prefix-sum trick): every edge
+/* glyf outlines → alpha8 coverage bitmaps. Signed-area scanline AA, adapted
+ * from libschrift (ISC — see THIRD_PARTY.md); same accumulate-then-prefix-sum
+ * approach stb_truetype uses: every edge
  * deposits an (area, cover) pair into the cells it crosses, and one linear
  * sweep per row turns those into coverage. No hinting, no dropout control —
  * we render unhinted like the freetype backend already did.
