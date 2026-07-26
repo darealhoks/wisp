@@ -8,7 +8,7 @@
  * (src/pipewire.c) — no wpctl fork, no poll, no cache: pw_vol_pct() et al. are
  * plain reads of the event-driven subscription. Backlight is a direct sysfs
  * write; brightnessctl ships a udev rule that makes that file group-writable by
- * `video`, which dwlarp users already need to be in. */
+ * `video`, which the user already needs to be in. */
 
 #include "wisp.h"
 
@@ -49,7 +49,7 @@ void media_volume(const char *arg) {
         pct = n; muted = 0;
     }
     osd_post(SLOT_VOL, muted ? "Volume muted" : "Volume", "",
-             muted ? ICON_VOL_X : ICON_VOL, pct, 1, muted, OSD_TIMEOUT_OSD);
+             muted ? ICON_VOL_X : ICON_VOL, NULL, pct, 1, muted, OSD_TIMEOUT_OSD);
 }
 
 void media_mic(const char *arg) {
@@ -58,7 +58,7 @@ void media_mic(const char *arg) {
     int muted = !pw_mic_muted();
     pw_set_mic_mute(-1);
     osd_post(SLOT_MIC, muted ? "Microphone muted" : "Microphone", "",
-             muted ? ICON_MIC_X : ICON_MIC, -1, 1, muted, OSD_TIMEOUT_OSD);
+             muted ? ICON_MIC_X : ICON_MIC, NULL, -1, 1, muted, OSD_TIMEOUT_OSD);
 }
 
 /* Cache the first /sys/class/backlight/<dev> path. Single-display assumption
@@ -105,5 +105,5 @@ void media_backlight(const char *arg) {
     if (n < 0)   n = 0;
     if (n > max) n = max;
     write_int_file(cur_p, n);
-    osd_post(SLOT_BRI, "Brightness", "", ICON_SUN, n * 100 / max, 1, 0, OSD_TIMEOUT_OSD);
+    osd_post(SLOT_BRI, "Brightness", "", ICON_SUN, NULL, n * 100 / max, 1, 0, OSD_TIMEOUT_OSD);
 }

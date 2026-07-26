@@ -52,10 +52,11 @@ int64_t now_ms(void) { return 0; }
 
 /* OSD render surface — notify.c posts here; we only care that the parse ran. */
 uint32_t osd_post(uint32_t replace_id, const char *summary, const char *body,
-                  uint32_t icon_cp, int progress, int urgency, int muted,
-                  int timeout) {
+                  uint32_t icon_cp, uint32_t *image, int progress, int urgency,
+                  int muted, int timeout) {
     (void)summary; (void)body; (void)icon_cp; (void)progress;
     (void)urgency; (void)muted; (void)timeout;
+    free(image);   /* the real osd_post owns it; leaking would trip ASan */
     return replace_id ? replace_id : 1;
 }
 void osd_close(uint32_t id) { (void)id; }
@@ -69,14 +70,9 @@ void menu_set_geom(const WispMenuGeom *g) { (void)g; }
 void menu_cancel_all(void) {}
 const WispMenu *wisp_menu_find(const char *name) { (void)name; return NULL; }
 
-/* Icon-theme disk decode — a named-icon path needs a real file; skip it. */
-int image_find_icon(const char *name, const char *extra, char *out, size_t sz) {
-    (void)name; (void)extra; (void)out; (void)sz; return 0;
-}
-uint8_t *image_load(const char *path, int *w, int *h) {
-    (void)path; (void)w; (void)h; return NULL;
-}
-void image_free(uint8_t *px) { (void)px; }
+/* image.c is linked in whole rather than stubbed: notification cover art
+ * feeds image_scale_square attacker-chosen dimensions, and the icon lookup
+ * only ever stats paths a fuzzer will not guess. */
 
 /* ---- the code under test, real sources, one TU ---- */
 #include "dbus_wire.c"

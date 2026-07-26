@@ -147,6 +147,8 @@ typedef struct {
     CT type;
     /* T_PIXMAP only: expression for the square's side in logical px. */
     const char *pm_size;
+    /* T_PIXMAP only, optional: codepoint drawn when the pixmap is absent. */
+    const char *pm_cp;
 } CE;
 
 typedef enum {

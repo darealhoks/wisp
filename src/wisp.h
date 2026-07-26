@@ -199,6 +199,7 @@ typedef struct {
     char     summary[OSD_SUM_MAX];
     char     body[OSD_BODY_MAX];
     uint32_t icon_cp;            /* nerd-font codepoint, 0 = none */
+    uint32_t *image;             /* cover art: OSD_IMAGE_PX² premultiplied ARGB, owned, NULL = none */
     int      progress;           /* 0..100, -1 = no bar */
     int      urgency;            /* 0=low 1=normal 2=critical */
     int      muted;              /* category=="muted" → red styling */
@@ -705,9 +706,12 @@ extern int ui_hidden;
 /* OSD widget is created on demand (and re-anchored if focus moves to a
  * different output) — no startup constructor. */
 void     osd_render(Widget *w);
+/* `image` (OSD_IMAGE_PX² premultiplied ARGB, or NULL) is taken over by the
+ * slab and freed with it — callers must not free or reuse it. */
 uint32_t osd_post(uint32_t replace_id, const char *summary, const char *body,
-                  uint32_t icon_cp, int progress, int urgency, int muted,
-                  int timeout_ms);
+                  uint32_t icon_cp, uint32_t *image, int progress, int urgency,
+                  int muted, int timeout_ms);
+const uint32_t *osd_slab_image(int i);   /* $image binding, NULL when none */
 void     osd_close(uint32_t id);
 void     osd_close_all(void);
 int      osd_check_expiry(int64_t now);  /* returns ms-until-next or -1 */

@@ -1,4 +1,4 @@
-/* wisp-lock-helper — minimal PAM auth wrapper, the only binary in dwlarp
+/* wisp-lock-helper — minimal PAM auth wrapper, the only binary in wisp
  * that links against libpam. Reads a single attempt from stdin and replies
  * one line on stdout. Lifecycle is one process per attempt, spawned and
  * pipe-talked-to from lock.c.

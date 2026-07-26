@@ -186,11 +186,11 @@ static void sample_bat(void) {
     char body[64];
     if (pct <= BAT_CRIT_PCT && !bat_crit_fired) {
         snprintf(body, sizeof body, "%d%% remaining — plug in now", pct);
-        osd_post(BAT_OSD_ID, "Battery critical", body, 0xf244, -1, 2, 1, 0);
+        osd_post(BAT_OSD_ID, "Battery critical", body, 0xf244, NULL, -1, 2, 1, 0);
         bat_crit_fired = bat_warn_fired = 1;
     } else if (pct <= BAT_WARN_PCT && !bat_warn_fired) {
         snprintf(body, sizeof body, "%d%% remaining", pct);
-        osd_post(BAT_OSD_ID, "Battery low", body, 0xf243, -1, 1, 2, 0);
+        osd_post(BAT_OSD_ID, "Battery low", body, 0xf243, NULL, -1, 1, 2, 0);
         bat_warn_fired = 1;
     }
 #endif

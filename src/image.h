@@ -30,6 +30,11 @@ int      image_is_png(const char *path);
  * for cache-invalidation keys. Returns 0 on success, -1 if the file is gone. */
 int      image_mtime(const char *path, int64_t *mtime);
 
+/* Box-filter RGBA8 → premultiplied ARGB `ds`×`ds` square, malloc'd (free()).
+ * Averaging happens premultiplied — the correct filter for translucent edges.
+ * Used for menu app icons and notification cover art. */
+uint32_t *image_scale_square(const uint8_t *rgba, int sw, int sh, int ds);
+
 /* Bilinear cover-fit: scale `src` (RGBA8, sw*sh) to fill dst (ARGB8888,
  * dw*dh) at max scale with a centred crop. Output pixels are opaque. */
 void image_blit_cover(uint32_t *dst, int dw, int dh,

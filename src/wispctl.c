@@ -131,7 +131,7 @@ static int cmd_rebuild(const char *name) {
 
     /* Friendly TTY build: capture make's output and show a spinner instead of
      * a silent stall; on failure replay the captured log so compiler errors
-     * are intact. Non-tty (scripts, sync.sh) keeps the raw passthrough. */
+     * are intact. Non-tty (scripts, syml.sh) keeps the raw passthrough. */
     char cfgname[NAME_MAX] = "config";
     if (wisp[0]) {
         char *b = strrchr(wisp, '/');

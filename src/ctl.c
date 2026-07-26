@@ -360,7 +360,7 @@ static int dispatch(Client *c, char *cmd) {
         unsigned icon = 0;
         if (argc >= 5) parse_hex(argv[4], &icon);
         int muted = argc >= 6 ? atoi(argv[5]) : 0;
-        osd_post(slot ? slot : 0, summary, "", icon, progress, 0, muted, OSD_TIMEOUT_OSD);
+        osd_post(slot ? slot : 0, summary, "", icon, NULL, progress, 0, muted, OSD_TIMEOUT_OSD);
         (void)!write(c->fd, "ok\n", 3); return 0;
     }
     /* notify <urgency:0|1|2> <summary> [body] [icon-cp] [timeout-ms]
@@ -373,7 +373,7 @@ static int dispatch(Client *c, char *cmd) {
         unsigned icon = 0;
         if (argc >= 5) parse_hex(argv[4], &icon);
         int timeout = argc >= 6 ? atoi(argv[5]) : -1;
-        osd_post(0, summary, body, icon, -1, urgency, 0, timeout);
+        osd_post(0, summary, body, icon, NULL, -1, urgency, 0, timeout);
         (void)!write(c->fd, "ok\n", 3); return 0;
     }
     if (!strcmp(op, "osd-clear")) {

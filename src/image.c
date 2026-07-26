@@ -301,3 +301,30 @@ void image_blit_cover(uint32_t *dst, int dw, int dh,
                       const uint8_t *src, int sw, int sh) {
     image_blit_cover_dim(dst, dw, dh, src, sw, sh, 0, 0, 0);
 }
+
+uint32_t *image_scale_square(const uint8_t *rgba, int sw, int sh, int ds) {
+    if (!rgba || sw <= 0 || sh <= 0 || ds <= 0) return NULL;
+    uint32_t *out = malloc((size_t)ds * ds * 4);
+    if (!out) return NULL;
+    for (int j = 0; j < ds; j++) {
+        int y0 = j * sh / ds, y1 = (j + 1) * sh / ds; if (y1 <= y0) y1 = y0 + 1;
+        if (y1 > sh) y1 = sh;
+        for (int i = 0; i < ds; i++) {
+            int x0 = i * sw / ds, x1 = (i + 1) * sw / ds; if (x1 <= x0) x1 = x0 + 1;
+            if (x1 > sw) x1 = sw;
+            uint32_t a = 0, r = 0, g = 0, b = 0, cnt = (uint32_t)((x1 - x0) * (y1 - y0));
+            for (int y = y0; y < y1; y++)
+                for (int x = x0; x < x1; x++) {
+                    const uint8_t *px = rgba + 4 * ((size_t)y * sw + x);
+                    uint32_t pa = px[3];
+                    a += pa;
+                    r += px[0] * pa / 255;
+                    g += px[1] * pa / 255;
+                    b += px[2] * pa / 255;
+                }
+            out[j * ds + i] = (a / cnt) << 24 | (r / cnt) << 16
+                            | (g / cnt) << 8 | (b / cnt);
+        }
+    }
+    return out;
+}

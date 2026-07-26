@@ -645,6 +645,7 @@ static void emit_overrides(FILE *o, Unit *u, CGCtx *ctx) {
             {"gap",            "OSD_GAP",             0},
             {"pad_x",          "OSD_PAD_X",           0},
             {"icon_gap",       "OSD_ICON_GAP",        0},
+            {"image",          "OSD_IMAGE_PX",        0},
             {"prog_h",         "OSD_PROG_H",          0},
             {"body_lines",     "OSD_MAX_BODY_LINES",  0},
             {"body_max",       "OSD_BODY_MAX",        0},
@@ -853,7 +854,7 @@ int codegen_emit(const char *dir, Unit *u, SemaResult *r) {
         if (strcmp(snm, "osd") == 0) {
             fputs("#ifdef WISP_HAS_OSD\n", f);
             fputs("void spawn_osd(const char *summary, uint32_t icon, int pct, int muted) {\n"
-                  "    osd_post(0, summary ? summary : \"\", \"\", icon, pct, 0, muted, OSD_TIMEOUT_OSD);\n"
+                  "    osd_post(0, summary ? summary : \"\", \"\", icon, 0, pct, 0, muted, OSD_TIMEOUT_OSD);\n"
                   "}\n", f);
             fputs("#else\n", f);
             fputs("void spawn_osd(const char *s, uint32_t i, int p, int m) { (void)s;(void)i;(void)p;(void)m; }\n", f);

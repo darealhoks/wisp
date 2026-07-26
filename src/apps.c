@@ -227,32 +227,6 @@ static void save_cache(void) {
     rename(tmp, path);
 }
 
-/* Box-filter downscale RGBA8 → premultiplied ARGB ds×ds. Averaging happens
- * premultiplied, which is the correct filter for translucent edges. */
-static uint32_t *icon_scale(const uint8_t *rgba, int sw, int sh, int ds) {
-    uint32_t *out = malloc((size_t)ds * ds * 4);
-    if (!out) return NULL;
-    for (int j = 0; j < ds; j++) {
-        int y0 = j * sh / ds, y1 = (j + 1) * sh / ds; if (y1 <= y0) y1 = y0 + 1;
-        for (int i = 0; i < ds; i++) {
-            int x0 = i * sw / ds, x1 = (i + 1) * sw / ds; if (x1 <= x0) x1 = x0 + 1;
-            uint32_t a = 0, r = 0, g = 0, b = 0, cnt = (uint32_t)((x1 - x0) * (y1 - y0));
-            for (int y = y0; y < y1; y++)
-                for (int x = x0; x < x1; x++) {
-                    const uint8_t *px = rgba + 4 * ((size_t)y * sw + x);
-                    uint32_t pa = px[3];
-                    a += pa;
-                    r += px[0] * pa / 255;
-                    g += px[1] * pa / 255;
-                    b += px[2] * pa / 255;
-                }
-            out[j * ds + i] = (a / cnt) << 24 | (r / cnt) << 16
-                            | (g / cnt) << 8 | (b / cnt);
-        }
-    }
-    return out;
-}
-
 static void icons_free(void) {
     if (!icons) return;
     for (int i = 0; i < APP_CAP; i++) free(icons[i]);
@@ -273,7 +247,7 @@ static void load_icons(void) {
         int w, h;
         uint8_t *px = image_load(path, &w, &h);
         if (!px) continue;
-        icons[i] = icon_scale(px, w, h, icon_sz);
+        icons[i] = image_scale_square(px, w, h, icon_sz);
         image_free(px);
     }
 }

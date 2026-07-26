@@ -10,6 +10,7 @@
 #include "wisp.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* DSL-driven behavior toggles (set via gen_overrides.h). Defaults preserve
@@ -127,6 +128,14 @@ static int find_free(Widget *w) {
         if (!w->s.osd.items[i].active) return i;
     return -1;
 }
+/* Deactivate a slab and release its cover art. Zeroing is load-bearing: pack()
+ * leaves duplicate copies of a struct behind, so a stale `image` pointer in a
+ * dead slot would be double-freed on reuse. */
+static void slab_kill(Osd *o) {
+    free(o->image);
+    memset(o, 0, sizeof *o);
+}
+
 /* Evict the soonest-to-expire non-critical slot. If the stack is full of
  * critical-urgency items, evict the soonest-to-expire critical only when the
  * incoming notification is itself critical — otherwise refuse (return -1) so
@@ -149,7 +158,7 @@ static int evict(Widget *w, int incoming_urgency) {
     }
     if (oldest < 0) return -1;
     uint32_t evicted_id = w->s.osd.items[oldest].replace_id;
-    w->s.osd.items[oldest].active = 0;
+    slab_kill(&w->s.osd.items[oldest]);
     if (OSD_DBUS_CLOSE && dbus_emit_closed) dbus_emit_closed(evicted_id, 2 /*dismissed*/);
     return oldest;
 }
@@ -161,7 +170,7 @@ static void pack(Widget *w) {
     for (int i = 0; i < MAX_OSDS; i++)
         if (w->s.osd.items[i].active) tmp[n++] = w->s.osd.items[i];
     for (int i = 0; i < n; i++) w->s.osd.items[i] = tmp[i];
-    for (int i = n; i < MAX_OSDS; i++) w->s.osd.items[i].active = 0;
+    for (int i = n; i < MAX_OSDS; i++) memset(&w->s.osd.items[i], 0, sizeof(Osd));
 }
 
 /* Final tx (post-icon) for body/summary text in a slab. */
@@ -369,6 +378,11 @@ int osd_bar_split(void) {
 const char *osd_slab_body(int i) { return osd_wrapped[i]; }
 int osd_slab_nbody(int i) { return osd_nbody[i]; }
 
+const uint32_t *osd_slab_image(int i) {
+    Widget *w = osd_stack();
+    return (w && i >= 0 && i < MAX_OSDS) ? w->s.osd.items[i].image : NULL;
+}
+
 void osd_stack_input_region(Widget *w) { update_input_region(w); }
 void osd_stack_attach_empty(Widget *w) { osd_attach_empty(w); }
 
@@ -549,23 +563,25 @@ void osd_on_first_configure(Widget *w) {
 }
 
 uint32_t osd_post(uint32_t replace_id, const char *summary, const char *body,
-                  uint32_t icon_cp, int progress, int urgency, int muted,
-                  int timeout_ms) {
+                  uint32_t icon_cp, uint32_t *image, int progress, int urgency,
+                  int muted, int timeout_ms) {
 #if OSD_PILL_W > 0
     /* Progress-only posts (volume / brightness) get the minimal pill; any
      * post with a body is a real notification and goes to the stack.
      * ponytail: dbus notifications carrying a progress hint but no body also
      * land here — close-by-id on the pill isn't wired; add if a client needs it. */
-    if (progress >= 0 && (!body || !body[0]))
+    if (progress >= 0 && (!body || !body[0])) {
+        free(image);   /* the pill has no icon column for cover art */
         return pill_post(icon_cp, progress, muted, timeout_ms);
+    }
 #endif
     Widget *w = osd_ensure();
-    if (!w) return 0;
+    if (!w) { free(image); return 0; }
 
     int slot = find_replace(w, replace_id);
     if (slot < 0) slot = find_free(w);
     if (slot < 0) slot = evict(w, urgency);
-    if (slot < 0) return 0;  /* refused — incoming would have displaced a critical */
+    if (slot < 0) { free(image); return 0; }  /* refused — incoming would have displaced a critical */
 
     Osd *o = &w->s.osd.items[slot];
     /* Preserve spawn_ms across content-only updates: when a held key
@@ -575,6 +591,7 @@ uint32_t osd_post(uint32_t replace_id, const char *summary, const char *body,
      * (empty slot) or one that was mid-close at the time of the replace. */
     int64_t now = now_ms();
     int64_t prev_spawn = (o->active && !o->closing_at_ms) ? o->spawn_ms : 0;
+    free(o->image);
     memset(o, 0, sizeof *o);
     o->active = 1;
     o->spawn_ms = prev_spawn ? prev_spawn : now;
@@ -582,6 +599,7 @@ uint32_t osd_post(uint32_t replace_id, const char *summary, const char *body,
     if (summary) snprintf(o->summary, sizeof o->summary, "%s", summary);
     if (body)    snprintf(o->body,    sizeof o->body,    "%s", body);
     o->icon_cp  = icon_cp;
+    o->image    = image;
     o->progress = progress;
     o->urgency  = urgency;
     o->muted    = muted;
@@ -640,8 +658,7 @@ void osd_tick(Widget *w) {
         if (!o->active || !o->closing_at_ms) continue;
         if (now >= o->closing_at_ms + OSD_SLIDE_MS) {
             uint32_t id = o->replace_id, reason = o->close_reason ? o->close_reason : 3;
-            o->active = 0;
-            o->closing_at_ms = 0;
+            slab_kill(o);
             reaped = 1;
             /* Pill ids are private to the pill widget — never surface them
              * as dbus NotificationClosed. */
@@ -661,8 +678,7 @@ int osd_check_expiry(int64_t now) {
         Osd *o = &pw->s.osd.items[0];
         if (o->active && o->closing_at_ms > 0) {
             if (o->closing_at_ms + OSD_SLIDE_MS - now <= 0) {
-                o->active = 0;
-                o->closing_at_ms = 0;
+                slab_kill(o);
                 osd_pill_render(pw);
             }
         } else if (o->active && o->expires_at_ms) {
@@ -684,8 +700,7 @@ int osd_check_expiry(int64_t now) {
                  * but a stalled compositor or hidden output won't deliver
                  * any). dbus_close_reason preserved. */
                 uint32_t id = o->replace_id, reason = o->close_reason ? o->close_reason : 3;
-                o->active = 0;
-                o->closing_at_ms = 0;
+                slab_kill(o);
                 redraw = 1;
                 if (OSD_DBUS_CLOSE && dbus_emit_closed) dbus_emit_closed(id, reason);
             }

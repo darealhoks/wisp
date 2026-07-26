@@ -100,7 +100,7 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
      *
      * The two are independent: the trigger is an input region, the gutter is
      * paint. They default equal (a flush bar wants a trigger the width of the
-     * band it shows through — see dwlarp), but a preset whose bar FLOATS has no
+     * band it shows through — see the anemoia preset), but a preset whose bar FLOATS has no
      * bar to fill the gutter, so every gutter px is bare desktop above the body.
      * Such a preset sets `reveal_gutter = 0` to paint from the anchored edge
      * while keeping a fat, easy-to-hit trigger. */
@@ -893,9 +893,9 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     else
         fputs("    int y = (__chs - f->line_h) / 2 + __coy; (void)y;\n", o);
     fprintf(o,
-        "    struct { int tw, vis; uint32_t cp, fg, bg, border, press_bg; const uint32_t *pm; int pms; const char *txt; int pad, align; int h; int ch; int body_lines; } st[%d];\n",
+        "    struct { int tw, vis; uint32_t cp, fg, icon_fg, bg, border, press_bg; const uint32_t *pm; int pms; const char *txt; int pad, align; int h; int ch; int body_lines; } st[%d];\n",
         n_arr);
-    fprintf(o, "    for (int __i = 0; __i < %d; __i++) { st[__i].vis = 0; st[__i].h = 0; st[__i].ch = 0; st[__i].body_lines = 1; st[__i].border = 0; st[__i].press_bg = 0; }\n", n_arr);
+    fprintf(o, "    for (int __i = 0; __i < %d; __i++) { st[__i].vis = 0; st[__i].h = 0; st[__i].ch = 0; st[__i].body_lines = 1; st[__i].border = 0; st[__i].press_bg = 0; st[__i].icon_fg = 0; }\n", n_arr);
     fputs("    (void)st;\n", o);
     fputs("    int center_total = 0;\n", o);
     /* Trailing-pad correction: every center-aligned item adds `tw + pad` to

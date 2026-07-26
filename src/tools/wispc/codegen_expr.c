@@ -457,7 +457,17 @@ CE lower(CGCtx *c, Expr *e) {
             if (memcmp(l->name, e->ident.s, e->ident.n) != 0) continue;
             snprintf(r.text, sizeof r.text, "(%s)", l->c_expr);
             /* Type inferred from binding: codegen_surface.c picks T_STR for
-             * char-array fields and T_INT otherwise via the src_name slot. */
+             * char-array fields and T_INT otherwise via the src_name slot;
+             * "pm" marks a pixmap binding ($image), which carries its own
+             * square size and a codepoint to fall back to. */
+            if (l->src_name && l->src_name[0] == 'p') {
+                r.type = T_PIXMAP;
+                static char pms[128];   /* consumed by the caller's fprintf at once */
+                snprintf(pms, sizeof pms, "((%s) ? OSD_IMAGE_PX : 0)", l->c_expr);
+                r.pm_size = pms;
+                r.pm_cp   = "w->s.osd.items[__sl].icon_cp";
+                return r;
+            }
             r.type = (l->src_name && l->src_name[0] == 's') ? T_STR : T_INT;
             return r;
         }

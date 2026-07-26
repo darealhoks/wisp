@@ -10,6 +10,9 @@
 #include "wisp.h"
 #include "dbus.h"
 
+#include "image.h"
+
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -104,36 +107,129 @@ static uint32_t icon_from_name(const char *name) {
     return 0;
 }
 
-/* Pull one hint key + variant value, dispatching on key name.
- * Updates *urgency / *progress / *sync_id / *muted / *icon_cp as side effects. */
-static int parse_hint(R *r, int *urgency, int *progress, char *sync_id, int sync_cap,
-                      int *muted, uint32_t *icon_cp) {
+/* Notification hints we act on. Anything else is skipped on the wire. */
+typedef struct {
+    int      urgency;
+    int      progress;
+    int      muted;
+    uint32_t icon_cp;
+    char     sync_id[64];
+#if OSD_IMAGE_PX > 0
+    char      img_path[512];   /* image-path / app_icon, resolved lazily */
+    uint32_t *image;           /* from image-data, already scaled; owned */
+#endif
+} Hints;
+
+#if OSD_IMAGE_PX > 0
+/* "file:///a%20b" → "/a b", in place. Album art paths from MPRIS bridges are
+ * URI-escaped; the icon lookup needs a real path. */
+static void unescape_path(char *p) {
+    if (!strncmp(p, "file://", 7)) memmove(p, p + 7, strlen(p + 7) + 1);
+    char *o = p;
+    for (char *i = p; *i; ) {
+        if (i[0] == '%' && isxdigit((unsigned char)i[1]) && isxdigit((unsigned char)i[2])) {
+            char h[3] = { i[1], i[2], 0 };
+            *o++ = (char)strtol(h, NULL, 16);
+            i += 3;
+        } else *o++ = *i++;
+    }
+    *o = 0;
+}
+
+/* image-data hint: (iiibiiay) = w, h, rowstride, has_alpha, bps, channels, pixels.
+ * Untrusted wire data — every dimension is checked against the byte array
+ * before a single pixel is read. Returns a scaled square or NULL. */
+static uint32_t *read_image_data(R *r) {
+    ralign(r, 8);
+    int w = ri32(r), h = ri32(r), stride = ri32(r);
+    int alpha = (int)ru32(r);
+    int bps = ri32(r), chan = ri32(r);
+    uint32_t dlen = ru32(r);
+    if (!r->ok) return NULL;
+    int64_t end = (int64_t)r->pos + (int64_t)dlen;
+    if (end > r->len) { r->ok = 0; return NULL; }
+    const uint8_t *data = r->b + r->pos;
+    r->pos = (int)end;
+    (void)alpha;
+    if (bps != 8 || (chan != 3 && chan != 4)) return NULL;
+    if (w <= 0 || h <= 0 || w > 2048 || h > 2048) return NULL;
+    if (stride < w * chan) return NULL;
+    if ((int64_t)stride * (h - 1) + (int64_t)w * chan > (int64_t)dlen) return NULL;
+
+    uint8_t *rgba = malloc((size_t)w * h * 4);
+    if (!rgba) return NULL;
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++) {
+            const uint8_t *sp = data + (size_t)y * stride + (size_t)x * chan;
+            uint8_t *dp = rgba + 4 * ((size_t)y * w + x);
+            dp[0] = sp[0]; dp[1] = sp[1]; dp[2] = sp[2];
+            dp[3] = chan == 4 ? sp[3] : 255;
+        }
+    uint32_t *pm = image_scale_square(rgba, w, h, OSD_IMAGE_PX);
+    free(rgba);
+    return pm;
+}
+
+/* Decode whatever art the notification pointed at, image-data first (already
+ * done), then image-path / app_icon resolved as a file or an icon name. */
+static uint32_t *hints_image(Hints *hn) {
+    if (hn->image) return hn->image;
+    if (!hn->img_path[0]) return NULL;
+    unescape_path(hn->img_path);
+    char path[512];
+    if (!image_find_icon(hn->img_path, NULL, path, sizeof path)) return NULL;
+    if (!image_is_png(path)) return NULL;
+    int w, h;
+    uint8_t *px = image_load(path, &w, &h);
+    if (!px) return NULL;
+    uint32_t *pm = image_scale_square(px, w, h, OSD_IMAGE_PX);
+    image_free(px);
+    return pm;
+}
+#endif
+
+/* Pull one hint key + variant value, dispatching on key name. */
+static int parse_hint(R *r, Hints *hn) {
     const char *key = rstr(r);
     if (!r->ok) return -1;
     const char *sig = rsig(r);
     if (!r->ok) return -1;
     char vc = sig[0];
 
-    if (vc == 'y' && !strcmp(key, "urgency")) { *urgency = rbyte(r); return r->ok ? 0 : -1; }
+    if (vc == 'y' && !strcmp(key, "urgency")) { hn->urgency = rbyte(r); return r->ok ? 0 : -1; }
     if ((vc == 'i' || vc == 'u') && !strcmp(key, "value")) {
-        int v = (int)ri32(r); *progress = v; return r->ok ? 0 : -1;
+        hn->progress = (int)ri32(r); return r->ok ? 0 : -1;
     }
     if (vc == 's' && !strcmp(key, "x-canonical-private-synchronous")) {
         const char *s = rstr(r);
-        snprintf(sync_id, sync_cap, "%s", s);
+        snprintf(hn->sync_id, sizeof hn->sync_id, "%s", s);
         return r->ok ? 0 : -1;
     }
     if (vc == 's' && !strcmp(key, "category")) {
         const char *s = rstr(r);
-        if (!strcmp(s, "muted")) *muted = 1;
+        if (!strcmp(s, "muted")) hn->muted = 1;
         return r->ok ? 0 : -1;
     }
-    if (vc == 's' && !strcmp(key, "image-path")) {
+    if (vc == 's' && (!strcmp(key, "image-path") || !strcmp(key, "image_path"))) {
         const char *s = rstr(r);
+        if (!r->ok) return -1;
         uint32_t cp = icon_from_name(s);
-        if (cp) *icon_cp = cp;
+        if (cp) hn->icon_cp = cp;
+#if OSD_IMAGE_PX > 0
+        snprintf(hn->img_path, sizeof hn->img_path, "%s", s);
+#endif
+        return 0;
+    }
+#if OSD_IMAGE_PX > 0
+    /* Spec order: image-data wins over image-path, and the deprecated
+     * icon_data is the same struct under an older name. */
+    if (vc == '(' && (!strcmp(key, "image-data") || !strcmp(key, "image_data") ||
+                      !strcmp(key, "icon_data"))) {
+        uint32_t *pm = read_image_data(r);
+        if (pm) { free(hn->image); hn->image = pm; }
         return r->ok ? 0 : -1;
     }
+#endif
     /* Unknown / unhandled — skip the variant payload. */
     return skip_val(r, &sig, 0);
 }
@@ -165,9 +261,12 @@ static void handle_notify(R *r, uint32_t serial, const char *sender) {
     r->pos = (int)aend;
 
     /* hints: a{sv} */
-    int urgency = 1, progress = -1, muted = 0;
-    uint32_t icon_cp = icon_from_name(app_icon);
-    char sync_id[64] = "";
+    Hints hn = { .urgency = 1, .progress = -1 };
+    hn.icon_cp = icon_from_name(app_icon);
+#if OSD_IMAGE_PX > 0
+    /* app_icon is the weakest source — an image-path hint overwrites it. */
+    snprintf(hn.img_path, sizeof hn.img_path, "%s", app_icon);
+#endif
 
     uint32_t hlen = ru32(r);
     if (!r->ok) return;
@@ -177,18 +276,26 @@ static void handle_notify(R *r, uint32_t serial, const char *sender) {
     int hend = (int)hend64;
     while (r->pos < hend) {
         ralign(r, 8);
-        if (parse_hint(r, &urgency, &progress, sync_id, sizeof sync_id,
-                       &muted, &icon_cp) < 0) {
-            r->pos = hend; break;
-        }
+        if (parse_hint(r, &hn) < 0) { r->pos = hend; break; }
     }
     r->pos = hend;
 
     int32_t expire = ri32(r);
-    if (!r->ok) return;
+    if (!r->ok) {
+#if OSD_IMAGE_PX > 0
+        free(hn.image);
+#endif
+        return;
+    }
 
     uint32_t rid = replaces;
-    if (!rid && sync_id[0]) rid = djb2(sync_id);
+    if (!rid && hn.sync_id[0]) rid = djb2(hn.sync_id);
+
+    uint32_t *image = NULL;
+#if OSD_IMAGE_PX > 0
+    image = hints_image(&hn);
+    if (image != hn.image) free(hn.image);
+#endif
 
     int timeout;
     if (expire < 0)       timeout = -1;    /* server default */
@@ -197,17 +304,18 @@ static void handle_notify(R *r, uint32_t serial, const char *sender) {
 
     uint32_t out_id;
 #ifdef WISP_HAS_OSD
-    if (dnd_on && urgency < 2) {
+    if (dnd_on && hn.urgency < 2) {
         out_id = rid;  /* swallow silently; spec allows any non-zero id */
         if (!out_id) out_id = 1;
+        free(image);
     } else {
-        out_id = osd_post(rid, summary, body, icon_cp, progress,
-                          urgency, muted, timeout);
+        out_id = osd_post(rid, summary, body, hn.icon_cp, image, hn.progress,
+                          hn.urgency, hn.muted, timeout);
     }
 #else
     /* No OSD engine linked; just acknowledge with a stable non-zero id. */
-    (void)summary; (void)body; (void)icon_cp; (void)progress;
-    (void)urgency; (void)muted; (void)timeout;
+    (void)summary; (void)body; (void)hn; (void)timeout;
+    free(image);
     out_id = rid ? rid : 1;
 #endif
 

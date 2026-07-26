@@ -1,4 +1,4 @@
-/* wisp — user-facing knobs. Self-contained (does NOT include dwlarp config). */
+/* wisp — user-facing knobs. Self-contained. */
 #ifndef WISP_CONFIG_H
 #define WISP_CONFIG_H
 
@@ -166,6 +166,11 @@
 #endif
 #ifndef OSD_ICON_GAP
 #define OSD_ICON_GAP        12
+#endif
+#ifndef OSD_IMAGE_PX
+/* Cover art square (px) for notifications carrying image-data / image-path;
+ * 0 = feature off, no decode path compiled in. Set by `image = N` on the OSD. */
+#define OSD_IMAGE_PX         0
 #endif
 #ifndef OSD_ICON_W
 /* 0 = no fixed icon column declared; fall back to measuring the icon glyph. */

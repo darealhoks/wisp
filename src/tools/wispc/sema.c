@@ -69,7 +69,7 @@ static const PropSchema SCHEMAS[] = {
     { "widget", "widget",
       " align bg body_fit body_lines border border_bottom border_left border_right"
       " border_top border_width elide enter_anim enter_easing exit_anim"
-      " exit_easing fg graph graph_fg graph_max graph_samples height icon"
+      " exit_easing fg graph graph_fg graph_max graph_samples height icon icon_fg"
       " orientation pad pad_x pad_y press_bg radius"
       " radius_bl radius_br radius_tl radius_tr shadow shadow_blur shadow_spread"
       " shadow_x shadow_y show_value slider text text_align thumb_border thumb_border_width"
@@ -86,7 +86,7 @@ static const PropSchema SCHEMAS[] = {
       " fillet_br fillet_inner_bottom fillet_inner_left fillet_inner_right"
       " fillet_inner_top fillet_offset_y fillet_outer_bottom fillet_outer_left"
       " fillet_outer_right fillet_outer_top fillet_r fillet_tl fillet_tr"
-      " focus_follow font_size gap height hover icon_gap icons input keyboard"
+      " focus_follow font_size gap height hover icon_gap icons image input keyboard"
       " layer margin max max_visible pad pad_x pad_y prog_fg prog_h prog_track"
       " prompt radius radius_bl radius_br radius_inner radius_outer radius_tl"
       " radius_tr reveal_anim_ms reveal_easing reveal_gutter reveal_on_hover"
@@ -95,7 +95,7 @@ static const PropSchema SCHEMAS[] = {
     { "group", "group",
       " align bg border border_width gap height pad pad_x radius " },
     { "lock", "lock block",
-      /* scrim/road: shipped in the dwlarp preset's lock block; wisp-lock does
+      /* scrim/road: shipped in the anemoia preset's lock block; wisp-lock does
        * not consume them today, but they are accepted names, not typos. */
       " pam prompt bg ring ring_bad fg dim caps clock_size font_size wrong_ms"
       " scrim road " },

@@ -289,8 +289,8 @@ int emit_generated_compound(FILE *o, Decl *cmp, CGCtx *ctx, const char *nm) {
         fputs("    (void)__reg_x; (void)__reg_y; (void)__reg_w; (void)__reg_h;\n", o);
         if (vertical) fputs("    int y = __reg_y; (void)y;\n", o);
         else          fputs("    int y = __reg_y + (__reg_h - f->line_h) / 2;\n", o);
-        fprintf(o, "    struct { int tw, vis; uint32_t cp, fg, bg, border, press_bg; const uint32_t *pm; int pms; const char *txt; int pad, align; int h; int ch; int body_lines; } st[%d];\n", arr);
-        fprintf(o, "    for (int __i = 0; __i < %d; __i++) { st[__i].vis = 0; st[__i].h = 0; st[__i].ch = 0; st[__i].body_lines = 1; st[__i].border = 0; st[__i].press_bg = 0; }\n", arr);
+        fprintf(o, "    struct { int tw, vis; uint32_t cp, fg, icon_fg, bg, border, press_bg; const uint32_t *pm; int pms; const char *txt; int pad, align; int h; int ch; int body_lines; } st[%d];\n", arr);
+        fprintf(o, "    for (int __i = 0; __i < %d; __i++) { st[__i].vis = 0; st[__i].h = 0; st[__i].ch = 0; st[__i].body_lines = 1; st[__i].border = 0; st[__i].press_bg = 0; st[__i].icon_fg = 0; }\n", arr);
         fputs("    (void)st;\n", o);
         fputs("    int center_total = 0;\n", o);
         fprintf(o, "    int end_extent = %s;\n", vertical ? "__reg_h" : "__reg_w");

@@ -238,7 +238,7 @@ static PropTy prop_expected(const char *n, size_t L) {
         " separator_frac clock_size wrong_ms day_k night_k flat_k day_hour"
         " night_hour fade_min transition_ms fade_ms dither_px wipe_soft prog_h icon_gap ";
     static const char *COLOR =
-        " bg fg bg_bottom border press_bg shadow track_bg track_fg thumb_color"
+        " bg fg icon_fg bg_bottom border press_bg shadow track_bg track_fg thumb_color"
         " thumb_border prog_fg prog_track armpit_color separator ring ring_bad"
         " dim caps scrim road ";
     if (word_in(NUM,   n, L)) return PT_NUM;
