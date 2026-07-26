@@ -36,7 +36,7 @@ typedef struct {
     char id[64];
     char title[64];
     char status[16];    /* "Passive" / "Active" / "NeedsAttention" */
-    char icon_name[64]; /* IconName, as last decoded — refetches skip re-decode */
+    char icon_name[64]; /* IconName last attempted — refetches skip re-decode */
     char icon_dir[192]; /* IconThemePath: app-private icon dir, searched first */
     uint32_t icon[TRAY_ICON_PX * TRAY_ICON_PX];
     int has_icon;
@@ -159,7 +159,8 @@ static void parse_pixmap(R *r, Item *it) {
             (!best || icon_better(w, bw))) { best = px; bw = w; bh = h; }
     }
     r->pos = (int)end;
-    if (best) icon_scale(it, best, bw, bh);
+    /* Drop the remembered name: a later IconName must re-decode over us. */
+    if (best) { icon_scale(it, best, bw, bh); it->icon_name[0] = 0; }
 }
 
 /* ================================================================== */
@@ -170,10 +171,16 @@ static void parse_pixmap(R *r, Item *it) {
  * Most GTK/Qt items ship only a name, so without this the row is all text. */
 static void load_named_icon(Item *it, const char *name) {
     char path[512];
+    /* Record the attempt even if it fails, so a miss isn't re-stat'd on every
+     * NewIcon and a stale name can never match a newly-set one. */
+    snprintf(it->icon_name, sizeof it->icon_name, "%s", name);
     if (!image_find_icon(name, it->icon_dir, path, sizeof path)) return;
     int w = 0, h = 0;
     uint8_t *px = image_load(path, &w, &h);
     if (!px) return;
+    /* Mirror of the pixmap cap: bounds the swizzle+scale a hostile
+     * IconThemePath can buy with a 16384² PNG. */
+    if (w > 512 || h > 512) { image_free(px); return; }
     /* image_load gives RGBA8; icon_scale reads ARGB-in-network-order (a,r,g,b)
      * as SNI ships it, so swing the channels into that order in place. */
     for (size_t i = 0; i < (size_t)w * h; i++) {
@@ -182,7 +189,6 @@ static void load_named_icon(Item *it, const char *name) {
     }
     icon_scale(it, px, w, h);
     image_free(px);
-    snprintf(it->icon_name, sizeof it->icon_name, "%s", name);
 }
 
 static void parse_item_props(R *r, Item *it) {
