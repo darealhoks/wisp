@@ -39,7 +39,7 @@ echo "  installed:       $PREFIX/bin/{wispc,wispctl}, sources in $PREFIX/share/w
 echo "  your configs:    $conf/*.wisp"
 echo "  example configs: $PREFIX/share/wisp/configs/"
 echo "  docs:            $PREFIX/share/wisp/docs/"
-echo "  get going:       ${B}wispctl rebuild bee$N   (build + install + run an example)"
+echo "  get going:       ${B}wispctl rebuild riverie$N   (build + install + run an example)"
 case ":$PATH:" in *":$PREFIX/bin:"*) ;; *) echo "${Y}note:$N $PREFIX/bin is not in \$PATH" ;; esac
 
 # Optional bits: absence only disables a feature.

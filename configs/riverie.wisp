@@ -18,7 +18,7 @@ source vol_s  = pipewire();
 
 source hid    = ui_hidden();
 
-const TEXT   = #ffe9e6dd;
+const TEXT   = #ffdbe2ee;
 const SUBTXT = #ffa5adbb;
 const CRUST  = #ff0e131c;
 const REST   = #ff141a26;
@@ -31,6 +31,12 @@ const RED    = #ffe0603f;
 const GREEN  = #ff97bb90;
 const PRIM   = #ff64799c;
 const TERT   = #ff92aed2;
+/* bar icon tints — near-white pulled toward a hue, one per block */
+const TGREEN  = #ffc0e0b8;
+const TBLUE   = #ffb3ccec;
+const TVIOLET = #ffcbb8ee;
+const TRED    = #ffeeb9b3;
+const TTEAL   = #ffaedfdf;
 
 const TRAY_ICONS_ONLY = true; // icon-less tray items aren't shown
 const BLACK  = #ff000000;
@@ -57,8 +63,11 @@ surface bar {
 		align = left;
 		widget distro {
 			icon = 0xf32e;
+			fg   = TBLUE;
 		}
 	}
+	/* Each block's glyph carries a tint, the value stays near-white. Warn/crit
+	   drive both, so a bad state reads as one solid colored block. */
 	group batgrp {
 		align = left;
 		widget bat {
@@ -69,10 +78,11 @@ surface bar {
 				: bat_s.pct >= 10 ? 0xf243
 				:                   0xf244;
 			text = " {bat_s.pct}%";
-			fg   = bat_s.charging ? GREEN
+			fg   = bat_s.pct < 15 ? RED
+				: bat_s.pct < 25 ? ORANGE : TEXT;
+			icon_fg = bat_s.charging ? GREEN
 				: bat_s.pct < 15 ? RED
-				: bat_s.pct < 25 ? ORANGE
-				: bat_s.pct < 40 ? YELLOW : TEXT;
+				: bat_s.pct < 25 ? ORANGE : TGREEN;
 		}
 	}
 	group clockgrp {
@@ -106,7 +116,7 @@ surface bar {
 				: wifi_s.signal >= 2 ? 0xf0925
 				: wifi_s.signal >= 1 ? 0xf0922
 				:                      0xf091f;
-			fg = wifi_s.signal >= 1 ? TEXT : RED;
+			fg = wifi_s.signal >= 1 ? TTEAL : RED;
 			on_click() = exec("foot -T ws-hud-wifi --app-id=ws-hud-wifi -e impala");
 		}
 		widget sep_conn.sep {
@@ -119,7 +129,7 @@ surface bar {
 				: vol_s.vol < 67 ? 0xf027
 				:                  0xf028;
 			fg = !vol_s.ok     ? RED
-				: vol_s.mute     ? YELLOW : TEXT;
+				: vol_s.mute     ? ORANGE : TVIOLET;
 			on_click() = exec("foot -T ws-hud-vol --app-id=ws-hud-vol -e wiremix");
 		}
 	}
@@ -130,8 +140,9 @@ surface bar {
 			icon = 0xf4bc;
 			text = " {cpu_s.pct}%";
 			fg = cpu_s.pct >= 90 ? RED
-				: cpu_s.pct >= 75 ? ORANGE
-				: cpu_s.pct >= 50 ? YELLOW : TEXT;
+				: cpu_s.pct >= 75 ? ORANGE : TEXT;
+			icon_fg = cpu_s.pct >= 90 ? RED
+				: cpu_s.pct >= 75 ? ORANGE : TBLUE;
 		}
 		widget sep_ct.sep {
 			text = "/";
@@ -140,8 +151,9 @@ surface bar {
 			icon = 0xf06d;
 			text = " {temp_s.c}°C";
 			fg = temp_s.c >= 85 ? RED
-				: temp_s.c >= 70 ? ORANGE
-				: temp_s.c >= 55 ? YELLOW : TEXT;
+				: temp_s.c >= 70 ? ORANGE : TEXT;
+			icon_fg = temp_s.c >= 85 ? RED
+				: temp_s.c >= 70 ? ORANGE : TRED;
 		}
 		widget sep_tr.sep {
 			text = "/";
@@ -152,8 +164,9 @@ surface bar {
 				? " {mem_s.used_mb / 1024}.{mem_s.used_mb * 10 / 1024 % 10} GB"
 				: " {mem_s.used_mb} MB";
 			fg = mem_s.pct >= 90 ? RED
-				: mem_s.pct >= 75 ? ORANGE
-				: mem_s.pct >= 60 ? YELLOW : TEXT;
+				: mem_s.pct >= 75 ? ORANGE : TEXT;
+			icon_fg = mem_s.pct >= 90 ? RED
+				: mem_s.pct >= 75 ? ORANGE : TGREEN;
 		}
 	}
 
@@ -342,6 +355,7 @@ surface osd {
 	gap = 0;
 	pad_x = 14;
 	icon_gap = 12;
+	image = 32;                 // cover art square; falls back to the icon glyph
 	prog_h = 10;
 
 	timeout_low = 3000;
@@ -360,8 +374,11 @@ surface osd {
 
 	widget icon  {
 		align = left;
-		width = 40;
-		icon = $icon;
+		// 32px art centred in 58 → 13px from the slab edge and a 13px gap to
+		// the text; the column width IS the text origin (osd.c slab_text_x),
+		// so widening it re-wraps the body correctly too.
+		width = 58;
+		icon = $image;
 	}
 
 	widget title {
@@ -484,7 +501,7 @@ gamma {
 }
 
 wallpaper {
-	path = "~/next/rice/themes/current/wallpaper.png";
+	path = "~/next/rice/walls/riverie.png";
 	transition = wipe;
 	wipe_dir   = down_right;
 	wipe_soft  = 200;

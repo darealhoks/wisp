@@ -307,4 +307,4 @@ From here, read [dsl.md](dsl.md) for everything the language has that this
 tutorial skipped: sliders, animations, hover-revealed HUDs, compounds, corner
 fillets, and the gamma, wallpaper, lock and media blocks.
 
-Then read `configs/bee.wisp` or `configs/dwlarp.wisp`, which is most of it in use.
+Then read `configs/riverie.wisp` or `configs/anemoia.wisp`, which is most of it in use.

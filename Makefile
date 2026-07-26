@@ -68,9 +68,9 @@ endif
 endif
 endif
 
-# Still no selector (fresh build/, no tag) → canonical default. bee is what
-# sync.sh installs, so a tagless tree rebuilds the preset that's actually running.
-WISP ?= configs/bee.wisp
+# Still no selector (fresh build/, no tag) → canonical default. riverie is what
+# syml.sh installs, so a tagless tree rebuilds the preset that's actually running.
+WISP ?= configs/riverie.wisp
 # Absolute so the tag can't thrash between rel/abs spellings of one config.
 override WISP := $(abspath $(WISP))
 # ponytail: build dirs keyed by basename — two same-named configs from
@@ -444,8 +444,8 @@ check-diag: $(WISPC_BOOT)
 
 # Fuzz the D-Bus wire reader (the session-bus attack surface) under ASan.
 # Needs clang+libFuzzer and a built config for wisp.h's generated includes, so
-# it borrows build/bee/gen-tw. Run: make fuzz && ./build/fuzz/fuzz_dbus -max_len=512 fuzz/corpus
-FUZZ_GENDIR := $(ROOT)/bee/gen-tw
+# it borrows build/riverie/gen-tw. Run: make fuzz && ./build/fuzz/fuzz_dbus -max_len=512 fuzz/corpus
+FUZZ_GENDIR := $(ROOT)/riverie/gen-tw
 fuzz: fuzz-dbus fuzz-dispatch fuzz-wl
 
 fuzz-dbus: $(FUZZ_GENDIR)/features.h
@@ -462,7 +462,7 @@ fuzz-dispatch: $(FUZZ_GENDIR)/features.h
 	clang -fsanitize=fuzzer,address -g -O1 -Wall -Wextra -I$(SRCDIR) \
 	    -include $(FUZZ_GENDIR)/features.h -include $(FUZZ_GENDIR)/gen_overrides.h \
 	    -iquote $(FUZZ_GENDIR) \
-	    fuzz/fuzz_dispatch.c -o $(ROOT)/fuzz/fuzz_dispatch
+	    fuzz/fuzz_dispatch.c $(SRCDIR)/image.c -o $(ROOT)/fuzz/fuzz_dispatch
 	@echo "built $(ROOT)/fuzz/fuzz_dispatch — run: ./$(ROOT)/fuzz/fuzz_dispatch fuzz/corpus fuzz/seeds"
 
 # Deepest Wayland harness: the compositor-facing wire parser. Compiles the

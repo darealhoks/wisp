@@ -394,7 +394,7 @@ gamma {
 }
 
 wallpaper {
-	path = "~/.local/share/dwl/wallpaper.png";
+	path = "~/next/rice/walls/anemoia.png";
 	bg   = #ff0f1219;
 	transition = wipe;
 	wipe_dir   = down_right;

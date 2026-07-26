@@ -8,7 +8,7 @@ That has one consequence worth stating up front: **every edit needs a rebuild.**
 
     wispctl rebuild <config>
 
-Start from `configs/bee.wisp`. It is the config my rice runs and it uses most
+Start from `configs/riverie.wisp`. It is the config my rice runs and it uses most
 of the language.
 
 ## Shape of a file
@@ -301,7 +301,7 @@ The body is one statement or a `{ }` block. Four statements exist:
     emit(surface, kw = val, ...)          // instantiates a template surface
     animate(mut, target, duration, easing)
 
-Example, straight from the pattern `bee.wisp` uses:
+Example, straight from the pattern `riverie.wisp` uses:
 
     widget wifi_btn {
       icon = 0xf1eb;
@@ -569,8 +569,8 @@ nothing repaints, and no timer is armed when nothing moves.
 
 ## Checking your work
 
-    build/wispc --check configs/bee.wisp     parse and typecheck only
-    build/wispc --emit build/gen-tw configs/bee.wisp
+    build/wispc --check configs/riverie.wisp     parse and typecheck only
+    build/wispc --emit build/gen-tw configs/riverie.wisp
 
 `--check` catches unknown sources and fields, undefined identifiers, `$args`
 outside a template, writes to a const, bad colour literals and bad easings.

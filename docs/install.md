@@ -21,7 +21,7 @@ The script checks dependencies, installs `wispc` + `wispctl` into
 It does not compile the daemon — that happens on your machine, from your
 config:
 
-    wispctl rebuild bee          # an example from share/wisp/configs
+    wispctl rebuild riverie          # an example from share/wisp/configs
     wispctl rebuild mybar        # ~/.config/wisp/mybar.wisp
     wispctl rebuild              # whatever you rebuilt last
 
@@ -66,7 +66,7 @@ All are optional. A variable given on the make command line beats a directive:
     make FONT=/usr/share/fonts/foo.ttf
 
 With neither, the build falls back to the last selection recorded in
-`build/.build-tag`, and then to `configs/bee.wisp` with the `truetype` backend.
+`build/.build-tag`, and then to `configs/riverie.wisp` with the `truetype` backend.
 Changing any knob wipes `build/` before compiling, because objects from the
 previous selection are not compatible.
 
@@ -75,8 +75,8 @@ previous selection are not compatible.
 `WISP` selects the `.wisp` file that gets compiled into the daemon. There is no
 runtime config file. Three ship in the repo:
 
-    configs/bee.wisp      the Makefile default, and the config this rice actually runs
-    configs/dwlarp.wisp   a second full preset (dwl-shaped bar)
+    configs/riverie.wisp      the Makefile default, and the config this rice actually runs
+    configs/anemoia.wisp   a second full preset (dwl-shaped bar)
     configs/minimal.wisp  the smallest useful bar (clock + cpu/mem), a starting point
 
 Your own configs go in `~/.config/wisp/`; `wispctl rebuild <name>` finds them

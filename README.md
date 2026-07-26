@@ -11,10 +11,10 @@ Everything is declared in a `.wisp` file, which the bundled compiler `wispc` low
 
 The process links **libc and libm**. Wayland and D-Bus are spoken as raw wire, so there is no other dependency. If you wanna use the lock, `libpam` and its headers are needed (i didn't rewrite that from scratch for security reasons) but the main daemon never links it - its only used by the `wisp-lock` binary.
 
-Idle costs nothing, my config `configs/bee.wisp` idle consumes:
-**CPU:** 1 cpu tick per 10 seconds (measured on a i5-1135G7, without the cpu/temp/mem polls in the config this number is a plain 0)
-**RAM:** 3.1 MB RSS (PSS is only 950KB, measured on 1080p)
-**DISK:** 250 KB stripped binary
+Idle costs nothing, my config `configs/riverie.wisp` idle consumes:
+- **CPU:** 1 cpu tick per 10 seconds (measured on a i5-1135G7, without the cpu/temp/mem polls in the config, this number is a plain 0)
+- **RAM:** 3.1 MB RSS (PSS is only 950KB, measured on 1080p)
+- **DISK:** 250 KB stripped binary
 Your numbers depend on what you declared. 
 
 ## Docs
@@ -28,7 +28,7 @@ Your numbers depend on what you declared.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/darealhoks/wisp/main/install.sh | sh
-wispctl rebuild bee  # compile an example config, install, run
+wispctl rebuild riverie  # compile an example config, install, run
 wisp                 # or: autostart = wisp
 
 # from a checkout instead:
