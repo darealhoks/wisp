@@ -20,8 +20,15 @@ static int cur_s120 = 120;
 void render_set_scale(int s120) { cur_s120 = s120 < 120 ? 120 : s120; }
 
 /* Logical -> physical. Rounded so a 1.5x edge lands on the same pixel the
- * neighbouring primitive computed for it. */
-#define SC(v) (((v) * cur_s120 + 60) / 120)
+ * neighbouring primitive computed for it. Must FLOOR, not truncate: C division
+ * rounds toward zero, which shifts every negative coordinate a pixel down —
+ * a surface sliding out past its buffer top (OSD retract) then paints one row
+ * below the extent its caller computed, outside any dirty band, leaving a
+ * one-pixel trail of its bottom border per frame. */
+static inline int SC(int v) {
+    int n = v * cur_s120 + 60;
+    return n >= 0 ? n / 120 : -((-n + 119) / 120);
+}
 
 /* floor(x/255) for x in [0, 0xffff]; exact, branchless. */
 #define DIV255(x) (((x) + 1 + ((x) >> 8)) >> 8)
