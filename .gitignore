@@ -16,7 +16,7 @@ fuzz/corpus/
 
 # local
 .claude/
-web/
+web/deploy.sh
 nohup.out
 *.log
 .map/
