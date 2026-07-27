@@ -31,7 +31,7 @@ const RED    = #ffe0603f;
 const GREEN  = #ff97bb90;
 const PRIM   = #ff64799c;
 const TERT   = #ff92aed2;
-/* bar icon tints — near-white pulled toward a hue, one per block */
+
 const TGREEN  = #ffc0e0b8;
 const TBLUE   = #ffb3ccec;
 const TVIOLET = #ffcbb8ee;
@@ -66,8 +66,6 @@ surface bar {
 			fg   = TBLUE;
 		}
 	}
-	/* Each block's glyph carries a tint, the value stays near-white. Warn/crit
-	   drive both, so a bad state reads as one solid colored block. */
 	group batgrp {
 		align = left;
 		widget bat {
@@ -77,7 +75,7 @@ surface bar {
 				: bat_s.pct >= 25 ? 0xf242
 				: bat_s.pct >= 10 ? 0xf243
 				:                   0xf244;
-			text = " {bat_s.pct}%";
+			text = "{bat_s.pct}%";
 			fg   = bat_s.pct < 15 ? RED
 				: bat_s.pct < 25 ? ORANGE : TEXT;
 			icon_fg = bat_s.charging ? GREEN
@@ -138,7 +136,7 @@ surface bar {
 		align = right;
 		widget cpu    {
 			icon = 0xf4bc;
-			text = " {cpu_s.pct}%";
+			text = "{cpu_s.pct}%";
 			fg = cpu_s.pct >= 90 ? RED
 				: cpu_s.pct >= 75 ? ORANGE : TEXT;
 			icon_fg = cpu_s.pct >= 90 ? RED
@@ -149,7 +147,7 @@ surface bar {
 		}
 		widget temp   {
 			icon = 0xf06d;
-			text = " {temp_s.c}°C";
+			text = "{temp_s.c}°C";
 			fg = temp_s.c >= 85 ? RED
 				: temp_s.c >= 70 ? ORANGE : TEXT;
 			icon_fg = temp_s.c >= 85 ? RED
@@ -161,8 +159,8 @@ surface bar {
 		widget mem    {
 			icon = 0xefc5;
 			text = mem_s.used_mb >= 1024
-				? " {mem_s.used_mb / 1024}.{mem_s.used_mb * 10 / 1024 % 10} GB"
-				: " {mem_s.used_mb} MB";
+				? "{mem_s.used_mb / 1024}.{mem_s.used_mb * 10 / 1024 % 10} GB"
+				: "{mem_s.used_mb} MB";
 			fg = mem_s.pct >= 90 ? RED
 				: mem_s.pct >= 75 ? ORANGE : TEXT;
 			icon_fg = mem_s.pct >= 90 ? RED
@@ -213,6 +211,7 @@ group {
 
 widget {
 	fg = TEXT;
+	icon_gap = 5; // icon column → label gap
 }
 .dim   {
 	fg = SUBTXT;
@@ -355,7 +354,7 @@ surface osd {
 	gap = 0;
 	pad_x = 14;
 	icon_gap = 12;
-	image = 32;                 // cover art square; falls back to the icon glyph
+	image = 32; // cover art square; falls back to the icon glyph
 	prog_h = 10;
 
 	timeout_low = 3000;
@@ -374,9 +373,6 @@ surface osd {
 
 	widget icon  {
 		align = left;
-		// 32px art centred in 58 → 13px from the slab edge and a 13px gap to
-		// the text; the column width IS the text origin (osd.c slab_text_x),
-		// so widening it re-wraps the body correctly too.
 		width = 58;
 		icon = $image;
 	}
@@ -496,8 +492,8 @@ gamma {
 	flat_k    = 2400;
 	day_hour  = 7;
 	night_hour = 20;
-	fade_min   = 30;   // schedule crossfade width, 0 = hard step
-	transition_ms = 300;  // tween manual/wispctl switches
+	fade_min   = 30;
+	transition_ms = 300;
 }
 
 wallpaper {
@@ -565,6 +561,7 @@ surface menu {
 			bg     = row.selected ? REST : #00000000;
 			radius = 4;
 			pad_x  = 8;
+			icon_gap = 5;
 			elide;
 		}
 	}

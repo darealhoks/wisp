@@ -236,7 +236,8 @@ static PropTy prop_expected(const char *n, size_t L) {
         " anchor_gap fillet_r fillet_offset_y armpit_inner armpit_outer"
         " armpit_tl armpit_tr armpit_bl armpit_br enter_anim exit_anim"
         " separator_frac clock_size wrong_ms day_k night_k flat_k day_hour"
-        " night_hour fade_min transition_ms fade_ms dither_px wipe_soft prog_h icon_gap ";
+        " night_hour fade_min transition_ms fade_ms dither_px wipe_soft prog_h"
+        " icon_gap icon_box ";
     static const char *COLOR =
         " bg fg icon_fg bg_bottom border press_bg shadow track_bg track_fg thumb_color"
         " thumb_border prog_fg prog_track armpit_color separator ring ring_bad"

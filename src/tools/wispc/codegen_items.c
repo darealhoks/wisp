@@ -403,6 +403,14 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
         fprintf(o, "%s  if (__fl < __bl) __bl = __fl; }\n", indent);
     }
 
+    /* Icon column: `icon_box` reserves a fixed-width box, 0 = auto (the
+     * glyph's ink-aware cp_width). `icon_gap` is the explicit gap between
+     * that column and the text (replaces the old magic \" \"+2px). */
+    int icon_box = eval_int(widget_prop(wd, "icon_box"), 0);
+    int icon_gap = eval_int(widget_prop(wd, "icon_gap"), 2);
+    char icw[40];
+    if (icon_box > 0) snprintf(icw, sizeof icw, "%d", icon_box);
+    else snprintf(icw, sizeof icw, "cp_width(f, cp, pm, pms)");
     if (widthe) {
         CE wd_ce = lower(ctx, widthe); wd_ce = coerce_to_int(ctx, wd_ce);
         cgctx_flush_prelude(ctx, o, indent);
@@ -411,8 +419,8 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
         fprintf(o, "%sint tw = f->line_h * __bl;\n", indent);
     } else {
         fprintf(o, "%sint tw = 0;\n", indent);
-        fprintf(o, "%sif (cp || pms)  tw += cp_width(f, cp, pm, pms);\n", indent);
-        fprintf(o, "%sif ((cp || pms) && txt && txt[0]) tw += 2;\n", indent);
+        fprintf(o, "%sif (cp || pms)  tw += %s;\n", indent, icw);
+        fprintf(o, "%sif ((cp || pms) && txt && txt[0]) tw += %d;\n", indent, icon_gap);
         fprintf(o, "%sif (__mtxt) {\n", indent);
         fprintf(o, "%s    const char *__p = __mtxt; int __w = 0;\n", indent);
         fprintf(o, "%s    while (__p && *__p) {\n", indent);
@@ -791,7 +799,13 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
             fprintf(o, "%s        fill_rect(sl->px, w->w, w->h, __reg_x + __reg_w - %d, pos, %d, __adv, bdr);\n", indent, vbw, vbw);
             fprintf(o, "%s    }\n", indent);
         }
-        fprintf(o, "%s    if (cp || pms) { cx += draw_cp(sl->px, w->w, w->h, cx, cy, f, cp, ifg, pm, pms); if (txt && txt[0]) { draw_text(sl->px, w->w, w->h, cx, cy, f, \" \", fg); cx += 2; } }\n", indent);
+        int v_icb = eval_int(widget_prop(wd, "icon_box"), 0);
+        int v_icg = eval_int(widget_prop(wd, "icon_gap"), 2);
+        char v_icw[40];
+        if (v_icb > 0) snprintf(v_icw, sizeof v_icw, "%d", v_icb);
+        else snprintf(v_icw, sizeof v_icw, "cp_width(f, cp, pm, pms)");
+        fprintf(o, "%s    if (cp || pms) { int __icw = %s; draw_cp_centered(sl->px, w->w, w->h, cx, cy, __icw, f->line_h, f, cp, ifg, pm, pms); cx += __icw; if (txt && txt[0]) cx += %d; }\n",
+                indent, v_icw, v_icg);
         fprintf(o, "%s    if (txt) {\n", indent);
         fprintf(o, "%s        const char *__p = txt; int __ln = 0;\n", indent);
         fprintf(o, "%s        while (__p && *__p && __ln < body_lines) {\n", indent);
@@ -906,18 +920,24 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
         fprintf(o, "%s    if (__ty < __reg_y) __ty = __reg_y;\n", indent);
         /* Centering: when width is fixed, compute the actual content width and
          * offset x so icon+text sits in the middle of the cell (within pad_x). */
+        int h_icb = eval_int(widget_prop(wd, "icon_box"), 0);
+        int h_icg = eval_int(widget_prop(wd, "icon_gap"), 2);
+        char h_icw[40];
+        if (h_icb > 0) snprintf(h_icw, sizeof h_icw, "%d", h_icb);
+        else snprintf(h_icw, sizeof h_icw, "cp_width(f, cp, pm, pms)");
         if (has_fixed_w) {
             fprintf(o, "%s    int __cw = 0;\n", indent);
-            fprintf(o, "%s    if (cp || pms) __cw += cp_width(f, cp, pm, pms);\n", indent);
-            fprintf(o, "%s    if ((cp || pms) && txt && txt[0]) __cw += 2;\n", indent);
+            fprintf(o, "%s    if (cp || pms) __cw += %s;\n", indent, h_icw);
+            fprintf(o, "%s    if ((cp || pms) && txt && txt[0]) __cw += %d;\n", indent, h_icg);
             fprintf(o, "%s    if (txt) { const char *__p = txt; while (*__p && *__p != '\\n') __p++; char __t2[256]; int __L = (int)(__p - txt); if (__L > 255) __L = 255; memcpy(__t2, txt, __L); __t2[__L] = 0; __cw += text_width(f, __t2); }\n", indent);
             fprintf(o, "%s    if (__cw < tw) x += (tw - __cw) / 2;\n", indent);
         }
-        /* Icon-only path uses pixel-bbox centering inside the cell bg box;
-         * icon+text falls through to advance-based layout so text kerns. */
+        /* Icon-only path bbox-centers inside the whole cell bg box; icon+text
+         * bbox-centers inside its reserved column, then advances column+gap. */
         fprintf(o, "%s    if ((cp || pms) && (!txt || !txt[0])) {\n", indent);
         fprintf(o, "%s        draw_cp_centered(sl->px, w->w, w->h, __bx, __by, __bw, __bh, f, cp, ifg, pm, pms);\n", indent);
-        fprintf(o, "%s    } else if (cp || pms) { x += draw_cp(sl->px, w->w, w->h, x, __ty, f, cp, ifg, pm, pms); if (txt && txt[0]) { draw_text(sl->px, w->w, w->h, x, __ty, f, \" \", fg); x += 2; } }\n", indent);
+        fprintf(o, "%s    } else if (cp || pms) { int __icw = %s; draw_cp_centered(sl->px, w->w, w->h, x, __ty, __icw, f->line_h, f, cp, ifg, pm, pms); x += __icw; if (txt && txt[0]) x += %d; }\n",
+                indent, h_icw, h_icg);
         fprintf(o, "%s    if (txt) {\n", indent);
         fprintf(o, "%s        const char *__p = txt; int __ln = 0;\n", indent);
         fprintf(o, "%s        while (__p && *__p && __ln < body_lines) {\n", indent);
@@ -1188,12 +1208,18 @@ static void emit_group_member(FILE *o, BarItem *it, const char *nm, int gap) {
     /* Border is radius-independent — the SDF handles r=0 — so a member with
      * `border` and no `radius` paints instead of silently resolving a colour. */
     fprintf(o, "            if (bdr & 0xff000000u) fill_rect_rounded_border(sl->px,w->w,w->h, __gx,__my,__ma,__mh, %d,%d,%d,%d, %d,1,1,1,1,0, bdr);\n", mr, mr, mr, mr, mbw);
+    int m_icb = eval_int(widget_prop(wd, "icon_box"), 0);
+    int m_icg = eval_int(widget_prop(wd, "icon_gap"), 2);
+    char m_icw[40];
+    if (m_icb > 0) snprintf(m_icw, sizeof m_icw, "%d", m_icb);
+    else snprintf(m_icw, sizeof m_icw, "cp_width(f, cp, pm, pms)");
     fprintf(o, "            int __ty = __gy + (__gh - f->line_h)/2;\n");
-    fprintf(o, "            int __cw = 0; if (cp || pms) __cw += cp_width(f, cp, pm, pms); if ((cp || pms) && txt && txt[0]) __cw += 2;\n");
+    fprintf(o, "            int __cw = 0; if (cp || pms) __cw += %s; if ((cp || pms) && txt && txt[0]) __cw += %d;\n", m_icw, m_icg);
     fprintf(o, "            if (txt) { const char *__p=txt; while(*__p&&*__p!='\\n')__p++; char __t2[256]; int __L=(int)(__p-txt); if(__L>255)__L=255; memcpy(__t2,txt,__L); __t2[__L]=0; __cw += text_width(f,__t2); }\n");
     fprintf(o, "            int __cx = __gx + (__ma - __cw)/2; if (__cx < __gx) __cx = __gx;\n");
     fprintf(o, "            if ((cp || pms) && (!txt || !txt[0])) draw_cp_centered(sl->px,w->w,w->h,__gx,__gy,__ma,__gh,f,cp,ifg,pm,pms);\n");
-    fprintf(o, "            else { if (cp || pms) { __cx += draw_cp(sl->px,w->w,w->h,__cx,__ty,f,cp,ifg,pm,pms); if (txt&&txt[0]) { draw_text(sl->px,w->w,w->h,__cx,__ty,f,\" \",fg); __cx+=2; } } if (txt) draw_text(sl->px,w->w,w->h,__cx,__ty,f,txt,fg); }\n");
+    fprintf(o, "            else { if (cp || pms) { int __icw = %s; draw_cp_centered(sl->px,w->w,w->h,__cx,__ty,__icw,f->line_h,f,cp,ifg,pm,pms); __cx += __icw; if (txt&&txt[0]) __cx += %d; } if (txt) draw_text(sl->px,w->w,w->h,__cx,__ty,f,txt,fg); }\n",
+            m_icw, m_icg);
     fprintf(o, "            }\n");
     if (clk) {
         int kind = it->is_runtime_for_cell ? 2 : it->is_for_cell ? 1 : 0;

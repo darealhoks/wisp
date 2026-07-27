@@ -25,8 +25,6 @@ surface bar {
 	exclusive_zone = 28;
 	bg = #ff0f1219;
 
-	// concave feet curl down the screen edges; buffer grows 10px below but
-	// exclusive_zone stays 28 so windows tile flush under the bar body
 	armpit_inner = 10;
 
 	widget edge_l {
@@ -85,7 +83,7 @@ surface bar {
 			: bat_s.pct >= 25 ? 0xf242
 			: bat_s.pct >= 10 ? 0xf243
 			:                   0xf244;
-		text = " {bat_s.pct}%";
+		text = "{bat_s.pct}%";
 		fg   = bat_s.pct < 15 ? WARN : (bat_s.charging ? #ff7fbf9f : FG);
 	}
 	widget sep.dim {
@@ -95,23 +93,23 @@ surface bar {
 	widget mem    {
 		align = right;
 		icon = 0xefc5;
-		text = " {mem_s.pct}%";
+		text = "{mem_s.pct}%";
 	}
 	widget temp   {
 		align = right;
 		icon = 0xf0238;
-		text = " {temp_s.c} C";
+		text = "{temp_s.c} C";
 	}
 	widget cpu    {
 		align = right;
 		icon = 0xf4bc;
-		text = " {cpu_s.pct}%";
+		text = "{cpu_s.pct}%";
 		fg = cpu_s.pct > 80 ? WARN : FG;
 	}
 	widget disk   {
 		align = right;
 		icon = 0xf02ca;
-		text = " {disk_s.pct}%";
+		text = "{disk_s.pct}%";
 	}
 }
 
@@ -119,6 +117,7 @@ surface bar {
 widget {
 	fg = FG;
 	pad = 22;
+	icon_gap = 8; // icon column → label gap (was a hand-tuned leading space in text)
 }
 .dim        {
 	fg = DIM;
@@ -389,8 +388,8 @@ gamma {
 	flat_k    = 2400;
 	day_hour  = 7;
 	night_hour = 20;
-	fade_min   = 30;   // schedule crossfade width, 0 = hard step
-	transition_ms = 300;  // tween manual/wispctl switches
+	fade_min   = 30; // schedule crossfade width, 0 = hard step
+	transition_ms = 300; // tween manual/wispctl switches
 }
 
 wallpaper {

@@ -508,11 +508,14 @@ int emit_surfaces(FILE *o, Unit *u, CGCtx *ctx) {
     fprintf(o, "\n#define MENU_ROWS_CAP %d\n", MENU_ROWS_CAP);
     /* An icon is a codepoint or a pixmap (a decoded app icon); pm wins. */
     /* unused when a config has no text-drawing widget (widgetless surfaces). */
+    /* Ink-aware: nerd icon glyphs often rasterize wider than their advance
+     * (g->w > g->adv), so an advance-sized column let them clip the label. */
     fputs("\n__attribute__((unused))\n"
           "static int cp_width(const Font *f, uint32_t cp, const uint32_t *pm, int pms) {\n"
           "    if (pms) return pms;\n"
           "    const Glyph *g = font_find(f, cp);\n"
-          "    return g ? g->adv : f->px_size / 2;\n"
+          "    if (!g) return f->px_size / 2;\n"
+          "    return g->w > g->adv ? g->w : g->adv;\n"
           "}\n", o);
     fputs("__attribute__((unused))\n"
           "static int draw_cp(uint32_t *px, int sw, int sh, int x, int y,\n"
@@ -554,7 +557,8 @@ int emit_surfaces(FILE *o, Unit *u, CGCtx *ctx) {
           "        fill_rect(px, sw, sh, x, yy, w, 1, (a<<24)|(r<<16)|(g<<8)|b);\n"
           "    }\n"
           "}\n", o);
-    /* Pixel-bbox centering for icon-only cells. Nerd Font advance widths are
+    /* Pixel-bbox centering for icon cells (icon-only slabs AND the reserved
+     * icon column before text). Nerd Font advance widths are
      * monospace-cell-sized but the visible glyph often sits off-center inside
      * that cell. We center the actual rasterized bbox (g->w, g->h, g->bx, g->by)
      * inside the destination box, ignoring advance entirely. */

@@ -69,7 +69,7 @@ static const PropSchema SCHEMAS[] = {
     { "widget", "widget",
       " align bg body_fit body_lines border border_bottom border_left border_right"
       " border_top border_width elide enter_anim enter_easing exit_anim"
-      " exit_easing fg graph graph_fg graph_max graph_samples height icon icon_fg"
+      " exit_easing fg graph graph_fg graph_max graph_samples height icon icon_box icon_fg icon_gap"
       " orientation pad pad_x pad_y press_bg radius"
       " radius_bl radius_br radius_tl radius_tr shadow shadow_blur shadow_spread"
       " shadow_x shadow_y show_value slider text text_align thumb_border thumb_border_width"
