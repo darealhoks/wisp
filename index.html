@@ -7,37 +7,46 @@
 <meta name="description" content="wisp: one Wayland daemon that draws a whole desktop shell. Links only libc and libm. Zero idle CPU.">
 <link rel="icon" href="wisp.png">
 <style>
+	/* numbers follow docs/_site.md "Readability" — change them there first */
 	* { box-sizing: border-box; margin: 0; }
 	body {
-		background: #000; color: #fff;
-		font: 16px/1.6 ui-sans-serif, system-ui, sans-serif;
+		background: #121417; color: #e4e6e9;
+		font: 400 17px/1.65 system-ui, ui-sans-serif, sans-serif;
+		-webkit-font-smoothing: antialiased;
 		display: grid; grid-template-columns: 14rem minmax(0, 1fr) 14rem;
 		min-height: 100dvh;
 	}
-	code, pre { font-family: ui-monospace, monospace; }
-	a { color: #fff; }
+	code, pre { font-family: ui-monospace, monospace; font-size: .9em; }
+	a { color: #8ab4f8; text-decoration: underline;
+		text-underline-offset: .15em; text-decoration-thickness: 1px; }
+	a:hover { text-decoration-thickness: 2px; }
 	aside {
 		position: sticky; top: 0; align-self: start;
 		max-height: 100dvh; overflow: auto;
-		padding: 1rem; font-size: .9rem;
+		padding: 1rem; font-size: .85rem;
 	}
-	aside a { display: block; text-decoration: none; padding: .1rem 0; }
-	aside a:hover { text-decoration: underline; }
-	aside a.active { text-decoration: underline; }
-	.docnav summary { cursor: pointer; opacity: .6; margin-top: .8rem; }
+	aside a { display: block; text-decoration: none; padding: .12rem 0; color: #a9b0b8; }
+	aside a:hover, aside a.active { color: #e4e6e9; }
+	aside a.active { text-decoration: underline; text-underline-offset: .15em; }
+	.docnav summary { cursor: pointer; color: #a9b0b8; margin-top: .8rem; }
 	.docnav details a { padding-left: 1rem; }
-	#toc b { display: block; opacity: .6; font-weight: 400; margin-bottom: .3rem; }
+	#toc b { display: block; color: #a9b0b8; font-weight: 400; margin-bottom: .3rem; }
 	#toc a.sub { padding-left: 1rem; }
-	article { padding: 2rem 1.5rem 4rem; max-width: 52rem; justify-self: center; width: 100%; }
-	article h1 { margin-bottom: 1rem; }
-	article h2, article h3 { margin-top: 2rem; margin-bottom: .6rem; }
-	article p, article pre, article ul, article ol, article table { margin-bottom: 1rem; }
-	article pre { border: 1px solid #444; padding: .8rem 1rem; overflow-x: auto; }
-	article p code, article li code, article td code, article th code { background: #1a1a1a; padding: .1em .3em; }
+	article { padding: 2.5rem 1.5rem 4rem; max-width: calc(68ch + 3rem); justify-self: center; width: 100%; }
+	article h1, article h2, article h3 { line-height: 1.25; margin: 2.2em 0 .6em; letter-spacing: -.01em; }
+	article h1 { font-size: 1.9rem; margin-top: 0; }
+	article h2 { font-size: 1.5rem; }
+	article h3 { font-size: 1.2rem; }
+	article p, article ul, article ol { margin-bottom: 1.25em; }
+	article pre, article table { margin-bottom: 1.4em; }
+	article pre { background: #181b1f; padding: 1em 1.1em; line-height: 1.45; overflow-x: auto; }
+	article p code, article li code, article td code, article th code {
+		background: #181b1f; padding: .1em .3em; }
 	table { border-collapse: collapse; display: block; overflow-x: auto; }
-	th, td { border: 1px solid #444; padding: .4rem .7rem; text-align: left; }
-	th { background: #1a1a1a; }
-	tr:nth-child(even) td { background: #111; }
+	th, td { padding: .6em .9em; text-align: left; }
+	th { border-bottom: 2px solid rgba(255,255,255,.18); font-weight: 600; }
+	tbody tr + tr td { border-top: 1px solid rgba(255,255,255,.07); }
+	tbody tr:nth-child(even) { background: rgba(255,255,255,.03); }
 	@media (max-width: 800px) {
 		body { display: block; }
 		aside { position: static; max-height: none; }
