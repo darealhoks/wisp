@@ -1,13 +1,13 @@
 # wisp <img src="wisp.png" width="32" height="32" align="absmiddle" alt="">
 
-**W**idget **I**nterface, **S**ingle **P**rocess — one Wayland daemon that draws
+**W**idget **I**nterface, **S**ingle **P**rocess - one Wayland daemon that draws
 a whole desktop shell, from a file you write.
 
 ![wisp running the riverie config](desktop.png)
 
 A normal Wayland desktop runs a bar, a notification daemon, a locker, a gamma
 tool and a wallpaper setter: five daemons, five config formats, five sets of
-dependencies. wisp is one process that does all of it — because a bar, a hover
+dependencies. wisp is one process that does all of it - because a bar, a hover
 panel, a notification slab, an app menu and a lock screen are the same thing, a
 layer-shell surface, configured differently.
 
@@ -15,7 +15,7 @@ And you configure it in its own language. Not a theme file, not a plugin API: a
 `.wisp` file that the bundled compiler `wispc` lowers to C and links into the
 daemon. Writing `tags()` links the workspace client. Declaring an `osd` surface
 links the D-Bus client. A config that mentions neither produces a binary
-containing neither — you don't disable features, you never build them.
+containing neither - you don't disable features, you never build them.
 
 **0 CPU ticks idle · 3.1 MB RSS · 250 KB binary · links libc and libm, nothing
 else.** Wayland and D-Bus are spoken as raw wire.
@@ -29,7 +29,7 @@ widget bat {
     icon = bat_s.charging  ? 0xf0084
          : bat_s.pct >= 50 ? 0xf241
          :                   0xf244;
-    text = " {bat_s.pct}%";
+    text = "{bat_s.pct}%";
     fg   = bat_s.pct < 15 ? RED
          : bat_s.pct < 25 ? ORANGE : TEXT;
 }
@@ -42,7 +42,7 @@ widgets whose expressions read it and repaints exactly the damaged rectangle. Th
 rest of the frame is not touched, and when nothing changes no timer fires at all.
 
 Surfaces are declared the same way, so `radius`, `anchor`, animations and
-visibility conditions are all just fields — see [dsl.md](docs/dsl.md) for the
+visibility conditions are all just fields - see [dsl.md](docs/dsl.md) for the
 complete language.
 
 ## Install
@@ -62,16 +62,16 @@ make install             # → ~/.local/bin (override with PREFIX=)
 
 Then drive it: `wispctl apps`, `wispctl volume up`, `wispctl notify 1 hi`.
 
-The lock screen needs `libpam` and its headers — I did not rewrite PAM from
+The lock screen needs `libpam` and its headers - I did not rewrite PAM from
 scratch, for the obvious security reason. The daemon never links it; only the
 separate `wisp-lock` binary does.
 
 ## Docs
 
-- [install.md](docs/install.md) — installing, build knobs
-- [tutorial.md](docs/tutorial.md) — one bar from an empty file
-- [dsl.md](docs/dsl.md) — the wisp language, complete
-- [wispctl.md](docs/wispctl.md) — the control client
+- [install.md](docs/install.md) - installing, build knobs
+- [tutorial.md](docs/tutorial.md) - one bar from an empty file
+- [dsl.md](docs/dsl.md) - the wisp language, complete
+- [wispctl.md](docs/wispctl.md) - the control client
 
 ## Compositor support
 
@@ -94,7 +94,7 @@ breaking the rest.
 | **dwl** | ✓ | ✗ patch³ | ✓ | ✗ patch³ | ✓ | ✓ |
 | **COSMIC** | ✓ | ✓ ext-ws | ✗⁴ | ? | ✓ | ✓ |
 | **KWin** (Plasma ≥6.6) | ✓ | ✓ ext-ws | ✗⁵ | ✗⁵ | ✓ | ✓ |
-| **GNOME** (Mutter) | ✗ — unsupported⁶ | — | — | — | — | — |
+| **GNOME** (Mutter) | ✗ - unsupported⁶ | - | - | - | - | - |
 
 ¹ works but flaky on multi-output; test on your hardware.
 ² tags exist but only over its own IPC, which wisp doesn't speak.
@@ -109,7 +109,7 @@ Checked against newest releases, July 2026; support moves, so check your version
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Third-party notices (stb_image, libschrift,
+MIT - see [LICENSE](LICENSE). Third-party notices (stb_image, libschrift,
 gemoji) are in [THIRD_PARTY.md](THIRD_PARTY.md).
 
 ---

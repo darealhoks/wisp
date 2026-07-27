@@ -1,120 +1,126 @@
 # wispctl
 
-`wispctl` is the control client. It joins its arguments with tabs, sends one
-line to the daemon over a unix socket, prints the reply, and exits with a status
-derived from that reply.
+The control client. It joins `argv[1..]` with tabs, sends one line over
+`$XDG_RUNTIME_DIR/wisp.sock`, and prints the one-line reply.
 
-The socket is `$XDG_RUNTIME_DIR/wisp.sock`. Without `XDG_RUNTIME_DIR` set,
-`wispctl` cannot find the daemon and fails immediately.
+```sh
+wispctl ping
+wispctl apps
+wispctl notify 1 "hello" "body text"
+wispctl rebuild riverie
+```
 
-    $ wispctl ping
-    pong
+Four subcommands never touch the socket: `help`, `rebuild`, `update` and `lock`.
 
-`wispctl help` prints the full command list. Two commands never touch the
-socket: `help` is handled in the client, and `lock` execs `wisp-lock` directly
-so the session can still be locked when the daemon is down.
+## Commands
 
-## Exit status
+| command | arguments | feature gate | reply |
+|---|---|---|---|
+| `ping` | - | always | `pong` |
+| `quit` | - | always | `ok`, then exits |
+| `reload` | - | always | `ok`, then re-execs in place |
+| `tag` | `<n> [output-slot]`, n is 1-based | always | `ok` |
+| `hide` | `on\|off\|toggle\|status` | always | `ok`, or `on`/`off` |
+| `bar title` | `<string>` | bar | `ok` |
+| `bar tags` | `<occ> <act> <urg>`, hex masks | bar | `ok` |
+| `bar refresh` | - | bar | `ok` |
+| `menu` | `<name>` | menu | deferred, replies when the menu closes |
+| `menu` | `<title> <item>…` | menu | `<index>\t<text>`, or `-1\t` on cancel |
+| `menu-cancel` | - | menu | `ok` |
+| `apps` | - | menu | `ok` |
+| `hud` | anything | hud | `ok`, kept as a no-op for compatibility |
+| `hud-cancel` | - | menu | `ok` |
+| `osd` | `<slot> <summary> [progress] [icon-hex] [muted]` | osd | `ok` |
+| `notify` | `<urgency> <summary> [body] [icon-hex] [timeout-ms]` | osd | `ok` |
+| `osd-clear` | - | osd | `ok` |
+| `dnd` | `on\|off\|toggle\|status` | osd | `ok`, or `on`/`off` |
+| `volume`, `mic`, `backlight` | see below | media | `ok` |
+| `mpris` | `play-pause\|next\|prev` | mpris | `ok` |
+| `tray` | `activate\|secondary\|menu <index>` | tray | `ok` |
+| `gamma` | `auto\|day\|night\|flat\|off\|state\|is-warm` | gamma | `ok`, the mode, or `1`/`0` |
+| `wall` | `<path.png>` | wallpaper | `ok` or an error |
 
-Most commands exit 0 when the daemon replies `ok` or `pong`, and 1 otherwise.
+A feature gate is a compile-time thing. A command whose feature the config never
+declared is indistinguishable from a typo:
 
-Three commands invert that into a state probe, so you can branch on them in a
-shell without parsing output:
+```
+err: unknown command: gamma (not in this build/preset?)
+```
 
-    hide status        0 when surfaces are hidden
-    dnd status         0 when do not disturb is on
-    gamma is-warm      0 when the screen is being warmed
+The socket also accepts a `lock` command, but the daemon is deliberately built
+without that feature defined, so it never resolves. Use `wispctl lock`.
 
-`menu` exits 1 when the user cancelled.
+## Client-side subcommands
 
-## Availability
+**`help`**, `-h`, `--help`. With no arguments at all, usage goes to stderr with
+exit 2; asked for explicitly, it goes to stdout with exit 0.
 
-A command only exists if the module behind it is declared in the `.wisp` the
-running daemon was compiled from. There is no runtime plugin loading. Ask a
-daemon built without a gamma block for `gamma night` and it replies `err`, and
-`wispctl` exits 1.
+**`rebuild [config]`** resolves the name in this order:
 
-`wispctl help` lists everything the client knows about, not what your build
-supports. The two are the same only for a config that declares every module.
+1. a literal path, if it exists
+2. `$XDG_CONFIG_HOME/wisp/<name>.wisp`
+3. `$XDG_CONFIG_HOME/wisp/<name>`
+4. `$WISP_SRC` or the install datadir, `configs/<name>.wisp`
 
-## rebuild
+Then it remembers the choice in `<confdir>/current`, runs
+`make -s -C <src> install WISP=<path>`, sends a `wall` command with the new path
+read out of the freshly generated overrides, sends `reload`, and finally warms
+the other configs' caches in a detached process so the switch is not blocked on
+them.
 
-    wispctl rebuild [config]
+**`update`** pipes `install.sh` through `curl` or `wget` into `sh`, then re-execs
+`wispctl rebuild` for the current config.
 
-compiles a `.wisp` into a fresh daemon, installs it, and reloads. `config` is
-a name resolved against `~/.config/wisp/<name>.wisp`, then the examples in the
-installed `share/wisp/configs/` — or a plain path. Omitted, it reuses the last
-config (remembered in `~/.config/wisp/current`). Runtime sources come from the
-share dir the installer set up, or `$WISP_SRC` if you point it at a checkout.
-This is the whole edit loop: change the file, `wispctl rebuild`.
+**`lock`** does `execvp("wisp-lock")`. It is not a socket command on purpose:
+the locker is a separate binary that links PAM, and the daemon does not.
 
-If the new config changes the wallpaper, `rebuild` crossfades to it in the
-old process before reloading, so the switch is a transition instead of a
-blank frame. After the reload it re-warms the other configs' build caches in
-the background.
+## Exit codes
 
-## update
+| situation | code |
+|---|---|
+| reply is `ok` or `pong` | 0 |
+| `menu` / `menu-cancel` | 0 if the reply index is 0 or more, 1 if negative |
+| `dnd status`, `hide status` | 0 when the reply is `on` |
+| `gamma is-warm` | 0 when the reply is `1` |
+| any error reply, connect failure, or empty reply | 1 |
+| no arguments (usage) | 2 |
 
-    wispctl update
+That makes the state queries usable directly in a shell test:
 
-re-runs the curl-pipable installer (which always fetches the latest wisp from
-github), then rebuilds the current config with the new sources and reloads.
-Honors `PREFIX` like the installer does.
+```sh
+wispctl gamma is-warm && wispctl gamma off
+wispctl dnd status || wispctl notify 1 "not in dnd"
+```
 
-## reload
+## Limits
 
-    make install && wispctl reload
+The joined command line is capped at 16384 bytes, over which the client refuses
+with "command too long".
 
-`reload` re-executes the *installed* `wisp` binary in place. It does not
-compile anything (that's `rebuild`). Running it after editing a `.wisp`
-without rebuilding just restarts the daemon you already had.
+## wispc CLI
 
-The exec goes through `PATH`, not `/proc/self/exe`. `install -m 755` unlinks
-the destination before creating the new file, so the running daemon's
-`/proc/self/exe` points at the old deleted inode. A PATH lookup picks up the
-binary you just installed.
+The compiler is `wispc [MODE] FILE`. Modes are last-wins and default to
+`--check`.
 
-The control socket and the Wayland connection are both passed across the
-exec. The new process adopts the long-lived surfaces (bar, wallpaper, HUD)
-and gamma controls in place — they are never unmapped, so nothing flashes and
-the compositor never animates a remap. Transient surfaces (menu, OSD, lock)
-are simply torn down.
+| flag | behaviour |
+|---|---|
+| `--check` | parse, style cascade and sema; prints `ok` |
+| `--emit DIR` | writes the generated C: `features.h`, `objects.mk`, `gen_overrides.h`, `gen_menus.h`, `gen_sources.c`, `gen_bindings.c`, `gen_surfaces.c`, `gen_outputs.c`, `gen_spawn.c`, `gen_main.c` |
+| `--dump-ast` | the AST after the style cascade, sema not run |
+| `--features` | the `features.h` it would emit |
+| `--deps` | `surface NAME: dep dep …`, one line per surface |
+| `--font-sizes` | unique font sizes ascending, then the codepoints that must be baked |
+| `--no-line-map` | drop `#line` mapping back to the `.wisp` |
+| `--watch [--reload]` | rebuild on every write to the file's directory, optionally reloading |
 
-`quit` stops the daemon without re-execing.
+Exit codes: 2 for usage, 1 for any diagnostic including codegen, 0 otherwise.
+Diagnostics stop after 50 errors.
 
-## Command groups
+## Gotchas
 
-`wispctl help` is the reference. In outline:
-
-**daemon** — `ping`, `reload`, `quit`, `hide`, `tag <n> [output]`.
-
-**bar** — `bar refresh` forces a redraw. `bar tags <occupied> <active> <urgent>`
-sets the workspace bitmasks as hex, for driving the tag display from outside.
-
-**menu** — `menu <title> <item>...` shows a picker and prints
-`<index>\t<text>`. `apps` is the prebuilt launcher. `menu <name>` (one argument)
-opens a menu declared in the `.wisp` and runs the picked entry's `exec`; the
-`emoji` preset copies the pick with `wl-copy`. `menu-cancel` closes whatever is open.
-
-**osd / notifications** — `osd <slot> <summary> [progress] [icon-cp] [muted]`
-draws a slab; reusing a slot replaces the previous one, and a progress of -1
-omits the bar. `notify <urgency> <summary> [body] [icon-cp] [timeout-ms]` takes
-urgency 0, 1 or 2, with timeout -1 for the default and 0 for sticky. Icons are
-hex codepoints. `osd-clear` dismisses everything. `dnd` toggles do not disturb.
-
-**media** — `volume up|down|mute`, `mic mute`, `backlight up|down`. These show
-the matching OSD as a side effect, so a keybinding needs only the one command.
-
-**gamma** — `gamma auto|day|night|flat|off` sets the mode, `gamma state` prints
-it.
-
-## Binding it
-
-There is nothing wisp-specific about calling `wispctl` from a compositor
-keybinding. In mango's `config.conf`:
-
-    bind=SUPER,d,spawn,wispctl apps
-    bind=NONE,XF86AudioRaiseVolume,spawn,wispctl volume up
-
-The daemon does not grab keys itself. Every interaction that starts from the
-keyboard starts with your compositor spawning `wispctl`.
+- `wispctl lock` execs `wisp-lock`; the socket `lock` command exists in the dispatcher but is never compiled in.
+- An unknown-command error and a feature that your config never declared look identical.
+- `wispctl reload` re-execs the installed binary, so `make` without `install` reloads the old one. It is also deferred while a wallpaper fade is running.
+- `wispctl rebuild` writes `<confdir>/current`, so a later bare `reload` follows that selection.
+- Always pass the output slot to `wispctl tag` from a bar click, or you switch the focused monitor instead of the clicked one.
+- `wispc --check` exits 0 on configs that `--emit` rejects, see [[gotchas]].

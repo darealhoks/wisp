@@ -1,140 +1,120 @@
-# Installing wisp
+# Install
 
-## Requirements
+```sh
+curl -fsSL https://raw.githubusercontent.com/darealhoks/wisp/main/install.sh | sh
+wispctl rebuild riverie   # compile an example config, install it, reload
+wisp                      # or add `wisp` to your compositor autostart
+```
 
-To build, you need a C compiler and `make`. The lock helper links PAM, so
-`libpam` and its headers are needed too.
+`install.sh` installs only the two tools plus the runtime *sources*. The daemon
+itself is compiled on your machine, per config, by `wispctl rebuild`, because
+every translation unit includes the `features.h` that your `.wisp` generated.
 
-At runtime wisp links only libc and libm — the built-in `truetype` backend
-rasterizes fonts itself, so there is no font dependency at all.
+## What install.sh does
 
-You also need a Wayland compositor that implements `wlr-layer-shell-unstable-v1`.
-wisp is currently only developed against mangoWM.
+1. Checks for `cc`, `make`, `git`, `pkg-config`, and PAM headers (`security/pam_appl.h`).
+2. Clones the repo shallowly into a temp dir.
+3. Runs `make install-tools install-share PREFIX=$PREFIX`.
+4. Creates `${XDG_CONFIG_HOME:-~/.config}/wisp/`.
 
-## The quick way
+| path | contents |
+|---|---|
+| `$PREFIX/bin/wispc`, `$PREFIX/bin/wispctl` | the compiler and the control client |
+| `$PREFIX/share/wisp/` | `Makefile`, `src/`, `configs/`, `docs/` |
+| `~/.config/wisp/*.wisp` | your configs |
 
-    curl -fsSL https://raw.githubusercontent.com/darealhoks/wisp/main/install.sh | sh
+`PREFIX` defaults to `~/.local`. Re-running the script upgrades in place;
+`wispctl update` does the same thing and then rebuilds your current config.
 
-The script checks dependencies, installs `wispc` + `wispctl` into
-`$PREFIX/bin` (default `~/.local/bin`) and the runtime sources into
-`$PREFIX/share/wisp`, and tells you where the example configs and docs live.
-It does not compile the daemon — that happens on your machine, from your
-config:
+## From a checkout
 
-    wispctl rebuild riverie          # an example from share/wisp/configs
-    wispctl rebuild mybar        # ~/.config/wisp/mybar.wisp
-    wispctl rebuild              # whatever you rebuilt last
+```sh
+make install          # builds the selected config + installs all five binaries
+make check            # builds every configs/*.wisp, the validation gate
+make WISP=configs/anemoia.wisp install
+```
 
-`rebuild` compiles the named `.wisp`, installs, and reloads the running daemon
-in place. It remembers the config in `~/.config/wisp/current`. Re-running the
-install script updates the tools and sources.
+Use `make install`, not `make`. `wispctl reload` re-execs through
+`/proc/self/exe`, and a plain `make` leaves the running daemon pointing at an
+unlinked inode.
 
-## Building from a checkout
+| target | result |
+|---|---|
+| `install` | `wisp`, `wispctl`, `wispc`, `wisp-lock`, `wisp-lock-helper` into `$PREFIX/bin` |
+| `install-tools` | `wispc` + `wispctl` only |
+| `install-share` | sources, configs and docs into `$PREFIX/share/wisp` |
+| `check` | build matrix over every `configs/*.wisp` |
+| `clean` | removes `build/` |
+| `uninstall` | removes the binaries and the share dir |
 
-    make install
-
-compiles the selected config and copies five binaries into `$PREFIX/bin`:
-
-    wisp               the daemon
-    wispctl            the control client
-    wispc              the .wisp compiler
-    wisp-lock          the session locker
-    wisp-lock-helper   setuid-free PAM authentication for wisp-lock
-
-`wispctl rebuild` works from a checkout too: point `$WISP_SRC` at it and the
-share dir is ignored.
-
-Use `make install` rather than `make`. `wispctl reload` re-executes the
-*installed* binary, so a `build/`-only binary is not what a reload picks up.
-
-Set `PREFIX` to install elsewhere:
-
-    make install PREFIX=/usr/local
+Each config caches into its own `build/<name>/`, and `make install` warms every
+config it can find (repo `configs/*.wisp` plus `~/.config/wisp/*.wisp`), so a
+later `wispctl rebuild <other>` is a cache hit rather than a compile.
 
 ## Build knobs
 
-Build settings live in the `.wisp` itself, as `//!` directive comments at the
-top of the file (plain comments to the compiler; the Makefile reads them):
+Set them on the make command line, or as `//!` directive comments inside the
+`.wisp` itself (see [[syntax#build-directives]]). Priority: command line, then
+`//!`, then the sticky selection in `build/.selected`, then the default.
 
-    //! font_backend = bitmap
-    //! font = ~/.local/share/fonts/MapleMono-NF-Bold.ttf
-    //! font_fallback = /usr/share/fonts/noto-emoji/NotoColorEmoji.ttf
-    //! fractional = 1
+| knob | default | meaning |
+|---|---|---|
+| `WISP` | `configs/riverie.wisp` | which config to build |
+| `FONT_BACKEND` | `truetype` | `truetype` (TTF/OTF rasterized in-process) or `bitmap` (PSF/BDF baked to const tables) |
+| `FONT` | `~/.local/share/fonts/MapleMono-NF-Bold.ttf` | the font to bake sizes from |
+| `FONT_FALLBACK` | empty | second font in the chain, truetype only; a CBDT emoji font renders in colour |
+| `FRACTIONAL` | `0` | fractional scale support, requires `FONT_BACKEND=truetype` |
+| `PREFIX` | `~/.local` | install prefix |
+| `LINE_MAP` | `1` | `0` drops `#line` mapping back to the `.wisp` |
 
-All are optional. A variable given on the make command line beats a directive:
+The selection is sticky: `make WISP=configs/anemoia.wisp && make install`
+installs anemoia, it does not silently revert to the default.
 
-    make FONT=/usr/share/fonts/foo.ttf
+## Requirements
 
-With neither, the build falls back to the last selection recorded in
-`build/.build-tag`, and then to `configs/riverie.wisp` with the `truetype` backend.
-Changing any knob wipes `build/` before compiling, because objects from the
-previous selection are not compatible.
+- A C compiler, `make`, `git`, `pkg-config`.
+- `libpam` and its headers, for `wisp-lock-helper` only. The daemon never links PAM.
+- A compositor with `wlr-layer-shell-unstable-v1`. Without it wisp cannot map a single surface.
+- A Nerd Font if you use icon codepoints; `wl-clipboard` if you want the emoji menu to copy.
 
-## Configs
+Everything else is optional and degrades to "that feature is dark": no
+`ext-workspace-v1` means an empty tag row, no `zwlr_gamma_control_v1` means no
+gamma, and so on.
 
-`WISP` selects the `.wisp` file that gets compiled into the daemon. There is no
-runtime config file. Three ship in the repo:
+## Compositors
 
-    configs/riverie.wisp      the Makefile default, and the config this rice actually runs
-    configs/anemoia.wisp   a second full preset (dwl-shaped bar)
-    configs/minimal.wisp  the smallest useful bar (clock + cpu/mem), a starting point
+| compositor | bar | workspaces | gamma | toplevels | lock |
+|---|---|---|---|---|---|
+| mango | yes | own IPC + ext-ws | yes | yes | yes |
+| sway 1.12+ | yes | ext-ws | yes | yes | yes |
+| niri 25.08+ | yes | ext-ws | yes | yes | yes |
+| hyprland | yes | own IPC | yes | yes | yes |
+| river | yes | river-status | yes | yes | yes |
+| labwc 0.8.3+ | yes | ext-ws | flaky on multi-output | yes | yes |
+| wayfire | yes | no, own IPC only | yes | yes | yes |
+| dwl | yes | needs ext-workspace patch | yes | needs patch | yes |
+| COSMIC | yes | ext-ws | no | unknown | yes |
+| KWin (Plasma 6.6+) | yes | ext-ws | no | no | yes |
+| GNOME | no, Mutter refuses layer-shell | - | - | - | - |
 
-Your own configs go in `~/.config/wisp/`; `wispctl rebuild <name>` finds them
-there by name (and falls back to the examples in `share/wisp/configs`).
+Workspace backend selection and what differs per compositor is in
+[[modules#workspaces-per-compositor]].
 
-To change your config, edit the `.wisp` and rebuild:
+## Verify
 
-    wispctl rebuild              # or, from a checkout: make install && wispctl reload
+```sh
+wispc --check ~/.config/wisp/mine.wisp   # prints "ok"
+wispc --emit /tmp/out ~/.config/wisp/mine.wisp
+wispctl ping                             # prints "pong" if the daemon is up
+```
 
-See [dsl.md](dsl.md) for the language and [wispctl.md](wispctl.md) for what
-`reload` does and does not do.
+Run both `--check` and `--emit`. A config that passes `--check` can still fail
+codegen; the full list of check-passes-emit-fails cases is in [[gotchas]].
 
-## Font backends
+## Gotchas
 
-One backend is compiled in per build.
-
-`truetype` is the default: wisp's own TTF/OTF rasterizer (`src/tt/`), no
-dependencies, glyphs cached on demand. The font can change without a rebuild:
-
-    WISP_FONT=/path/to/other.ttf wisp
-    WISP_FONT_FALLBACK=/path/to/NotoColorEmoji.ttf wisp
-
-A fallback font covers glyphs the primary font lacks. A CBDT color font renders
-in color, downscaled to text size. An outline font renders monochrome.
-SVG-only color fonts do not render.
-
-`bitmap` bakes a PSF or BDF at build time into const tables in the generated
-`bake.h` (per config, under `build/<name>/gen-tw/`). Pixel-exact, no
-anti-aliasing, and most icon glyphs will be missing. Gzipped console fonts need
-decompressing first (`gunzip -k`).
-
-Font sizes come from the `.wisp`: every `font_size = N;` it declares, plus
-14 and 22. Changing a size in the config regenerates that config's `bake.h` on the next
-build.
-
-## Rebuilding
-
-`make install` is incremental. `wispc` is recompiled only when its own sources
-change, and the `.wisp` is recompiled only when it or `wispc` is newer than the
-generated files under `build/gen-tw/`.
-
-    make clean       remove build/
-    make distclean   also remove a legacy src/bake.h if present
-    make uninstall   remove the binaries from $PREFIX/bin and $PREFIX/share/wisp
-
-To check that every config still builds:
-
-    make check
-
-Run it alone. Concurrent `make` invocations trample `build/`, since each config
-needs the directory wiped.
-
-## Running it
-
-Start `wisp` from your compositor's autostart. In mango's `config.conf`:
-
-    autostart = wisp
-
-There are no options to pass. The config is already inside the binary. The one
-flag it accepts, `--reload-fds`, is passed by `wispctl reload` when it re-execs
-the daemon and is not meant to be typed by hand.
+- `make` alone is not enough after an edit, use `make install`, because `wispctl reload` re-execs the installed binary.
+- `FRACTIONAL=1` with `FONT_BACKEND=bitmap` is a hard Makefile error; bitmap fonts can only pixel-double.
+- `FONT_BACKEND=baked` and `=freetype` were retired and now error out.
+- Only two configs ship: `riverie` and `anemoia`. `configs/minimal.wisp` and `configs/bar.wisp` do not exist.
+- `wispctl rebuild` needs the share dir (or `$WISP_SRC`) present, it shells out to `make -C` there.

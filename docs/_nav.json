@@ -1,0 +1,7 @@
+[
+  {"section": "Start", "pages": ["index", "install", "first-config"]},
+  {"section": "Language", "pages": ["syntax", "types", "builtins", "state"]},
+  {"section": "Modules", "pages": ["modules"]},
+  {"section": "Reference", "pages": ["wispctl", "gotchas"]},
+  {"section": "Templates", "pages": ["templates"]}
+]
