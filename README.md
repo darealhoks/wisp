@@ -42,8 +42,8 @@ widgets whose expressions read it and repaints exactly the damaged rectangle. Th
 rest of the frame is not touched, and when nothing changes no timer fires at all.
 
 Surfaces are declared the same way, so `radius`, `anchor`, animations and
-visibility conditions are all just fields - see [dsl.md](docs/dsl.md) for the
-complete language.
+visibility conditions are all just fields - see the
+[docs site](https://darealhoks.github.io/wisp/) for the complete language.
 
 ## Install
 
@@ -68,10 +68,9 @@ separate `wisp-lock` binary does.
 
 ## Docs
 
-- [install.md](docs/install.md) - installing, build knobs
-- [tutorial.md](docs/tutorial.md) - one bar from an empty file
-- [dsl.md](docs/dsl.md) - the wisp language, complete
-- [wispctl.md](docs/wispctl.md) - the control client
+Everything is at **[darealhoks.github.io/wisp](https://darealhoks.github.io/wisp/)** -
+install, a first-config tutorial, the complete language reference, and a
+template library.
 
 ## Compositor support
 

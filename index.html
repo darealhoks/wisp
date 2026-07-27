@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wisp docs</title>
+<meta name="description" content="wisp: one Wayland daemon that draws a whole desktop shell. Links only libc and libm. Zero idle CPU.">
+<link rel="icon" href="wisp.png">
+<style>
+	* { box-sizing: border-box; margin: 0; }
+	body {
+		background: #000; color: #fff;
+		font: 16px/1.6 ui-sans-serif, system-ui, sans-serif;
+		display: grid; grid-template-columns: 14rem minmax(0, 1fr) 14rem;
+		min-height: 100dvh;
+	}
+	code, pre { font-family: ui-monospace, monospace; }
+	a { color: #fff; }
+	aside {
+		position: sticky; top: 0; align-self: start;
+		max-height: 100dvh; overflow: auto;
+		padding: 1rem; font-size: .9rem;
+	}
+	aside a { display: block; text-decoration: none; padding: .1rem 0; }
+	aside a:hover { text-decoration: underline; }
+	aside a.active { text-decoration: underline; }
+	.docnav summary { cursor: pointer; opacity: .6; margin-top: .8rem; }
+	.docnav details a { padding-left: 1rem; }
+	#toc b { display: block; opacity: .6; font-weight: 400; margin-bottom: .3rem; }
+	#toc a.sub { padding-left: 1rem; }
+	article { padding: 2rem 1.5rem 4rem; max-width: 52rem; justify-self: center; width: 100%; }
+	article h1 { margin-bottom: 1rem; }
+	article h2, article h3 { margin-top: 2rem; margin-bottom: .6rem; }
+	article p, article pre, article ul, article ol, article table { margin-bottom: 1rem; }
+	article pre { border: 1px solid #444; padding: .8rem 1rem; overflow-x: auto; }
+	article p code, article li code, article td code, article th code { background: #1a1a1a; padding: .1em .3em; }
+	table { border-collapse: collapse; display: block; overflow-x: auto; }
+	th, td { border: 1px solid #444; padding: .4rem .7rem; text-align: left; }
+	th { background: #1a1a1a; }
+	tr:nth-child(even) td { background: #111; }
+	@media (max-width: 800px) {
+		body { display: block; }
+		aside { position: static; max-height: none; }
+		#toc { display: none; }
+	}
+</style>
+</head>
+<body>
+<aside><nav class="docnav" aria-label="documentation"></nav></aside>
+<article id="doc"></article>
+<aside><nav id="toc" aria-label="on this page"></nav></aside>
+
+<script type="module">
+import { render } from "./web/md.js";
+
+const RAW = "https://raw.githubusercontent.com/darealhoks/wisp/main/docs/";
+const DOCS = new Set();
+const doc = document.getElementById("doc");
+const toc = document.getElementById("toc");
+const cache = {};
+
+function buildToc(page) {
+	const hs = doc.querySelectorAll("h2, h3");
+	toc.replaceChildren();
+	if (!hs.length) return;
+	const b = document.createElement("b");
+	b.textContent = "On this page";
+	toc.append(b);
+	for (const h of hs) {
+		const a = document.createElement("a");
+		a.textContent = h.textContent;
+		a.href = `#${page}/${h.id}`;
+		if (h.tagName === "H3") a.className = "sub";
+		toc.append(a);
+	}
+}
+
+async function route() {
+	let [page, anchor] = location.hash.replace(/^#/, "").split("/");
+	if (!DOCS.has(page)) page = "index";
+	document.querySelectorAll(".docnav a").forEach(a =>
+		a.classList.toggle("active", a.getAttribute("href") === "#" + page));
+	doc.innerHTML = "<p>fetching " + page + ".md…</p>";
+	toc.replaceChildren();
+	try {
+		cache[page] ??= await fetch(RAW + page + ".md").then(r => {
+			if (!r.ok) throw new Error(r.status);
+			return r.text();
+		});
+		doc.innerHTML = render(cache[page]);
+		buildToc(page);
+		const el = anchor && document.getElementById(anchor);
+		if (el) el.scrollIntoView(); else scrollTo(0, 0);
+	} catch {
+		doc.innerHTML = `<p>Couldn't fetch ${page}.md from GitHub. ` +
+			`<a href="https://github.com/darealhoks/wisp/blob/main/docs/${page}.md" target="_blank" rel="noopener">Read it there ↗</a></p>`;
+	}
+}
+
+// sidebar is _nav.json verbatim: sections in order, template library last
+const nav = await fetch(RAW + "_nav.json").then(r => r.json());
+document.querySelector(".docnav").innerHTML = nav.map(s => {
+	s.pages.forEach(p => DOCS.add(p));
+	return `<details open><summary>${s.section}</summary>` +
+		s.pages.map(p => `<a href="#${p}">${p}</a>`).join("") +
+		"</details>";
+}).join("");
+
+addEventListener("hashchange", route);
+route();
+</script>
+</body>
+</html>
