@@ -374,10 +374,31 @@ lock {
 	ring     = #ff5f8a93;
 	ring_bad = #ffd06878;
 	fg       = #ffa8d5cc;
-	dim      = #ff7a808b;
+	dim      = #59000000;   // scrim over the lock background
 	caps     = #ffe0c060;
 	prompt   = "Password";
 	pam      = "system-auth";
+	font_size = 16;
+
+	// Free-positioned elements; x/y are insets from the anchored edges.
+	text clock { anchor = top; y = 120; text = "{time}"; format = "%H:%M";
+	             fg = #ffa8d5cc; font_size = 64; }
+	text date  { anchor = top; y = 210; text = "{time}"; format = "%A %e %B";
+	             fg = #ff7a808b; font_size = 16; }
+
+	frame card { anchor = bottom | left; x = 48; y = 48;
+	             width = 360; height = 96; radius = 12;
+	             bg = #cc101418; border = #ff5f8a93; border_width = 1; }
+	text label { anchor = bottom | left; x = 72; y = 108; text = "{prompt}";
+	             fg = #ff7a808b; font_size = 14; }
+	text dots  { anchor = bottom | left; x = 72; y = 72; text = "{dots}";
+	             show = !wrong; fg = #ffa8d5cc; }
+	text bad   { anchor = bottom | left; x = 72; y = 72; text = "wrong password";
+	             show = wrong; fg = #ffd06878; }
+	text caps_ind { anchor = bottom | right; x = 48; y = 48; text = "CAPS";
+	                show = caps; fg = #ffe0c060; font_size = 14; }
+	text kbd   { anchor = bottom | right; x = 48; y = 72; text = "{layout}";
+	             fg = #ff7a808b; font_size = 14; }
 }
 
 gamma {

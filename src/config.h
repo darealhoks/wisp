@@ -275,5 +275,9 @@
 #ifndef LOCK_WALLPAPER
 #define LOCK_WALLPAPER   0
 #endif
+/* Repaint period for a declared `{time}` element; 0 = no clock, no timer. */
+#ifndef LOCK_CLOCK_MS
+#define LOCK_CLOCK_MS    0
+#endif
 
 #endif

@@ -497,14 +497,9 @@ static Stmt *parse_stmt(P *p) {
 
 /* ---------- declarations / blocks ---------- */
 
-static Prop *parse_prop(P *p) {
-    Tok n = cur(p);
-    if (n.kind != TK_IDENT) {
-        diag_error(n.loc, "expected property name");
-        lex_next(&p->L);
-        return NEW(p, Prop);
-    }
-    lex_next(&p->L);
+/* Tail of parse_prop with the name token already consumed — the lock block
+ * needs to look at the name before deciding prop vs. element. */
+static Prop *parse_prop_named(P *p, Tok n) {
     Prop *pr = NEW(p, Prop);
     pr->loc = n.loc;
     pr->name = arena_strn(p->a, n.s, n.len);
@@ -524,6 +519,17 @@ static Prop *parse_prop(P *p) {
     pr->val = parse_expr(p);
     expect(p, TK_SEMI, "';'");
     return pr;
+}
+
+static Prop *parse_prop(P *p) {
+    Tok n = cur(p);
+    if (n.kind != TK_IDENT) {
+        diag_error(n.loc, "expected property name");
+        lex_next(&p->L);
+        return NEW(p, Prop);
+    }
+    lex_next(&p->L);
+    return parse_prop_named(p, n);
 }
 
 static Widget *parse_widget_or_cell(P *p, bool is_cell);
@@ -890,6 +896,31 @@ static Decl *parse_surface_or_compound(P *p, DKind dk, bool menu_decl) {
     return d;
 }
 
+/* `frame NAME { … }` / `text NAME { … }`; the name is optional. */
+static LockElem *parse_lock_elem(P *p, Tok kw) {
+    LockElem *e = NEW(p, LockElem);
+    e->loc = kw.loc;
+    e->is_text = kw.len == 4;
+    if (at(p, TK_IDENT)) {
+        Tok n = cur(p); lex_next(&p->L);
+        e->name = arena_strn(p->a, n.s, n.len); e->nlen = n.len;
+    }
+    Loc open = cur(p).loc;
+    expect(p, TK_LBRACE, "'{'");
+    VList props = {0};
+    while (!at(p, TK_RBRACE) && !at(p, TK_EOF)) {
+        if (!at(p, TK_IDENT)) { diag_error(cur(p).loc, "expected a property name"); lex_next(&p->L); continue; }
+        vl_push(&props, parse_prop(p));
+    }
+    expect_rbrace(p, open);
+    int n;
+    Prop **arr = (Prop**)vl_freeze(p, &props, &n);
+    e->props = NEW_ARR(p, Prop*, n ? n : 1);
+    for (int i = 0; i < n; i++) e->props[i] = arr[i];
+    e->n = n;
+    return e;
+}
+
 static Decl *parse_block_decl(P *p, DKind dk, const char *name) {
     (void)name;
     Tok kw = cur(p); lex_next(&p->L);
@@ -898,17 +929,30 @@ static Decl *parse_block_decl(P *p, DKind dk, const char *name) {
     d->name = NULL; d->nlen = 0;
     Loc bopen = cur(p).loc;
     expect(p, TK_LBRACE, "'{'");
-    VList props = {0};
+    VList props = {0}, els = {0};
     while (!at(p, TK_RBRACE) && !at(p, TK_EOF)) {
         if (!at(p, TK_IDENT)) { diag_error(cur(p).loc, "expected a property name"); lex_next(&p->L); continue; }
-        vl_push(&props, parse_prop(p));
+        Tok t = cur(p);
+        bool elkw = dk == D_LOCK &&
+                    ((t.len == 5 && memcmp(t.s, "frame", 5) == 0) ||
+                     (t.len == 4 && memcmp(t.s, "text",  4) == 0));
+        if (!elkw) { vl_push(&props, parse_prop(p)); continue; }
+        lex_next(&p->L);
+        /* `text = …` is still a prop; only `text [NAME] {` opens an element. */
+        if (at(p, TK_IDENT) || at(p, TK_LBRACE)) vl_push(&els, parse_lock_elem(p, t));
+        else vl_push(&props, parse_prop_named(p, t));
     }
     expect_rbrace(p, bopen);
     int n;
     Prop **arr = (Prop**)vl_freeze(p, &props, &n);
-    d->block.props = NEW_ARR(p, Prop*, n);
+    d->block.props = NEW_ARR(p, Prop*, n ? n : 1);
     for (int i = 0; i < n; i++) d->block.props[i] = arr[i];
     d->block.n = n;
+    int ne;
+    LockElem **ea = (LockElem**)vl_freeze(p, &els, &ne);
+    d->block.els = NEW_ARR(p, LockElem*, ne ? ne : 1);
+    for (int i = 0; i < ne; i++) d->block.els[i] = ea[i];
+    d->block.nels = ne;
     return d;
 }
 

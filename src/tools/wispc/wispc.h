@@ -221,6 +221,16 @@ typedef enum {
     D_MEDIA, D_COMPOUND, D_STYLE,
 } DKind;
 
+/* One `frame NAME { … }` / `text NAME { … }` inside `lock { … }`. The lock has
+ * no flex layout — every element is free-positioned — so it needs neither the
+ * Widget node nor the surface body machinery. */
+typedef struct {
+    Loc loc;
+    const char *name; size_t nlen;
+    bool is_text;
+    Prop **props; int n;
+} LockElem;
+
 /* One row of a user-declared `menu NAME { item { … } }` block. */
 typedef struct {
     uint32_t icon;                 /* codepoint, 0 = none */
@@ -260,7 +270,8 @@ struct Decl {
         struct { Expr *call; Stmt *on_change; WBKind hkind; Loc hloc; } source;
         struct { SBody *items; int n; } surface;
         struct { Expr *val; } konst;            /* const/mut share */
-        struct { Prop **props; int n; } block;  /* lock/gamma/wallpaper */
+        /* lock/gamma/wallpaper; `els` is lock-only (frame/text elements). */
+        struct { Prop **props; int n; LockElem **els; int nels; } block;
         StyleRule *style;
     };
 };

@@ -295,4 +295,8 @@ int  emit_generated_compound(FILE *o, Decl *cmp, CGCtx *ctx, const char *nm);
 int  emit_spawned_osd_skeleton(FILE *o, Decl *sur, CGCtx *ctx, const char *nm, int pill);
 int  emit_surfaces(FILE *o, Unit *u, CGCtx *ctx);
 
+/* ---------- codegen_lock.c ---------- */
+void emit_lock(FILE *o, Unit *u, CGCtx *ctx);
+int  lock_clock_ms(Unit *u);
+
 #endif

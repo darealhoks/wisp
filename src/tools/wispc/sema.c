@@ -94,6 +94,10 @@ static const PropSchema SCHEMAS[] = {
       " align bg border border_width gap height pad pad_x radius " },
     { "lock", "lock block",
       " pam prompt bg ring ring_bad fg dim caps font_size wrong_ms wall " },
+    { "lock_frame", "lock frame",
+      " anchor bg border border_width height radius show width x y " },
+    { "lock_text", "lock text",
+      " anchor fg font_size format show text x y " },
     { "gamma", "gamma block",
       " day_k night_k flat_k day_hour night_hour fade_min transition_ms " },
     { "wallpaper", "wallpaper block",
@@ -724,6 +728,11 @@ SemaResult *sema_check(Arena *a, Unit *u) {
             if (s.s.lock)  diag_error(d->loc, "duplicate lock block");
             s.s.lock = d;  s.r->has_lock = 1;
             for (int j = 0; j < d->block.n; j++) check_prop("lock", d->block.props[j]);
+            for (int j = 0; j < d->block.nels; j++) {
+                LockElem *e = d->block.els[j];
+                for (int k = 0; k < e->n; k++)
+                    check_prop(e->is_text ? "lock_text" : "lock_frame", e->props[k]);
+            }
             break;
         case D_GAMMA:
             if (s.s.gamma) diag_error(d->loc, "duplicate gamma block");

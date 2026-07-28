@@ -174,7 +174,7 @@ static void print_font_sizes(Unit *u) {
     for (int i = 0; i < u->n; i++) {
         Decl *d = u->decls[i];
         if (d->kind == D_LOCK) {
-            /* lock { font_size } must be baked too. */
+            /* lock { font_size } and every per-element one must be baked too. */
             for (int j = 0; j < d->block.n; j++) {
                 Prop *p = d->block.props[j];
                 if (p->nlen != 9 || memcmp(p->name, "font_size", 9) != 0)
@@ -183,6 +183,18 @@ static void print_font_sizes(Unit *u) {
                 int v = (int)p->val->i;
                 if (v < 4 || v > 256) continue;
                 if (n < (int)(sizeof sizes / sizeof *sizes)) sizes[n++] = v;
+            }
+            for (int j = 0; j < d->block.nels; j++) {
+                LockElem *e = d->block.els[j];
+                for (int k = 0; k < e->n; k++) {
+                    Prop *p = e->props[k];
+                    if (p->nlen != 9 || memcmp(p->name, "font_size", 9) != 0)
+                        continue;
+                    if (!p->val || p->val->kind != EX_INT) continue;
+                    int v = (int)p->val->i;
+                    if (v < 4 || v > 256) continue;
+                    if (n < (int)(sizeof sizes / sizeof *sizes)) sizes[n++] = v;
+                }
             }
             continue;
         }

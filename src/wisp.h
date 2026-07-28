@@ -774,6 +774,26 @@ const char *gamma_mode_str(void);        /* one of "auto-day", "auto-night", "da
 /* Session lock (lock.c)                                         */
 /* ============================================================ */
 
+/* The lock's whole layout is a DSL-declared table: wispc lowers `lock { frame
+ * … text … }` to a `lock_els[]` in gen_lock.h and lock.c only walks it. Text
+ * templates carry the LT_* bytes below where a runtime value belongs. */
+enum { LEL_FRAME = 0, LEL_TEXT };
+enum { LT_DOTS = 1, LT_COUNT, LT_LAYOUT, LT_PROMPT, LT_TIME };
+/* `show =` conditions; LSHOW_NEG is OR'd in by a `!cond`. */
+enum { LSHOW_ALWAYS = 0, LSHOW_TYPING, LSHOW_WRONG, LSHOW_CAPS,
+       LSHOW_VERIFYING, LSHOW_LAYOUT_ALT, LSHOW_NEG = 0x80 };
+/* Anchor bits: absent on an axis = centered on it. */
+enum { LA_TOP = 1, LA_BOTTOM = 2, LA_LEFT = 4, LA_RIGHT = 8 };
+
+typedef struct {
+    uint8_t  kind, anchor, show;
+    int16_t  x, y, w, h;                 /* x/y are insets from the anchored edge */
+    int16_t  radius, border_w, font_px;
+    uint32_t bg, fg, border;
+    const char *fmt;                     /* LEL_TEXT: template with LT_* bytes */
+    const char *time_fmt;                /* strftime format behind LT_TIME */
+} LockEl;
+
 void lock_engage(void);                  /* request session lock */
 void lock_on_locked(void);               /* compositor confirmed lock */
 void lock_on_finished(void);             /* lock rejected / forcibly ended */
@@ -914,14 +934,19 @@ typedef struct {
     uint8_t  alpha;      /* 1 if caps-lock should swap lo↔hi */
 } XkbKey;
 
+#define XKB_MAX_GROUPS 4
+
 extern XkbKey xkb_keys[256];
 extern int    xkb_loaded;
 extern int    xkb_caps_on;
 extern int    xkb_shift_on;
+extern int    xkb_group;              /* active layout index, 0-based */
 
 void     xkb_load(int fd, size_t size);
 uint32_t xkb_xlat(uint32_t evdev, int shift);
-void     xkb_on_modifiers(uint32_t depressed, uint32_t latched, uint32_t locked);
+void     xkb_on_modifiers(uint32_t depressed, uint32_t latched, uint32_t locked,
+                          uint32_t group);
+const char *xkb_layout_name(void);    /* "" when the keymap named no groups */
 void     lock_on_caps_changed(void);  /* implemented in lock.c; called from xkb */
 int      utf8_encode(uint32_t cp, char *out);
 int      utf8_back(const char *s, int len);

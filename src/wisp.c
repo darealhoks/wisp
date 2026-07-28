@@ -243,11 +243,12 @@ void on_keyboard_event(uint16_t op, uint8_t *body, uint32_t bodylen) {
         break;
     }
     case 4: {  /* modifiers */
-        if (bodylen < 16) return;
+        if (bodylen < 20) return;
         uint32_t dep  = *(uint32_t *)(body + 4);
         uint32_t lat  = *(uint32_t *)(body + 8);
         uint32_t lck  = *(uint32_t *)(body + 12);
-        xkb_on_modifiers(dep, lat, lck);
+        uint32_t grp  = *(uint32_t *)(body + 16);
+        xkb_on_modifiers(dep, lat, lck, grp);
         break;
     }
     case 5: {  /* repeat_info */

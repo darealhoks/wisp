@@ -27,6 +27,12 @@ XkbKey xkb_keys[256];
 int    xkb_loaded;
 int    xkb_caps_on;
 int    xkb_shift_on;
+int    xkb_group;
+
+/* `name[group1]="English (US)";` lines out of the symbols section. Only the
+ * label is per-group — the keysym table stays group 1 (see caveats above), so
+ * this is an indicator, not a second translation. */
+static char group_names[XKB_MAX_GROUPS][32];
 
 /* Named-keysym → codepoint table. Covers ASCII punctuation, latin-1, and the
  * latin-2 letters that appear on Czech/Slovak/Polish/Hungarian layouts (the
@@ -299,6 +305,31 @@ static void parse_symbols(const char *p, const char *end) {
     }
 }
 
+static void parse_group_names(const char *p, const char *end) {
+    memset(group_names, 0, sizeof group_names);
+    while (p < end) {
+        const char *n = find_lit(p, end, "name[group");
+        if (!n) return;
+        p = n + 10;
+        if (p >= end || *p < '1' || *p > '0' + XKB_MAX_GROUPS) continue;
+        int g = *p - '1';
+        const char *q = find_lit(p, end, "\"");
+        if (!q) return;
+        q++;
+        size_t i = 0;
+        while (q < end && *q != '"' && i < sizeof group_names[0] - 1)
+            group_names[g][i++] = *q++;
+        group_names[g][i] = 0;
+        p = q;
+    }
+}
+
+const char *xkb_layout_name(void) {
+    int g = xkb_group;
+    if (g < 0 || g >= XKB_MAX_GROUPS) g = 0;
+    return group_names[g][0] ? group_names[g] : "";
+}
+
 void xkb_load(int fd, size_t size) {
     if (fd < 0) return;
     /* size comes from the compositor's wl_keyboard.keymap event; if it exceeds
@@ -327,6 +358,7 @@ void xkb_load(int fd, size_t size) {
     memset(xkb_keys, 0, sizeof xkb_keys);
     parse_keycodes(kcb + 1, end);
     parse_symbols(syb + 1, end);
+    parse_group_names(syb + 1, end);
     xkb_loaded = 1;
     munmap(m, size);
 }
@@ -362,12 +394,14 @@ uint32_t xkb_xlat(uint32_t evdev, int shift) {
     return sh ? hi : lo;
 }
 
-/* Update modifier latches from wl_keyboard.modifiers. Group is ignored
- * (single-group support). */
-void xkb_on_modifiers(uint32_t depressed, uint32_t latched, uint32_t locked) {
+/* Update modifier latches from wl_keyboard.modifiers. `group` only picks the
+ * indicator label — translation stays group 1 (see caveats at the top). */
+void xkb_on_modifiers(uint32_t depressed, uint32_t latched, uint32_t locked,
+                      uint32_t group) {
     uint32_t eff = depressed | latched | locked;
     xkb_shift_on = (eff & 1) ? 1 : 0;          /* Shift */
     xkb_caps_on  = (eff & 2) ? 1 : 0;          /* Lock (CapsLock) */
+    xkb_group    = group < XKB_MAX_GROUPS ? (int)group : 0;
 #ifdef WISP_HAS_LOCK
     lock_on_caps_changed();
 #endif

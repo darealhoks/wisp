@@ -200,6 +200,7 @@ WISPC_SRC := $(TOOLDIR)/wispc/arena.c $(TOOLDIR)/wispc/diag.c $(TOOLDIR)/wispc/l
             $(TOOLDIR)/wispc/codegen_sources.c $(TOOLDIR)/wispc/codegen_expr.c \
             $(TOOLDIR)/wispc/codegen_items.c $(TOOLDIR)/wispc/codegen_surface.c \
             $(TOOLDIR)/wispc/codegen_surface_life.c $(TOOLDIR)/wispc/codegen_spawned.c $(TOOLDIR)/wispc/codegen_compound.c \
+            $(TOOLDIR)/wispc/codegen_lock.c \
             $(TOOLDIR)/wispc/wispc.c
 
 BIN := $(BUILD)/wisp $(BUILD)/wispctl $(BUILD)/wisp-lock $(BUILD)/wisp-lock-helper $(WISPC_BOOT)
@@ -216,7 +217,7 @@ endif
 LOCK_OBJS := $(LOCK_SRC:%=$(BUILD)/lock/%.o)
 LOCK_HDR  := $(SRCDIR)/wisp.h $(SRCDIR)/proto.h $(SRCDIR)/config.h \
              $(SRCDIR)/font.h $(GENDIR)/bake.h \
-             $(SRCDIR)/lock-features.h $(GENDIR)/gen_overrides.h
+             $(SRCDIR)/lock-features.h $(GENDIR)/gen_overrides.h $(GENDIR)/gen_lock.h
 LOCK_CFLAGS := -Os -Wall -Wextra -Werror -Wno-unused-parameter \
                -fno-asynchronous-unwind-tables -fdata-sections -ffunction-sections \
                $(FONT_DEFS) \

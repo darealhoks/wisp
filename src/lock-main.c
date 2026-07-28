@@ -79,9 +79,26 @@ int main(int argc, char **argv) {
 
     key_rep_tfd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
 
+    /* A declared `{time}` is the only thing on the lock that changes without
+     * input, so it is also the only reason this process ever wakes idle. */
+    int clock_fd = -1;
+    if (LOCK_CLOCK_MS > 0) {
+        clock_fd = timerfd_create(CLOCK_REALTIME, TFD_CLOEXEC | TFD_NONBLOCK);
+        if (clock_fd >= 0) {
+            time_t per = LOCK_CLOCK_MS / 1000;
+            struct itimerspec it = {
+                .it_interval = { .tv_sec = per },
+                /* Fire on the boundary so a %M clock flips with the minute. */
+                .it_value = { .tv_sec = (time(NULL) / per + 1) * per },
+            };
+            timerfd_settime(clock_fd, TFD_TIMER_ABSTIME, &it, NULL);
+        }
+    }
+
     epoll_add_fd(wl_fd);
     epoll_add_fd(sig_fd);
     if (key_rep_tfd >= 0) epoll_add_fd(key_rep_tfd);
+    if (clock_fd >= 0) epoll_add_fd(clock_fd);
 
     lock_engage();
     if (!lock_active()) return 1;
@@ -114,6 +131,9 @@ int main(int argc, char **argv) {
             } else if (fd == key_rep_tfd) {
                 uint64_t exp; (void)!read(key_rep_tfd, &exp, sizeof exp);
                 if (key_rep_key) lock_on_key(NULL, key_rep_key, 1, 0);
+            } else if (fd == clock_fd) {
+                uint64_t exp; (void)!read(clock_fd, &exp, sizeof exp);
+                lock_render_all();
             }
         }
     }

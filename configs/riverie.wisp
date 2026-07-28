@@ -479,7 +479,7 @@ lock {
 	ring       = PRIM;
 	ring_bad   = RED;
 	fg         = YELLOW;
-	dim        = PRIM;
+	dim        = #59000000;   // scrim over the wallpaper, not a text color
 	caps       = RED;
 	prompt     = "Password";
 	pam        = "system-auth";

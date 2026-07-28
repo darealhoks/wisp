@@ -22,10 +22,13 @@
 
 #include "wisp.h"
 #include "image.h"
+#include "gen_lock.h"
 
 #include <errno.h>
+#include <time.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <stdio.h>
 #include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -72,8 +75,9 @@ static const Font *font_px(int px, const Font *fall) {
     return fall;
 }
 
-/* Background stage: everything under the prompt. Flat fill today; the seam a
- * lock wallpaper grows into. */
+/* Background stage: wallpaper (if declared) or flat fill, plus the `dim`
+ * scrim. Takes PHYSICAL dims — it memcpy's a whole cover-fit, which the
+ * logical-coordinate primitives never do. */
 #if LOCK_WALLPAPER
 /* The finished cover-fit of WALL_PATH, mmap'd from the disk cache the daemon
  * seeds in wall.c. Read-only MAP_SHARED, so the daemon's copy and ours are the
@@ -83,7 +87,8 @@ static const Font *font_px(int px, const Font *fall) {
 static const uint32_t *bg_map;
 static int bg_map_w, bg_map_h;
 
-static void lock_draw_bg(uint32_t *px, int W, int H) {
+/* Returns 0 when the wallpaper is unavailable and the caller must flat-fill. */
+static int lock_draw_bg_px(uint32_t *px, int W, int H) {
     if (!bg_map || bg_map_w != W || bg_map_h != H) {
         image_bgcache_unmap(bg_map, bg_map_w, bg_map_h);
         /* ponytail: compiled WALL_PATH, so a `wispctl wall` override isn't
@@ -101,43 +106,113 @@ static void lock_draw_bg(uint32_t *px, int W, int H) {
                 image_bgcache_store(WALL_PATH, W, H, px);
                 image_free(src);
                 bg_map = image_bgcache_map(WALL_PATH, W, H);
-                return;
+                return 1;
             }
             image_free(src);
         }
     }
-    if (bg_map) memcpy(px, bg_map, (size_t)W * H * 4);
-    else clear_buf(px, W, H, LOCK_BG);
-}
-#else
-static void lock_draw_bg(uint32_t *px, int W, int H) {
-    clear_buf(px, W, H, LOCK_BG);
+    if (!bg_map) return 0;
+    memcpy(px, bg_map, (size_t)W * H * 4);
+    return 1;
 }
 #endif
 
-/* Content stage: black screen, a centered prompt that fills with asterisks as
- * you type, a wrong-password line, a CAPS line. Hardcoded layout — the seam
- * codegen takes over when the lock body becomes a declared surface. */
-static void lock_draw_content(uint32_t *px, int W, int H) {
-    const Font *fs = font_px(LOCK_FONT_SIZE, &font_small);
-    int cx = W / 2, cy = H / 2;
+static void lock_draw_bg(uint32_t *px, int W, int H, int PW, int PH) {
+#if LOCK_WALLPAPER
+    if (!lock_draw_bg_px(px, PW, PH)) clear_buf(px, W, H, LOCK_BG);
+#else
+    (void)PW; (void)PH;
+    clear_buf(px, W, H, LOCK_BG);
+#endif
+    if (LOCK_DIM & 0xff000000u) fill_rect(px, W, H, 0, 0, W, H, LOCK_DIM);
+}
 
-    int n = utf8_count(ls.input, ls.input_len);
-    if (n > 0) {
-        char stars[128];
-        if (n > (int)sizeof stars - 1) n = (int)sizeof stars - 1;
-        memset(stars, '*', n); stars[n] = 0;
-        draw_text(px, W, H, cx - text_width(fs, stars) / 2,
-                  cy - fs->line_h / 2, fs, stars, LOCK_FG);
+/* Expand a declared template: every LT_* byte is replaced by the value it
+ * stands for. Everything else is literal UTF-8 straight from the .wisp. */
+static void lock_expand(const LockEl *e, char *out, size_t cap) {
+    size_t o = 0;
+    for (const char *p = e->fmt; *p && o + 1 < cap; p++) {
+        char tmp[64];
+        const char *v = tmp;
+        switch ((unsigned char)*p) {
+        case LT_DOTS: {
+            int n = utf8_count(ls.input, ls.input_len);
+            if (n > (int)sizeof tmp - 1) n = (int)sizeof tmp - 1;
+            memset(tmp, '*', (size_t)n); tmp[n] = 0;
+            break;
+        }
+        case LT_COUNT:
+            snprintf(tmp, sizeof tmp, "%d", utf8_count(ls.input, ls.input_len));
+            break;
+        case LT_LAYOUT: v = xkb_layout_name(); break;
+        case LT_PROMPT: v = LOCK_PROMPT; break;
+        case LT_TIME: {
+            time_t t = time(NULL);
+            struct tm tm;
+            localtime_r(&t, &tm);
+            if (!e->time_fmt || !strftime(tmp, sizeof tmp, e->time_fmt, &tm))
+                tmp[0] = 0;
+            break;
+        }
+        default: tmp[0] = *p; tmp[1] = 0; break;
+        }
+        size_t n = strlen(v);
+        if (n > cap - 1 - o) n = cap - 1 - o;
+        memcpy(out + o, v, n);
+        o += n;
     }
+    out[o] = 0;
+}
 
-    if (ls.wrong)
-        draw_text(px, W, H, cx - text_width(fs, "wrong password") / 2,
-                  cy + fs->line_h, fs, "wrong password", LOCK_RING_WRONG);
+static int lock_show(const LockEl *e) {
+    int v;
+    switch (e->show & ~LSHOW_NEG) {
+    case LSHOW_TYPING:     v = ls.input_len > 0; break;
+    case LSHOW_WRONG:      v = ls.wrong; break;
+    case LSHOW_CAPS:       v = xkb_caps_on; break;
+    case LSHOW_VERIFYING:  v = ls.helper_pid > 0; break;
+    case LSHOW_LAYOUT_ALT: v = xkb_group != 0; break;
+    default:               v = 1; break;
+    }
+    return (e->show & LSHOW_NEG) ? !v : v;
+}
 
-    if (xkb_caps_on)
-        draw_text(px, W, H, cx - text_width(fs, "CAPS") / 2,
-                  cy + 2 * fs->line_h + 8, fs, "CAPS", LOCK_CAPS);
+/* Place a w×h box against the anchored edges; an axis with no anchor bit is
+ * centered and x/y then read as a nudge instead of an inset. */
+static void lock_place(const LockEl *e, int W, int H, int w, int h, int *px, int *py) {
+    if (e->anchor & LA_LEFT)        *px = e->x;
+    else if (e->anchor & LA_RIGHT)  *px = W - e->x - w;
+    else                            *px = (W - w) / 2 + e->x;
+    if (e->anchor & LA_TOP)         *py = e->y;
+    else if (e->anchor & LA_BOTTOM) *py = H - e->y - h;
+    else                            *py = (H - h) / 2 + e->y;
+}
+
+/* Content stage: walk the declared element table. Nothing here knows what a
+ * prompt or a caps indicator is — that is all in the .wisp. */
+static void lock_draw_content(uint32_t *px, int W, int H) {
+    for (int i = 0; i < LOCK_N_ELS; i++) {
+        const LockEl *e = &lock_els[i];
+        if (!lock_show(e)) continue;
+        int x, y;
+        if (e->kind == LEL_FRAME) {
+            lock_place(e, W, H, e->w, e->h, &x, &y);
+            if (e->bg & 0xff000000u)
+                fill_rect_rounded(px, W, H, x, y, e->w, e->h,
+                                  e->radius, e->radius, e->radius, e->radius, e->bg);
+            if ((e->border & 0xff000000u) && e->border_w > 0)
+                fill_rect_rounded_border(px, W, H, x, y, e->w, e->h,
+                                         e->radius, e->radius, e->radius, e->radius,
+                                         e->border_w, 1, 1, 1, 1, 0, e->border);
+            continue;
+        }
+        char buf[256];
+        lock_expand(e, buf, sizeof buf);
+        if (!buf[0]) continue;
+        const Font *f = font_px(e->font_px ? e->font_px : LOCK_FONT_SIZE, &font_small);
+        lock_place(e, W, H, text_width(f, buf), f->line_h, &x, &y);
+        draw_text(px, W, H, x, y, f, buf, e->fg);
+    }
 }
 
 /* Frame stage: buffer plumbing only — acquire, draw, attach. Keyboard only. */
@@ -147,7 +222,7 @@ static void lock_render(Widget *w) {
     BufSlot *s = widget_free_slot(w);
     if (!s) return;
 
-    lock_draw_bg(s->px, w->w, w->h);
+    lock_draw_bg(s->px, w->w, w->h, widget_pw(w), widget_ph(w));
     lock_draw_content(s->px, w->w, w->h);
 
     widget_attach(w, s, 0);

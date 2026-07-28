@@ -587,6 +587,7 @@ static void emit_overrides(FILE *o, Unit *u, CGCtx *ctx) {
     };
     emit_block_overrides(o, find_block(u, D_LOCK), "lock", lockmap,
                          (int)(sizeof lockmap / sizeof lockmap[0]), ctx);
+    fprintf(o, "#undef LOCK_CLOCK_MS\n#define LOCK_CLOCK_MS %d\n\n", lock_clock_ms(u));
 
     /* gamma block */
     static const OvMap gammamap[] = {
@@ -814,6 +815,10 @@ int codegen_emit(const char *dir, Unit *u, SemaResult *r) {
     snprintf(path, sizeof path, "%s/gen_overrides.h", dir);
     f = fopen(path, "w"); if (!f) { perror(path); return 1; }
     emit_overrides(f, u, &ctx); fclose(f);
+
+    snprintf(path, sizeof path, "%s/gen_lock.h", dir);
+    f = fopen(path, "w"); if (!f) { perror(path); return 1; }
+    emit_lock(f, u, &ctx); fclose(f);
 
     snprintf(path, sizeof path, "%s/gen_menus.h", dir);
     f = fopen(path, "w"); if (!f) { perror(path); return 1; }
