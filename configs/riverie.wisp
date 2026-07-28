@@ -481,11 +481,18 @@ lock {
 	ring_bad   = RED;
 	fg         = YELLOW;
 	dim        = #59000000;   // scrim over the wallpaper, not a text color
-	caps       = RED;
+	caps       = ORANGE;
 	prompt     = "Password";
 	pam        = "system-auth";
 	font_size  = 20;
 	wall       = true;
+
+	// No anchor bits → centered on both axes; x/y are then nudges.
+	frame card { width = 320; height = 96; radius = 8;
+	             bg = #d90e131c; border = BORD; border_width = 2; }
+	text dots  { text = "{dots}"; fg = TEXT; }
+	text caps_ind { y = 80; text = "CAPS LOCK"; show = caps;
+	                fg = ORANGE; font_size = 14; }
 }
 
 gamma {
