@@ -21,7 +21,7 @@ const TRAY_ICONS_ONLY = true;
 ```
 
 Colour properties **must** fold to a constant, so a `const` chain is how you get
-a palette. There is no palette file, no theme layer, this is it.
+a palette: one `const` per colour, referenced everywhere else.
 
 ## mut
 
@@ -178,7 +178,6 @@ for it in tray_s.items {
 ## Gotchas
 
 - `const` plus `mut` over 64 is an error: "too many consts/muts (max 64)".
-- `on_scroll`, `on_press`, `on_release` and `on_drag` are rejected by the parser: not implemented.
 - A handler parameter on a non-`for` widget is NULL.
 - `on_change(p)` on a slider fails `--emit`; use `on_change()`.
 - A bad easing in `animate()` is a codegen error, so `--check` alone will not catch it. Easing *properties* are checked by `--check`.

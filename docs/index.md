@@ -70,5 +70,5 @@ from mango IPC, hyprland IPC, river-status or `ext-workspace-v1`. See
 ## Gotchas
 
 - There is no live config reload: every edit means a rebuild, `wispctl reload` re-execs the daemon.
-- The DSL has no functions, loops, imports or string concatenation. Use the ternary and `"{interpolation}"`.
+- Conditionals are the ternary and strings join with `"{interpolation}"`; `for … in` is the only repetition.
 - A property that passes `wispc --check` is not necessarily built: run `--emit` too, see [[gotchas]].

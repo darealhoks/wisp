@@ -11,9 +11,8 @@ dependencies. wisp is one process that does all of it - because a bar, a hover
 panel, a notification slab, an app menu and a lock screen are the same thing, a
 layer-shell surface, configured differently.
 
-And you configure it in its own language. Not a theme file, not a plugin API: a
-`.wisp` file that the bundled compiler `wispc` lowers to C and links into the
-daemon. Writing `tags()` links the workspace client. Declaring an `osd` surface
+And you configure it in its own language: a `.wisp` file that the bundled
+compiler `wispc` lowers to C and links into the daemon. Writing `tags()` links the workspace client. Declaring an `osd` surface
 links the D-Bus client. A config that mentions neither produces a binary
 containing neither - you don't disable features, you never build them.
 

@@ -496,8 +496,7 @@ compile time; the others are runtime loops.
 4. **ext-workspace-v1**, the portable fallback: sway, niri, labwc, cosmic, kwin, hyprland, patched dwl.
 5. Nothing, in which case the tag row stays empty and a message is logged.
 
-That is the closed set. Wayfire's wire format rules it out and there is no
-plugin path.
+That is the closed set; Wayfire's wire format rules it out.
 
 What differs in practice:
 

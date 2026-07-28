@@ -34,7 +34,7 @@ is expanded.
 //! font_fallback = /usr/share/fonts/noto-emoji/NotoColorEmoji.ttf
 ```
 
-There is no `//! preset` key. The config in use is the `WISP=` path.
+The config in use is the `WISP=` path.
 
 ## Identifiers and keywords
 
@@ -44,7 +44,6 @@ There is no `//! preset` key. The config in use is the `WISP=` path.
 source surface widget const mut lock gamma wallpaper media compound
 region group for in cell true false exec emit set animate
 on_click on_right_click on_middle_click on_change
-on_scroll on_press on_release on_drag   # reserved, not implemented
 ```
 
 `menu`, `item` and `preset` are contextual, not reserved: `menu NAME {` is a

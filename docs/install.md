@@ -116,5 +116,5 @@ codegen; the full list of check-passes-emit-fails cases is in [[gotchas]].
 - `make` alone is not enough after an edit, use `make install`, because `wispctl reload` re-execs the installed binary.
 - `FRACTIONAL=1` with `FONT_BACKEND=bitmap` is a hard Makefile error; bitmap fonts can only pixel-double.
 - `FONT_BACKEND=baked` and `=freetype` were retired and now error out.
-- Only two configs ship: `riverie` and `anemoia`. `configs/minimal.wisp` and `configs/bar.wisp` do not exist.
+- Only two configs ship: `riverie` and `anemoia`.
 - `wispctl rebuild` needs the share dir (or `$WISP_SRC`) present, it shells out to `make -C` there.

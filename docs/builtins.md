@@ -140,8 +140,7 @@ strings. `value` is the scalar; `history` is a for-only ring of 8 entries.
 
 ## on_change
 
-A source may carry exactly one handler. Only `on_change()` is legal there; the
-parser accepts any `on_*` and sema rejects the rest.
+A source may carry exactly one handler, and `on_change()` is the one it takes.
 
 ```wisp
 source vol_s = pipewire() {
