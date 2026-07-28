@@ -476,11 +476,10 @@ surface pill {
 
 lock {
 	bg         = BLACK;
-	fade_ms    = 200;
 	ring       = PRIM;
 	ring_bad   = RED;
 	fg         = YELLOW;
-	dim        = #59000000;   // scrim over the wallpaper, not a text color
+	dim        = #60000000;   // scrim over the wallpaper, not a text color
 	caps       = ORANGE;
 	prompt     = "Password";
 	pam        = "system-auth";
@@ -512,7 +511,6 @@ wallpaper {
 	wipe_soft  = 200;
 	fade_ms    = 300;
 	bg         = BLACK;
-	fade_ms    = 200;
 }
 
 media {
