@@ -304,6 +304,21 @@ void fill_rect(uint32_t *px, int sw, int sh, int x, int y, int w, int h, uint32_
     fill_rect_px(px, SC(sw), SC(sh), SC(x), SC(y), SC(w), SC(h), c);
 }
 
+void fill_rect_over(uint32_t *px, int sw, int sh, int x, int y, int w, int h, uint32_t c) {
+    uint8_t a = (c >> 24) & 0xff;
+    if (!a) return;
+    if (a == 255) { fill_rect(px, sw, sh, x, y, w, h, c); return; }
+    sw = SC(sw); sh = SC(sh); x = SC(x); y = SC(y); w = SC(w); h = SC(h);
+    int x0 = x < 0 ? 0 : x, y0 = y < 0 ? 0 : y;
+    int x1 = x + w > sw ? sw : x + w, y1 = y + h > sh ? sh : y + h;
+    if (x0 >= x1 || y0 >= y1) return;
+    uint8_t cr = (c >> 16) & 0xff, cg = (c >> 8) & 0xff, cb = c & 0xff;
+    for (int j = y0; j < y1; j++) {
+        uint32_t *row = px + j * sw;
+        for (int i = x0; i < x1; i++) blend_over(&row[i], cr, cg, cb, a);
+    }
+}
+
 void draw_sparkline(uint32_t *px, int sw, int sh, int x, int y, int w, int h,
                     const float *ring, int len, int head, int cap,
                     double vmax, uint32_t fg) {

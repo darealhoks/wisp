@@ -146,7 +146,9 @@ static void lock_draw_bg(uint32_t *px, int W, int H, int PW, int PH) {
     (void)PW; (void)PH;
     clear_buf(px, W, H, LOCK_BG);
 #endif
-    if (LOCK_DIM & 0xff000000u) fill_rect(px, W, H, 0, 0, W, H, LOCK_DIM);
+    /* Src-over: fill_rect overwrites, which would replace the wallpaper with
+     * a flat translucent wash instead of scrimming it. */
+    if (LOCK_DIM & 0xff000000u) fill_rect_over(px, W, H, 0, 0, W, H, LOCK_DIM);
 }
 
 /* Expand a declared template: every LT_* byte is replaced by the value it
@@ -253,9 +255,13 @@ static void lock_render(Widget *w) {
     lock_draw_content(s->px, w->w, w->h);
 #if LOCK_FADE_MS > 0
     /* Buffers are premultiplied, so scaling all four channels by the same
-     * factor is the whole-surface fade — no per-primitive alpha plumbing. */
+     * factor is the whole-surface fade — no per-primitive alpha plumbing.
+     * ext-session-lock has nothing behind the surface (the compositor blanks
+     * the session the moment it locks), so this reads as a fade up from black,
+     * not a see-through fade over the desktop. That is the best the protocol
+     * allows. */
     if (ls.alpha < 255) {
-        size_t n = (size_t)w->w * w->h;
+        size_t n = (size_t)widget_pw(w) * widget_ph(w);
         for (size_t i = 0; i < n; i++) {
             uint32_t p = s->px[i];
             uint32_t rb = ((p & 0x00ff00ffu) * ls.alpha >> 8) & 0x00ff00ffu;

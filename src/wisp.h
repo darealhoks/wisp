@@ -431,6 +431,9 @@ void render_set_scale(int scale120);   /* 120ths: 120 = 1x, 180 = 1.5x */
 void clear_buf(uint32_t *px, int w, int h, uint32_t c);
 void clear_band(uint32_t *px, int w, int h, int y0, int y1, uint32_t c);
 void fill_rect(uint32_t *px, int sw, int sh, int x, int y, int w, int h, uint32_t c);
+/* Same rect, but src-over instead of overwrite — for a translucent wash that
+ * has to keep what is already in the buffer (the lock's `dim` over wallpaper). */
+void fill_rect_over(uint32_t *px, int sw, int sh, int x, int y, int w, int h, uint32_t c);
 void fill_rect_rounded(uint32_t *px, int sw, int sh,
                        int x, int y, int w, int h,
                        int r_tl, int r_tr, int r_br, int r_bl, uint32_t c);
