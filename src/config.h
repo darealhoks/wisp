@@ -271,5 +271,9 @@
 #ifndef LOCK_WRONG_MS
 #define LOCK_WRONG_MS    1200
 #endif
+/* Draw WALL_PATH (the wallpaper block's image) as the lock background. */
+#ifndef LOCK_WALLPAPER
+#define LOCK_WALLPAPER   0
+#endif
 
 #endif

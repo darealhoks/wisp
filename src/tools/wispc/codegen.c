@@ -583,6 +583,7 @@ static void emit_overrides(FILE *o, Unit *u, CGCtx *ctx) {
         {"caps",       "LOCK_CAPS",        1},
         {"font_size",  "LOCK_FONT_SIZE",   0},
         {"wrong_ms",   "LOCK_WRONG_MS",    0},
+        {"wall",       "LOCK_WALLPAPER",   3},
     };
     emit_block_overrides(o, find_block(u, D_LOCK), "lock", lockmap,
                          (int)(sizeof lockmap / sizeof lockmap[0]), ctx);

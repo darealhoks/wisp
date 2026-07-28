@@ -484,6 +484,7 @@ lock {
 	prompt     = "Password";
 	pam        = "system-auth";
 	font_size  = 20;
+	wall       = true;
 }
 
 gamma {

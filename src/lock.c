@@ -21,6 +21,7 @@
  */
 
 #include "wisp.h"
+#include "image.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -73,9 +74,46 @@ static const Font *font_px(int px, const Font *fall) {
 
 /* Background stage: everything under the prompt. Flat fill today; the seam a
  * lock wallpaper grows into. */
+#if LOCK_WALLPAPER
+/* The finished cover-fit of WALL_PATH, mmap'd from the disk cache the daemon
+ * seeds in wall.c. Read-only MAP_SHARED, so the daemon's copy and ours are the
+ * same page-cache pages — no private RSS, and no PNG decode on the critical
+ * path (a 4K decode is ~0.5 s of black screen). Kept mapped for the session:
+ * every keystroke repaints the whole surface. */
+static const uint32_t *bg_map;
+static int bg_map_w, bg_map_h;
+
+static void lock_draw_bg(uint32_t *px, int W, int H) {
+    if (!bg_map || bg_map_w != W || bg_map_h != H) {
+        image_bgcache_unmap(bg_map, bg_map_w, bg_map_h);
+        /* ponytail: compiled WALL_PATH, so a `wispctl wall` override isn't
+         * reflected — plumb the runtime path through the ctl socket if it
+         * ever matters. */
+        bg_map = image_bgcache_map(WALL_PATH, W, H);
+        bg_map_w = W; bg_map_h = H;
+        if (!bg_map) {
+            /* Cold cache (lock before the daemon ever painted this size):
+             * decode once and seed it, so the next lock is a map. */
+            int sw = 0, sh = 0;
+            uint8_t *src = image_load(WALL_PATH, &sw, &sh);
+            if (src && sw > 1 && sh > 1) {
+                image_blit_cover(px, W, H, src, sw, sh);
+                image_bgcache_store(WALL_PATH, W, H, px);
+                image_free(src);
+                bg_map = image_bgcache_map(WALL_PATH, W, H);
+                return;
+            }
+            image_free(src);
+        }
+    }
+    if (bg_map) memcpy(px, bg_map, (size_t)W * H * 4);
+    else clear_buf(px, W, H, LOCK_BG);
+}
+#else
 static void lock_draw_bg(uint32_t *px, int W, int H) {
     clear_buf(px, W, H, LOCK_BG);
 }
+#endif
 
 /* Content stage: black screen, a centered prompt that fills with asterisks as
  * you type, a wrong-password line, a CAPS line. Hardcoded layout — the seam

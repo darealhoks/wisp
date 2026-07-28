@@ -49,6 +49,12 @@ uint32_t *image_bgcache_load(const char *img_path, int W, int H);
 void      image_bgcache_store(const char *img_path, int W, int H,
                               const uint32_t *px);
 
+/* Same cache, mapped read-only instead of copied: the daemon and wisp-lock
+ * share the page-cache pages, so a second consumer costs no private RSS.
+ * NULL if the cache is stale/absent. Unmap with the same W,H. */
+const uint32_t *image_bgcache_map(const char *img_path, int W, int H);
+void            image_bgcache_unmap(const uint32_t *px, int W, int H);
+
 /* Same cover-fit, but dim each pixel toward `tint` (0xRRGGBB) as it's written,
  * folding a scrim into the single scaling pass. `base_a` (0..255) is applied
  * everywhere; `grad_a` is added on top, ramped 0→1 by smoothstep over the

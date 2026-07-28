@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -182,7 +183,7 @@ static int bgcache_hdr_ok(const char *path, int W, int H, int64_t mt) {
     return ok;
 }
 
-uint32_t *image_bgcache_load(const char *img_path, int W, int H) {
+const uint32_t *image_bgcache_map(const char *img_path, int W, int H) {
     int64_t mt;
     if (image_mtime(img_path, &mt) < 0) return NULL;
     char path[768];
@@ -190,18 +191,29 @@ uint32_t *image_bgcache_load(const char *img_path, int W, int H) {
     if (!bgcache_hdr_ok(path, W, H, mt)) return NULL;
     int fd = open(path, O_RDONLY | O_CLOEXEC);
     if (fd < 0) return NULL;
+    size_t len = sizeof(BgHdr) + (size_t)W * H * 4;
+    /* A truncated cache file would fault SIGBUS on touch, not short-read. */
+    struct stat st;
+    void *m = MAP_FAILED;
+    if (fstat(fd, &st) == 0 && (size_t)st.st_size >= len)
+        m = mmap(NULL, len, PROT_READ, MAP_SHARED, fd, 0);
+    close(fd);
+    if (m == MAP_FAILED) return NULL;
+    return (const uint32_t *)((const char *)m + sizeof(BgHdr));
+}
+
+void image_bgcache_unmap(const uint32_t *px, int W, int H) {
+    if (!px) return;
+    munmap((char *)px - sizeof(BgHdr), sizeof(BgHdr) + (size_t)W * H * 4);
+}
+
+uint32_t *image_bgcache_load(const char *img_path, int W, int H) {
+    const uint32_t *m = image_bgcache_map(img_path, W, H);
+    if (!m) return NULL;
     size_t bytes = (size_t)W * H * 4;
     uint32_t *bg = malloc(bytes);
-    if (bg) {
-        if (lseek(fd, sizeof(BgHdr), SEEK_SET) < 0) { free(bg); bg = NULL; }
-        size_t got = 0;
-        while (bg && got < bytes) {
-            ssize_t r = read(fd, (char *)bg + got, bytes - got);
-            if (r <= 0) { free(bg); bg = NULL; break; }
-            got += r;
-        }
-    }
-    close(fd);
+    if (bg) memcpy(bg, m, bytes);
+    image_bgcache_unmap(m, W, H);
     return bg;
 }
 
