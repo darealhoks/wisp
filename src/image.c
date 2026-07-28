@@ -67,7 +67,8 @@ uint8_t *image_load(const char *path, int *w, int *h) {
 
 /* Resolve a freedesktop icon *name* to a PNG path. Absolute paths pass
  * through; names are looked up under `extra` (an app-supplied theme dir, may
- * be NULL) and then the XDG data dirs' hicolor apps/ dirs and /usr/share/pixmaps.
+ * be NULL), then the XDG data dirs' hicolor apps/ dirs, loose icons/ root
+ * files, and /usr/share/pixmaps.
  * ponytail: no theme-index parsing, no SVG — hicolor+pixmaps PNGs cover the
  * installed apps here; extend to the full icon-theme spec if misses annoy. */
 int image_find_icon(const char *name, const char *extra, char *out, size_t sz) {
@@ -104,6 +105,12 @@ int image_find_icon(const char *name, const char *extra, char *out, size_t sz) {
                      dirs[d], sizes[si], sizes[si], name);
             if (stat(out, &st) == 0) return 1;
         }
+    /* spec fallback dir: loose PNGs dropped straight into <data>/icons/
+     * (AppImages do this, e.g. legcord) */
+    for (int d = 0; d < nd; d++) {
+        snprintf(out, sz, "%.160s/icons/%.100s.png", dirs[d], name);
+        if (stat(out, &st) == 0) return 1;
+    }
     snprintf(out, sz, "/usr/share/pixmaps/%.100s.png", name);
     return stat(out, &st) == 0;
 }
