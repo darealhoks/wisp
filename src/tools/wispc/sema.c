@@ -7,10 +7,8 @@
 /* A row here without a driver in codegen_sources.c makes --check pass and
  * --emit die — add the row in the same commit as the driver, never before. */
 static const SrcDef SOURCES[] = {
-    /* clock has no drv_field_expr template — it's only used bare ("{time}"),
-     * so its member set is empty; primary still types the bare ident. */
-    {"clock",                "value",  "", F_CLOCK },
-    {"cpu",                  "pct",    "pct load1", F_CPU },
+    {"clock",                "value",  "value", F_CLOCK },
+    {"cpu",                  "pct",    "pct", F_CPU },
     {"mem",                  "pct",    "pct used_mb", F_MEM },
     {"temp",                 "c",      "c", F_TEMP },
     {"bat",                  "pct",    "pct charging", F_BAT },
@@ -18,9 +16,9 @@ static const SrcDef SOURCES[] = {
     {"backlight",            "pct",    "pct", F_BACKLIGHT },
     {"power_profile",        "profile","profile", F_POWER },
     {"bluez",                "device", "powered connected device battery", F_BLUEZ },
-    {"disk",                 "pct",    "pct free_gb", F_DISK },
+    {"disk",                 "pct",    "pct", F_DISK },
     {"vpn",                  "state",  "state ok", F_VPN },
-    {"tags",             "title",  "title list occ act urg", F_TAGS },
+    {"tags",             "title",  "title list", F_TAGS },
     {"gamma_warm",           "value",  "value", F_NONE },
     {"dnd",                  "value",  "value", F_NONE },
     {"ui_hidden",            "value",  "value", F_NONE },
@@ -86,7 +84,7 @@ static const PropSchema SCHEMAS[] = {
       " fillet_br fillet_inner_bottom fillet_inner_left fillet_inner_right"
       " fillet_inner_top fillet_offset_y fillet_outer_bottom fillet_outer_left"
       " fillet_outer_right fillet_outer_top fillet_r fillet_tl fillet_tr"
-      " focus_follow font_size gap height hover icon_gap icons image input keyboard"
+      " focus_follow font_size gap height hover icon_gap icons image input"
       " layer margin max max_visible pad pad_x pad_y prog_fg prog_h prog_track"
       " prompt radius radius_bl radius_br radius_inner radius_outer radius_tl"
       " radius_tr reveal_anim_ms reveal_easing reveal_gutter reveal_on_hover"
@@ -95,10 +93,7 @@ static const PropSchema SCHEMAS[] = {
     { "group", "group",
       " align bg border border_width gap height pad pad_x radius " },
     { "lock", "lock block",
-      /* scrim/road: shipped in the anemoia preset's lock block; wisp-lock does
-       * not consume them today, but they are accepted names, not typos. */
-      " pam prompt bg ring ring_bad fg dim caps clock_size font_size wrong_ms"
-      " scrim road " },
+      " pam prompt bg ring ring_bad fg dim caps font_size wrong_ms " },
     { "gamma", "gamma block",
       " day_k night_k flat_k day_hour night_hour fade_min transition_ms " },
     { "wallpaper", "wallpaper block",
@@ -305,11 +300,11 @@ static void walk_expr(S *s, Expr *e) {
         d = find_decl_in(s->s.kon, s->s.nkon, n, L);
         if (d) { if (d->kind == D_MUT) add_dep(s, d->name); return; }
         if (find_decl_in(s->s.sur, s->s.nsur, n, L)) return;
-        /* Built-in enum identifiers (anchor/layer/align/keyboard values). */
+        /* Built-in enum identifiers (anchor/layer/align values). */
         static const char *ENUMS[] = {
             "top","bottom","left","right","center",
             "background","overlay",
-            "none","on_demand","exclusive",
+            "none",
             "vertical","horizontal",
             "start","end",                         /* alignment aliases */
             "bar","pill","circle","disc","knob",   /* slider thumb_shape */
@@ -341,10 +336,7 @@ static void walk_expr(S *s, Expr *e) {
                 const SrcDef *sd = find_src(d->source.call->call.name, d->source.call->call.nlen);
                 if (sd && !field_ok(sd, e->member.field, e->member.flen)) {
                     diag_error(e->loc, "source '%s' has no field '%.*s'", d->name, (int)e->member.flen, e->member.field);
-                    if (sd->fields[0])
-                        diag_hint(e->loc, "%s exposes: %s", sd->name, sd->fields);
-                    else
-                        diag_hint(e->loc, "%s has no fields — use it bare: \"{%s}\"", sd->name, d->name);
+                    diag_hint(e->loc, "%s exposes: %s", sd->name, sd->fields);
                 } else if (sd) {
                     /* list/history/items are list fields — only an iterable in a
                      * `for` head, never a scalar value. Codegen's lower_member
@@ -501,9 +493,6 @@ static void walk_widget(S *s, Widget *w) {
             walk_expr(s, b->prop->val);
             break;
         case WB_ONCLICK:
-        case WB_ONPRESS:
-        case WB_ONRELEASE:
-        case WB_ONDRAG:
         case WB_ONCHANGE:
         case WB_ONRCLICK:
         case WB_ONMCLICK:

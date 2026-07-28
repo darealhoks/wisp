@@ -260,12 +260,8 @@
 #ifndef LOCK_CAPS
 #define LOCK_CAPS        0xffe0c060u
 #endif
-/* Font pixel sizes; defaults are the two sizes every bake always includes.
- * Override via `lock { clock_size / font_size }` — wispc feeds those into the
+/* Font pixel size; override via `lock { font_size }` — wispc feeds it into the
  * baked size list, so the requested size actually exists at runtime. */
-#ifndef LOCK_CLOCK_SIZE
-#define LOCK_CLOCK_SIZE  22
-#endif
 #ifndef LOCK_FONT_SIZE
 #define LOCK_FONT_SIZE   14
 #endif

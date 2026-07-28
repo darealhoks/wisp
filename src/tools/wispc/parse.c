@@ -574,14 +574,18 @@ static Widget *parse_widget_or_cell(P *p, bool is_cell) {
             t.kind == TK_KW_ON_RCLICK  || t.kind == TK_KW_ON_MCLICK) {
             lex_next(&p->L);
             expect(p, TK_LPAREN, "'('");
+            /* No default: an unhandled keyword used to silently become
+             * on_click, so `on_scroll` compiled into a left-click handler. */
             switch (t.kind) {
-            case TK_KW_ON_PRESS:   b->kind = WB_ONPRESS;   break;
-            case TK_KW_ON_RELEASE: b->kind = WB_ONRELEASE; break;
-            case TK_KW_ON_DRAG:    b->kind = WB_ONDRAG;    break;
+            case TK_KW_ON_CLICK:   b->kind = WB_ONCLICK;   break;
             case TK_KW_ON_CHANGE:  b->kind = WB_ONCHANGE;  break;
             case TK_KW_ON_RCLICK:  b->kind = WB_ONRCLICK;  break;
             case TK_KW_ON_MCLICK:  b->kind = WB_ONMCLICK;  break;
-            default:               b->kind = WB_ONCLICK;   break;
+            default:
+                b->kind = WB_ONCLICK;
+                diag_error(t.loc, "'%.*s' is not implemented", (int)t.len, t.s);
+                diag_hint(t.loc, "widgets take on_click, on_right_click, on_middle_click");
+                break;
             }
             b->click.loc = t.loc;
             b->click.param = NULL; b->click.plen = 0;
@@ -670,9 +674,6 @@ static Decl *parse_source(P *p) {
             switch (t.kind) {
             case TK_KW_ON_CHANGE:  hk = WB_ONCHANGE;  break;
             case TK_KW_ON_CLICK:   hk = WB_ONCLICK;   break;
-            case TK_KW_ON_PRESS:   hk = WB_ONPRESS;   break;
-            case TK_KW_ON_RELEASE: hk = WB_ONRELEASE; break;
-            case TK_KW_ON_DRAG:    hk = WB_ONDRAG;    break;
             case TK_KW_ON_RCLICK:  hk = WB_ONRCLICK;  break;
             case TK_KW_ON_MCLICK:  hk = WB_ONMCLICK;  break;
             default:

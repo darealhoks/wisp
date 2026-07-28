@@ -1,0 +1,4 @@
+tests/diag/handler-not-implemented.wisp:3:5: error: 'on_scroll' is not implemented
+      on_scroll(d) = exec("true");
+      ^
+  help: widgets take on_click, on_right_click, on_middle_click

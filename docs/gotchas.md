@@ -6,18 +6,10 @@ Everything in wisp that compiles and does not do what you meant, in one place.
 
 | written | reality |
 |---|---|
-| `on_press`, `on_release`, `on_drag` | the body is never lowered, dead |
-| `on_scroll(d)` | reinterpreted as `on_click`; there is no wheel dispatch, and if the widget also has `on_click` the first one written wins |
 | a handler parameter on a non-`for` widget | bound to NULL, interpolating it prints garbage |
-| `keyboard = none\|on_demand\|exclusive` | inert on every declared surface; the runtime hardcodes non-interactive |
 | `margin` on a HUD | inert, the slide is a render offset not a margin tween |
-| `lock { scrim = …; road = …; }` | accepted names with no consumer |
-| `lock { clock_size = N; }` | inert since the lock became a plain prompt, still baked into the font size list |
-| `cpu.load1` | always the literal `0` |
-| `value_min` | typed numeric, in no schema, unwritable |
 | any OSD property on a bar, any menu property on an OSD | the surface schema is one union, unread properties are silent |
 | a `for` outside surface, widget, group or region scope | parses and is dropped |
-| `reveal_easing = ease-out` (hyphenated) | not an identifier, so it silently falls back to `ease_out` |
 
 ## Passes --check, fails --emit
 
@@ -28,11 +20,11 @@ Always run both.
 | more than 16 interpolated expressions in one string | `too many interp args` |
 | `slider;` without `value = <mut>` | `slider widget needs value = <mut>` |
 | `on_change(p)` on a slider | `unresolved identifier 'p'` |
-| more than 64 `const` plus `mut`, referencing a late one | `unresolved identifier 'X'`, caret on line 1 |
-| `disk.free_gb`, `tags.occ`, `tags.act`, `tags.urg` | `source 'x' has no field 'y'` |
+| more than 64 `const` plus `mut` | `too many consts/muts (max 64)` |
 | `every=` on `vpn`, `bat`, `disk`, `backlight` | `every= only applies to polled kinds` |
 | `every=` under 250 ms | `must be >= 250ms` |
 | an unknown or hyphenated easing in `animate()` | `unknown easing` |
+| `emit()` to a spawn template other than `osd` | `emit() only targets the osd spawn template` |
 | `animate()` on a string `mut` | `cannot animate a string mut` |
 | a colour property that will not constant-fold | hard colour eval error |
 | `inotify(path=)` relative, or extra keyword arguments | `inotify() …` |

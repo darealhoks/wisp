@@ -181,7 +181,7 @@ surface hud {
 	clip_top = 28;
 	reveal_on_hover = 28;
 	reveal_anim_ms  = 200;
-	reveal_easing   = ease-out;
+	reveal_easing   = ease_out;
 	bg = #ff0f1219;
 	border_width    = 0;
 	radius_bl       = 14;
@@ -376,8 +376,6 @@ lock {
 	fg       = #ffa8d5cc;
 	dim      = #ff7a808b;
 	caps     = #ffe0c060;
-	scrim    = #5c0e1622; // alpha = base dim strength
-	road     = #ffd9a24b;
 	prompt   = "Password";
 	pam      = "system-auth";
 }
@@ -413,7 +411,6 @@ surface menu {
 	spawned_by = menu;
 	layer = overlay;
 	exclusive_zone = -1;
-	keyboard = exclusive;
 
 	axis   = horizontal;
 	prompt = "run:";

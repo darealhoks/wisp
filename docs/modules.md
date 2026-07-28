@@ -59,7 +59,7 @@ plain panel with identical behaviour otherwise.
 | `cutout_into` | - | punch a transparent rect into another surface |
 | `cutout_x/y/width/height` | centre / own extent | the punched rect |
 
-**Inert here** (accepted, never read): `keyboard`, `spawned_by`, `reveal_*`,
+**Inert here** (accepted, never read): `spawned_by`, `reveal_*`,
 `max`, `gap`, `pad`, `pad_x`, `pad_y`, `icon_gap`, `image`, `prog_h`, `prog_fg`,
 `prog_track`, `body_lines`, `body_max`, `timeout*`, `slide_ms`, `fillet_r`,
 `separator`, `separator_frac`, `focus_follow`, `dbus_close`,
@@ -165,7 +165,7 @@ text lines up even on icon-less slabs.
 | `$muted`, `$urgency` | int |
 | `$mute`, `$warn` | derived, read by the `:mute` and `:warn` pseudos |
 
-**Inert on the OSD template:** `layer`, `exclusive_zone`, `keyboard`, `visible`,
+**Inert on the OSD template:** `layer`, `exclusive_zone`, `visible`,
 `input`, `reveal_*`, `clip_top`, `armpit_*`, `cutout_*`, `bg_bottom`,
 `radius_tl..br`, `radius_inner/outer`, the per-side border flags, and every menu
 property. `osd.c` creates and sizes the surface itself, so none of the declared
@@ -261,7 +261,7 @@ selection, for pointer-driven tray dropdowns; menus without it never repaint on
 motion, which is the idle-zero-CPU rule.
 
 **Inert on the menu template:** `layer`, `exclusive_zone` (though `-1` is still
-what flips on the menu feature), `keyboard`, and surface-level `bg`, `border`
+what flips on the menu feature), and surface-level `bg`, `border`
 and `radius`, because the body carries the look and `menu.c` owns the surface.
 Also all OSD props, `reveal_*`, `armpit_*`, `fillet_*`, `clip_top`, `cutout_*`,
 `visible`, `input`.
@@ -321,13 +321,10 @@ directly, it is not a socket command.
 | `fg` | `0xffa8d5cc` | |
 | `dim` | `0xff7a808b` | |
 | `caps` | `0xffe0c060` | caps-lock indicator |
-| `clock_size` | 22 | **inert**, still fed to the baked font size list |
 | `font_size` | 14 | also fed to the bake |
 | `wrong_ms` | 1200 | |
-| `scrim` | - | **inert**, accepted with no consumer |
-| `road` | - | **inert**, accepted with no consumer |
 
-`clock_size` and `font_size` are the only block properties `wispc --font-sizes`
+`font_size` is the only block property `wispc --font-sizes`
 scrapes, clamped to 4..256.
 
 Skeleton: [[templates#lock]].
@@ -514,9 +511,7 @@ What differs in practice:
 
 - Renaming the `osd`, `pill` or `menu` surface silently drops that engine; the name is load-bearing, not just `spawned_by`.
 - The surface property schema is one union, so OSD properties on a bar and menu properties on an OSD pass `--check` and do nothing.
-- `keyboard` is inert on every declared surface; the runtime hardcodes non-interactive.
 - `margin` is inert on a HUD, the slide is a render offset.
-- `lock { scrim; road }` and `clock_size` are accepted with no consumer.
 - A compound without `width` and `height`, a region without `edge`, or a region without an integer literal `size` is a hard error.
 - A `graph` inside a `group` is a hard error; a slider inside a group compiles fine despite older docs.
 - Anything above the rows in a menu template must declare a `height`, or the header height is measured as zero.

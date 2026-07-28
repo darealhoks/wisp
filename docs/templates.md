@@ -45,7 +45,7 @@ surface bar {
 - Naming it `bar` is what the tag accumulator and lock-on-output path look for.
 - `exclusive_zone` defaults to `height`; use `0` to overlay, `-1` to overlay *and* flip on the menu feature.
 - Adding radius, border, fillet, armpit, `bg_bottom`, `clip_widgets`, a cutout or a slider disables partial repaint for the whole surface.
-- `keyboard` is inert here, and so is every OSD or menu property you paste in by accident.
+- Every OSD or menu property you paste in by accident is inert here.
 
 ## Workspace tags
 
@@ -80,7 +80,7 @@ surface bar {
 
 - `tags.list` unrolls to 9 cells at compile time. Cell fields: `label` `index` `active` `urgent` `occupied` `pinned` `output`.
 - Always interpolate `{tag.output}` into the click, or clicks retarget the focused monitor.
-- Only `tags.title` reads as a scalar. `tags.occ`, `tags.act` and `tags.urg` pass `--check` and fail `--emit`.
+- Only `tags.title` reads as a scalar; per-tag state comes from the `for` cell (`tag.occupied` etc.).
 - `tag.pinned` is a compile-time mask from `tags(pinned=…)`, not compositor state.
 
 ## HUD
@@ -211,7 +211,6 @@ surface menu {
 	spawned_by = menu;
 	layer = overlay;
 	exclusive_zone = -1;
-	keyboard = exclusive;
 
 	axis = vertical;
 	width = 320;
@@ -260,7 +259,7 @@ menu emoji { preset = emoji; }
 - `axis = vertical` is the top-centred launcher float; the header row must declare a `height` or the header measures as zero.
 - `row_h` sizing is computed against font size 14, so set it explicitly whenever `font_size` is not 14.
 - `icons = true` decodes app icons and is the launcher's biggest RAM and IO cost.
-- Surface-level `bg`, `border`, `radius`, `layer` and `keyboard` are inert; the body carries the look. `exclusive_zone = -1` is still what flips on the menu feature.
+- Surface-level `bg`, `border`, `radius` and `layer` are inert; the body carries the look. `exclusive_zone = -1` is still what flips on the menu feature.
 
 ## Generic horizontal menu
 
@@ -269,7 +268,6 @@ surface menu {
 	spawned_by = menu;
 	layer = overlay;
 	exclusive_zone = -1;
-	keyboard = exclusive;
 
 	axis = horizontal;
 	prompt = "run:";
@@ -507,8 +505,7 @@ surface bar {
 
 - The lock is a separate binary, `wisp-lock`, which links PAM. The daemon never does, and `wispctl lock` execs it rather than talking to the socket.
 - `bg` is only the fallback fill when the wallpaper is missing.
-- `scrim`, `road` and `clock_size` are accepted and have no consumer.
-- `font_size` and `clock_size` are the only block properties that feed the baked font size list.
+- `font_size` is the only block property that feeds the baked font size list.
 
 ## Wallpaper and media
 

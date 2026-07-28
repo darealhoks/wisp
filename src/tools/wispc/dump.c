@@ -122,9 +122,6 @@ static void dump_widget(FILE *o, Widget *w, int ind) {
         switch (b->kind) {
         case WB_PROP:    dump_prop(o, b->prop, ind + 2); break;
         case WB_ONCLICK:
-        case WB_ONPRESS:
-        case WB_ONRELEASE:
-        case WB_ONDRAG:
         case WB_ONCHANGE:
         case WB_ONRCLICK:
         case WB_ONMCLICK:

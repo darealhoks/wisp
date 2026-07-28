@@ -58,6 +58,7 @@ Decl *find_konst(CGCtx *c, const char *name, size_t n) {
 }
 
 CE lower(CGCtx *c, Expr *e);
+static CE lower_inner(CGCtx *c, Expr *e);
 
 /* Substitute "$W" with the widget var in a template; returns malloc'd string. */
 char *expand_widget(const char *tmpl, const char *wvar) {
@@ -247,10 +248,10 @@ CE lower_member(CGCtx *c, Expr *e) {
             r.type = T_STR;
             return r;
         }
-        /* DRV_INOTIFY: only .value is valid, lowers to src_<n>_value. */
-        if (si->drv->drv == DRV_INOTIFY) {
+        /* DRV_CLOCK / DRV_INOTIFY: only .value is valid, lowers to src_<n>_value. */
+        if (si->drv->drv == DRV_CLOCK || si->drv->drv == DRV_INOTIFY) {
             if (flen != 5 || memcmp(fld, "value", 5) != 0) {
-                diag_error(e->loc, "codegen: inotify has no field '%.*s'", (int)flen, fld);
+                diag_error(e->loc, "codegen: %s has no field '%.*s'", si->drv->name, (int)flen, fld);
                 c->failed = 1;
                 CE z = { .text = "0", .type = T_UNK }; return z;
             }
@@ -388,6 +389,19 @@ CE lower_ident(CGCtx *c, Expr *e) {
     CE z = { .text = "0", .type = T_UNK }; return z;
 }
 
+/* One truncation check for all ~50 snprintf(r.text) sites: a clipped CE is
+ * silently-wrong generated C, and every other wispc limit is a loud error. */
+CE lower(CGCtx *c, Expr *e) {
+    CE r = lower_inner(c, e);
+    if (e && strnlen(r.text, sizeof r.text) >= sizeof r.text - 1) {
+        diag_error(e->loc, "codegen: expression too long (max %d bytes of C)",
+                   (int)sizeof r.text - 1);
+        diag_hint(e->loc, "split it into a const");
+        c->failed = 1;
+    }
+    return r;
+}
+
 const char *op_C(Op o) {
     switch (o) {
     case OP_ADD: return "+"; case OP_SUB: return "-";
@@ -414,7 +428,7 @@ static int str_part_cap(CGCtx *c, Expr *e) {
     return si->lines * 256;
 }
 
-CE lower(CGCtx *c, Expr *e) {
+static CE lower_inner(CGCtx *c, Expr *e) {
     CE r = { .text = "0", .type = T_UNK };
     if (!e) return r;
     switch (e->kind) {
@@ -561,6 +575,11 @@ CE lower(CGCtx *c, Expr *e) {
             }
         }
         fmt[fn] = 0;
+        if (fn >= sizeof fmt - 1) {
+            diag_error(e->loc, "codegen: interpolated string too long (max %d bytes of format)",
+                       (int)sizeof fmt - 1);
+            c->failed = 1;
+        }
         #undef FMTC
         #undef FMTS
         int bufsize = (int)budget;
@@ -670,9 +689,6 @@ static void emit_stmt_inner(FILE *o, CGCtx *ctx, Stmt *st, const char *indent,
                 else if (eL == 8 && !memcmp(en, "ease_out",    8)) easing_id = "EASE_OUT";
                 else if (eL == 11 && !memcmp(en, "ease_in_out",11)) easing_id = "EASE_IN_OUT";
                 else diag_error(e->loc, "unknown easing '%.*s'", (int)eL, en);
-            } else if (e->kind == EX_CALL && e->call.nlen == 13 &&
-                       !memcmp(e->call.name, "cubic_bezier", 12)) {
-                /* fall-through below */
             } else if (e->kind == EX_CALL && e->call.nlen == 12 &&
                        !memcmp(e->call.name, "cubic_bezier", 12) && e->call.nargs == 4) {
                 easing_id = "EASE_CUBIC_BEZIER";
@@ -749,10 +765,19 @@ static void emit_stmt_inner(FILE *o, CGCtx *ctx, Stmt *st, const char *indent,
             int wrote = snprintf(args + off, sizeof args - off, "(%s)", ce.text);
             if (wrote > 0) off += (size_t)wrote;
         }
+        if (off >= sizeof args - 1) {
+            diag_error(st->loc, "codegen: emit() argument list too long (max %d bytes)",
+                       (int)sizeof args - 1);
+            ctx->failed = 1;
+        }
         cgctx_flush_prelude(ctx, o, indent);
-        /* Forward decl + call. Only spawn_osd() is emitted (gen_spawn.c); any
-         * other template deliberately fails at link until a generic slot
-         * allocator exists. */
+        /* Only spawn_osd() is emitted (gen_spawn.c); any other template has no
+         * generic slot allocator, and used to fail at link with no source loc. */
+        if (strcmp(nm, "osd") != 0) {
+            diag_error(st->loc, "emit() only targets the `osd` spawn template, not '%s'", nm);
+            ctx->failed = 1;
+            return;
+        }
         fprintf(o, "%sextern void spawn_%s();\n", indent, nm);
         fprintf(o, "%sspawn_%s(%s);\n", indent, nm, args);
         return;

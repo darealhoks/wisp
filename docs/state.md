@@ -133,8 +133,6 @@ parameters and exactly one statement.
 | `on_right_click(p)` | right button |
 | `on_middle_click(p)` | middle button |
 | `on_change()` | sliders only, appended to the slider's set thunk |
-| `on_scroll(d)` | **parsed as `on_click`**, there is no wheel dispatch |
-| `on_press`, `on_release`, `on_drag` | **dead**, the body is never lowered |
 
 Any one handler alone makes a widget hit-testable. Max 64 hit entries per
 widget.
@@ -179,13 +177,12 @@ for it in tray_s.items {
 
 ## Gotchas
 
-- `const` plus `mut` over 64 truncates silently; the error surfaces as "unresolved identifier" on line 1.
-- `on_press`, `on_release` and `on_drag` parse and do nothing at all.
-- `on_scroll` is silently reinterpreted as `on_click`; if the widget also has `on_click`, the first one written wins.
+- `const` plus `mut` over 64 is an error: "too many consts/muts (max 64)".
+- `on_scroll`, `on_press`, `on_release` and `on_drag` are rejected by the parser: not implemented.
 - A handler parameter on a non-`for` widget is NULL.
 - `on_change(p)` on a slider fails `--emit`; use `on_change()`.
-- A bad easing in `animate()` is a codegen error, so `--check` alone will not catch it.
+- A bad easing in `animate()` is a codegen error, so `--check` alone will not catch it. Easing *properties* are checked by `--check`.
 - `animate()` on a string `mut` is an error.
 - A slider with `slider;` but no `value = …` fails `--emit`.
-- `emit()` to anything other than the `osd` template fails at link time, not at compile time.
+- `emit()` to anything other than the `osd` template is a codegen error.
 - A `{ … }` handler body without a trailing `;` is a parse error pointing at the next closing brace.

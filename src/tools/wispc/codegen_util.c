@@ -304,17 +304,25 @@ int transition_dur(Widget *wd, const char *which) {
     char buf[40]; snprintf(buf, sizeof buf, "transition_%s", which);
     return eval_int(widget_prop(wd, buf), 0);
 }
-const char *transition_easing_id(Widget *wd) {
-    Expr *e = widget_prop(wd, "transition_easing");
-    if (!e || e->kind != EX_IDENT) return "EASE_OUT";
-    const char *s = e->ident.s; size_t n = e->ident.n;
-    if (n == 6  && !memcmp(s, "linear",      6))  return "EASE_LINEAR";
-    if (n == 7  && !memcmp(s, "ease_in",     7))  return "EASE_IN";
-    if (n == 8  && !memcmp(s, "ease_out",    8))  return "EASE_OUT";
-    if (n == 11 && !memcmp(s, "ease_in_out", 11)) return "EASE_IN_OUT";
+/* One easing lookup for every prop that takes one. An unknown ident is a hard
+ * error, same as animate()'s easing arg — a typo used to fall back to EASE_OUT. */
+static const char *easing_of(Expr *e, const char *prop_name) {
+    if (!e) return "EASE_OUT";
+    if (e->kind == EX_IDENT) {
+        const char *s = e->ident.s; size_t n = e->ident.n;
+        if (n == 6  && !memcmp(s, "linear",      6))  return "EASE_LINEAR";
+        if (n == 7  && !memcmp(s, "ease_in",     7))  return "EASE_IN";
+        if (n == 8  && !memcmp(s, "ease_out",    8))  return "EASE_OUT";
+        if (n == 11 && !memcmp(s, "ease_in_out", 11)) return "EASE_IN_OUT";
+    }
+    diag_error(e->loc, "unknown easing for '%s'", prop_name);
+    diag_hint(e->loc, "%s accepts: linear ease_in ease_out ease_in_out", prop_name);
     return "EASE_OUT";
 }
-/* Step 6.2: like transition_easing_id but reads surface-level `reveal_easing`. */
+const char *transition_easing_id(Widget *wd) {
+    return easing_of(widget_prop(wd, "transition_easing"), "transition_easing");
+}
+/* Step 6.2: like transition_easing_id but reads a surface-level prop. */
 const char *surface_easing_id(Decl *sur, const char *prop_name) {
     Expr *e = NULL;
     for (int i = 0; i < sur->surface.n; i++) {
@@ -324,13 +332,7 @@ const char *surface_easing_id(Decl *sur, const char *prop_name) {
             e = b->prop->val; break;
         }
     }
-    if (!e || e->kind != EX_IDENT) return "EASE_OUT";
-    const char *s = e->ident.s; size_t n = e->ident.n;
-    if (n == 6  && !memcmp(s, "linear",      6))  return "EASE_LINEAR";
-    if (n == 7  && !memcmp(s, "ease_in",     7))  return "EASE_IN";
-    if (n == 8  && !memcmp(s, "ease_out",    8))  return "EASE_OUT";
-    if (n == 11 && !memcmp(s, "ease_in_out", 11)) return "EASE_IN_OUT";
-    return "EASE_OUT";
+    return easing_of(e, prop_name);
 }
 
 int item_has_any_transition(Widget *wd) {
@@ -390,14 +392,7 @@ int widget_has_vis_anim(Widget *wd) {
            (widget_enter_ms(wd) > 0 || widget_exit_ms(wd) > 0);
 }
 const char *widget_easing_id(Widget *wd, const char *prop_name) {
-    Expr *e = widget_prop(wd, prop_name);
-    if (!e || e->kind != EX_IDENT) return "EASE_OUT";
-    const char *s = e->ident.s; size_t n = e->ident.n;
-    if (n == 6  && !memcmp(s, "linear",      6))  return "EASE_LINEAR";
-    if (n == 7  && !memcmp(s, "ease_in",     7))  return "EASE_IN";
-    if (n == 8  && !memcmp(s, "ease_out",    8))  return "EASE_OUT";
-    if (n == 11 && !memcmp(s, "ease_in_out", 11)) return "EASE_IN_OUT";
-    return "EASE_OUT";
+    return easing_of(widget_prop(wd, prop_name), prop_name);
 }
 
 /* `orientation = vertical` (else horizontal). */

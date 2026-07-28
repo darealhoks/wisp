@@ -272,7 +272,7 @@ surface hud {
 	reveal_on_hover = 20;
 	reveal_gutter   = 3;
 	reveal_anim_ms  = 200;
-	reveal_easing   = ease-out;
+	reveal_easing   = ease_out;
 	visible = hid.value == "0";
 
 	widget gamma_btn.btn {
@@ -517,7 +517,6 @@ surface menu {
 	spawned_by = menu;
 	layer = overlay;
 	exclusive_zone = -1;
-	keyboard = exclusive;
 
 	axis        = vertical;
 	width       = 320;

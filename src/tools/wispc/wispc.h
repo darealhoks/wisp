@@ -149,7 +149,7 @@ struct Prop {
 /* Widget body items: properties, on_click handlers, nested for. */
 typedef enum {
     WB_PROP, WB_ONCLICK, WB_FOR,
-    WB_ONPRESS, WB_ONRELEASE, WB_ONDRAG, WB_ONCHANGE, WB_ONRCLICK, WB_ONMCLICK,
+    WB_ONCHANGE, WB_ONRCLICK, WB_ONMCLICK,
 } WBKind;
 typedef struct WBody {
     WBKind kind;

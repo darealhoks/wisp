@@ -17,7 +17,7 @@ Using the bare name reads the **primary** field: `text = bat_s;` is
 | call | primary | other fields | cost |
 |---|---|---|---|
 | `clock(fmt)` | `value` | none | timerfd, per-minute unless `fmt` has seconds |
-| `cpu([probe][, every=])` | `pct` | `load1` (always 0) | shared 1 s status tick |
+| `cpu([probe][, every=])` | `pct` | - | shared 1 s status tick |
 | `mem([every=])` | `pct` | `used_mb` | shared tick |
 | `temp([zone][, every=])` | `c` | none | shared tick, every 2nd |
 | `bat([name])` | `pct` | `charging` | uevent plus 60 s fallback |
@@ -25,7 +25,7 @@ Using the bare name reads the **primary** field: `text = bat_s;` is
 | `backlight([name])` | `pct` | none | uevent only, no timer |
 | `power_profile()` | `profile` | none | system bus |
 | `bluez()` | `device` | `powered` `connected` `battery` | system bus |
-| `disk([path])` | `pct` | `free_gb` (fails `--emit`) | own 30 s timer |
+| `disk([path])` | `pct` | - | own 30 s timer |
 | `vpn([probe])` | `state` | `ok` | rtnetlink, no poll |
 | `tags([labels=][, pinned=])` | `title` | `list` (for only), `occ` `act` `urg` (fail `--emit`) | workspace backend |
 | `gamma_warm()` | `value` | none | in process |
@@ -45,7 +45,7 @@ Zero-argument sources, where any argument is an error: `power_profile`, `dnd`,
 ## Time and system
 
 **`clock(fmt)`** takes exactly one string literal, a strftime format. It has no
-readable field, `clock.value` is a sema error; use the bare name. A format
+readable field, writable bare or as `clock.value`. A format
 containing seconds arms a 1 Hz timer, otherwise the timer is an absolute
 per-minute REALTIME wakeup.
 
@@ -59,7 +59,6 @@ source mem_s = mem(every="2s");
 source temp_s = temp(every="2s");
 ```
 
-`cpu.load1` compiles to the literal `0`. It is not wired to anything.
 
 **`bat([name])`** takes the battery name, `"BAT0"` by default behaviour of the
 driver. It runs on uevents with a 60 s fallback, not a 1 Hz tick. `charging` is
@@ -67,8 +66,7 @@ a bool.
 
 **`backlight([name])`** is pure uevent, zero timers.
 
-**`disk([path])`** polls on its own 30 s timer. `disk.pct` works; **`disk.free_gb`
-passes `--check` and fails `--emit`** with "source has no field".
+**`disk([path])`** polls on its own 30 s timer. `disk.pct` is its only field.
 
 ## Network
 
@@ -157,9 +155,6 @@ the global path.
 
 ## Gotchas
 
-- `disk.free_gb`, `tags.occ`, `tags.act`, `tags.urg` pass `wispc --check` and fail `wispc --emit`.
-- `cpu.load1` is always the constant `0`.
-- `clock.value` is a sema error, use the bare source name.
 - `every=` on `vpn`, `bat`, `disk` or `backlight` is an `--emit` error; those are not polled kinds.
 - `every=` below 250 ms is an `--emit` error.
 - More than 32 sources, or more than 16 `toplevel()` sources, is a hard codegen error.

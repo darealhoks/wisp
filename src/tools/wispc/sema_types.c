@@ -231,30 +231,29 @@ static PropTy prop_expected(const char *n, size_t L) {
         " exclusive_zone font_size clip_top gap radius radius_tl radius_tr"
         " radius_bl radius_br radius_inner radius_outer thumb_size thumb_radius"
         " thumb_border_width track_radius value_gap value_scale value_max"
-        " value_min shadow_x shadow_y shadow_blur shadow_spread body_lines"
+        " shadow_x shadow_y shadow_blur shadow_spread body_lines"
         " reveal_on_hover reveal_gutter reveal_anim_ms row_h max_visible size"
         " anchor_gap fillet_r fillet_offset_y armpit_inner armpit_outer"
         " armpit_tl armpit_tr armpit_bl armpit_br enter_anim exit_anim"
-        " separator_frac clock_size wrong_ms day_k night_k flat_k day_hour"
+        " separator_frac wrong_ms day_k night_k flat_k day_hour"
         " night_hour fade_min transition_ms fade_ms dither_px wipe_soft prog_h"
         " icon_gap icon_box ";
     static const char *COLOR =
         " bg fg icon_fg bg_bottom border press_bg shadow track_bg track_fg thumb_color"
         " thumb_border prog_fg prog_track armpit_color separator ring ring_bad"
-        " dim caps scrim road ";
+        " dim caps ";
     if (word_in(NUM,   n, L)) return PT_NUM;
     if (word_in(COLOR, n, L)) return PT_COLOR;
     return PT_ANY;
 }
 
 /* ---------- enum props ---------- */
-enum { E_LAYER, E_ANCHOR, E_ALIGN, E_KEYBOARD, E_AXIS, E_THUMB, E_VALIGN,
-       E_EDGE, E_INPUT, E_TRANSITION, E_WIPEDIR, E_N };
+enum { E_LAYER, E_ANCHOR, E_ALIGN, E_AXIS, E_THUMB, E_VALIGN,
+       E_EDGE, E_INPUT, E_TRANSITION, E_WIPEDIR, E_EASING, E_N };
 static const char *ENUM_SETS[E_N] = {
     [E_LAYER]      = "background bottom top overlay",
     [E_ANCHOR]     = "top bottom left right",
     [E_ALIGN]      = "left right top bottom center start end",
-    [E_KEYBOARD]   = "none on_demand exclusive",
     [E_AXIS]       = "vertical horizontal",
     [E_THUMB]      = "bar pill circle disc knob none",
     [E_VALIGN]     = "start center end top bottom left right",
@@ -262,6 +261,7 @@ static const char *ENUM_SETS[E_N] = {
     [E_INPUT]      = "none",
     [E_TRANSITION] = "fade dither wipe",
     [E_WIPEDIR]    = "right left down up down_right down_left up_right up_left",
+    [E_EASING]     = "linear ease_in ease_out ease_in_out",
 };
 
 static int enum_prop_set(const char *n, size_t L, int *is_flag) {
@@ -271,7 +271,6 @@ static int enum_prop_set(const char *n, size_t L, int *is_flag) {
     P("layer", E_LAYER, 0);
     P("anchor", E_ANCHOR, 1);
     P("align", E_ALIGN, 0);
-    P("keyboard", E_KEYBOARD, 0);
     P("axis", E_AXIS, 0);
     P("orientation", E_AXIS, 0);
     P("thumb_shape", E_THUMB, 0);
@@ -281,6 +280,10 @@ static int enum_prop_set(const char *n, size_t L, int *is_flag) {
     P("input", E_INPUT, 0);
     P("transition", E_TRANSITION, 0);
     P("wipe_dir", E_WIPEDIR, 0);
+    P("transition_easing", E_EASING, 0);
+    P("reveal_easing", E_EASING, 0);
+    P("enter_easing", E_EASING, 0);
+    P("exit_easing", E_EASING, 0);
     #undef P
     return -1;
 }

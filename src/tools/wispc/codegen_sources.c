@@ -11,8 +11,7 @@
 /* DrvKind / SrcDrv are declared in codegen_internal.h. */
 static const SrcDrv DRVS[] = {
     { "clock",   DRV_CLOCK,   {{0}} },
-    { "cpu",     DRV_STATUS,  {{"pct", "(status.cpu_t10 / 10)", 0},
-                               {"load1", "0", 0}} },  /* load1 stub: status.c has no loadavg yet */
+    { "cpu",     DRV_STATUS,  {{"pct", "(status.cpu_t10 / 10)", 0}} },
     { "mem",     DRV_STATUS,  {{"pct", "wispgen_mem_pct()", 0},
                                {"used_mb", "(status.mem_used_kb / 1024)", 0}} },
     { "temp",    DRV_STATUS,  {{"c", "status.cpu_temp", 0}} },

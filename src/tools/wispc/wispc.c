@@ -174,11 +174,10 @@ static void print_font_sizes(Unit *u) {
     for (int i = 0; i < u->n; i++) {
         Decl *d = u->decls[i];
         if (d->kind == D_LOCK) {
-            /* lock { clock_size / font_size } sizes must be baked too. */
+            /* lock { font_size } must be baked too. */
             for (int j = 0; j < d->block.n; j++) {
                 Prop *p = d->block.props[j];
-                if ((p->nlen != 10 || memcmp(p->name, "clock_size", 10) != 0) &&
-                    (p->nlen != 9  || memcmp(p->name, "font_size",  9) != 0))
+                if (p->nlen != 9 || memcmp(p->name, "font_size", 9) != 0)
                     continue;
                 if (!p->val || p->val->kind != EX_INT) continue;
                 int v = (int)p->val->i;

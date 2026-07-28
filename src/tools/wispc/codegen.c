@@ -581,7 +581,6 @@ static void emit_overrides(FILE *o, Unit *u, CGCtx *ctx) {
         {"fg",         "LOCK_FG",          1},
         {"dim",        "LOCK_DIM",         1},
         {"caps",       "LOCK_CAPS",        1},
-        {"clock_size", "LOCK_CLOCK_SIZE",  0},
         {"font_size",  "LOCK_FONT_SIZE",   0},
         {"wrong_ms",   "LOCK_WRONG_MS",    0},
     };
@@ -792,8 +791,15 @@ int codegen_emit(const char *dir, Unit *u, SemaResult *r) {
     /* Collect const/mut. */
     Decl *konst[64]; int nkonst = 0;
     for (int i = 0; i < u->n; i++)
-        if (u->decls[i]->kind == D_CONST || u->decls[i]->kind == D_MUT)
-            if (nkonst < 64) konst[nkonst++] = u->decls[i];
+        if (u->decls[i]->kind == D_CONST || u->decls[i]->kind == D_MUT) {
+            if (nkonst == 64) {
+                /* Dropping entry 65 silently resurfaced far away as
+                 * "unresolved identifier" with a caret on line 1. */
+                diag_error(u->decls[i]->loc, "too many consts/muts (max 64)");
+                return 1;
+            }
+            konst[nkonst++] = u->decls[i];
+        }
 
     CGCtx ctx = { .srcs = srcs, .nsrc = nsrc, .konst = konst, .nkonst = nkonst, .r = r };
 
