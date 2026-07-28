@@ -583,6 +583,7 @@ static void emit_overrides(FILE *o, Unit *u, CGCtx *ctx) {
         {"caps",       "LOCK_CAPS",        1},
         {"font_size",  "LOCK_FONT_SIZE",   0},
         {"wrong_ms",   "LOCK_WRONG_MS",    0},
+        {"fade_ms",    "LOCK_FADE_MS",     0},
         {"retry_ms",   "LOCK_RETRY_MS",    0},
         {"retry_growth","LOCK_RETRY_GROWTH",0},
         {"retry_max_ms","LOCK_RETRY_MAX_MS",0},

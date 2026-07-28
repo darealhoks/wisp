@@ -30,6 +30,7 @@
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/timerfd.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -55,7 +56,11 @@ static struct {
     int64_t wrong_until;         /* no attempt accepted before this */
     pid_t   helper_pid;
     int     helper_fd;
-} ls = { .helper_fd = -1 };
+    int     fade_fd;             /* only alive while a fade runs (idle = 0 ticks) */
+    int     fade_dir;            /* +1 appearing, -1 disappearing, 0 settled */
+    int64_t fade_t0;
+    unsigned alpha;              /* 0..255, applied to the whole surface */
+} ls = { .helper_fd = -1, .fade_fd = -1, .alpha = LOCK_FADE_MS > 0 ? 0 : 255 };
 
 /* Count codepoints in `s` so the dot row mirrors typed characters, not bytes. */
 static int utf8_count(const char *s, int len) {
@@ -246,6 +251,19 @@ static void lock_render(Widget *w) {
 
     lock_draw_bg(s->px, w->w, w->h, widget_pw(w), widget_ph(w));
     lock_draw_content(s->px, w->w, w->h);
+#if LOCK_FADE_MS > 0
+    /* Buffers are premultiplied, so scaling all four channels by the same
+     * factor is the whole-surface fade — no per-primitive alpha plumbing. */
+    if (ls.alpha < 255) {
+        size_t n = (size_t)w->w * w->h;
+        for (size_t i = 0; i < n; i++) {
+            uint32_t p = s->px[i];
+            uint32_t rb = ((p & 0x00ff00ffu) * ls.alpha >> 8) & 0x00ff00ffu;
+            uint32_t ag = (((p >> 8) & 0x00ff00ffu) * ls.alpha) & 0xff00ff00u;
+            s->px[i] = rb | ag;
+        }
+    }
+#endif
 
     widget_attach(w, s, 0);
 }
@@ -258,6 +276,37 @@ void lock_render_all(void) {
     for (int i = 0; i < MAX_WIDGETS; i++)
         if (widgets[i].kind == W_LOCK) lock_render(&widgets[i]);
 }
+
+/* Whole-surface fade. Its timerfd exists only while a fade runs and is closed
+ * the moment it settles, so a locked-but-idle screen still wakes 0 times. */
+#if LOCK_FADE_MS > 0
+static void fade_stop(void) {
+    if (ls.fade_fd < 0) return;
+    epoll_del_fd(ls.fade_fd);
+    close(ls.fade_fd);
+    ls.fade_fd = -1;
+    ls.fade_dir = 0;
+}
+
+static void fade_start(int dir) {
+    ls.fade_dir = dir;
+    ls.fade_t0 = now_ms();
+    ls.alpha = dir > 0 ? 0 : 255;
+    if (ls.fade_fd < 0) {
+        ls.fade_fd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
+        if (ls.fade_fd < 0) { ls.fade_dir = 0; ls.alpha = 255; return; }
+        epoll_add_fd(ls.fade_fd);
+    }
+    struct itimerspec it = { .it_interval = { .tv_nsec = 16000000 },
+                             .it_value    = { .tv_nsec = 16000000 } };
+    timerfd_settime(ls.fade_fd, 0, &it, NULL);
+    lock_render_all();
+}
+#else
+static void fade_start(int dir) { (void)dir; }
+#endif
+
+int lock_fade_fd(void) { return ls.fade_fd; }
 
 /* Spawn a lock surface + Widget(W_LOCK) for one Output. Called from
  * lock_engage for each existing output, and from lock_on_output_added on
@@ -301,11 +350,15 @@ void lock_on_surf_configure(Widget *w, uint32_t serial, int width, int height) {
 void lock_on_locked(void) {
     ls.locked_state = 1;
     msg("lock: locked");
+    fade_start(1);
 }
 
 /* Full teardown: invoked on successful unlock OR on `finished` rejection.
  * Destroys every per-output lock widget and resets shared state. */
 static void teardown_all(int issued_unlock) {
+#if LOCK_FADE_MS > 0
+    fade_stop();
+#endif
     if (ls.helper_fd >= 0) {
         epoll_del_fd(ls.helper_fd);
         close(ls.helper_fd);
@@ -331,6 +384,32 @@ static void teardown_all(int issued_unlock) {
     ls.fails = 0;
     ls.wrong_until = 0;
     ls.requested = ls.locked_state = 0;
+}
+
+static void finish_unlock(void) {
+    if (id_slock) wl_req(id_slock, SLOCK_REQ_UNLOCK_AND_DESTROY, NULL, 0, -1);
+    teardown_all(1);
+}
+
+/* One 60 Hz fade step. Smoothstep, not a real easing curve — anim.c isn't
+ * linked into wisp-lock and one fade doesn't justify pulling it in. */
+void lock_on_fade_tick(void) {
+#if LOCK_FADE_MS > 0
+    uint64_t exp;
+    (void)!read(ls.fade_fd, &exp, sizeof exp);
+    int64_t el = now_ms() - ls.fade_t0;
+    int done = el >= LOCK_FADE_MS;
+    float t = done ? 1.0f : (float)el / (float)LOCK_FADE_MS;
+    t = t * t * (3.0f - 2.0f * t);
+    if (ls.fade_dir < 0) t = 1.0f - t;
+    ls.alpha = (unsigned)(t * 255.0f + 0.5f);
+    if (done) {
+        int out = ls.fade_dir < 0;
+        fade_stop();
+        if (out) { finish_unlock(); return; }   /* teardown renders nothing */
+    }
+    lock_render_all();
+#endif
 }
 
 void lock_on_finished(void) {
@@ -398,8 +477,8 @@ void lock_on_helper_event(void) {
     int ok = (n > 0 && buf[0] == 'o');
     if (ok) {
         msg("lock: unlock");
-        if (id_slock) wl_req(id_slock, SLOCK_REQ_UNLOCK_AND_DESTROY, NULL, 0, -1);
-        teardown_all(1);
+        if (LOCK_FADE_MS > 0) fade_start(-1);   /* unlock lands when it ends */
+        else finish_unlock();
     } else {
         ls.wrong = 1;
         ls.fails++;
@@ -411,6 +490,7 @@ void lock_on_helper_event(void) {
 void lock_on_key(Widget *w, uint32_t key, uint32_t state, uint32_t mods) {
     (void)w; (void)mods;
     if (state == 0) return;
+    if (ls.fade_dir < 0) return;   /* already unlocking; the surface is going away */
     if (key == KEY_LSHIFT || key == KEY_RSHIFT || key == KEY_CAPSLOCK) return;
 
     /* The wrong flash doubles as the retry timer: it clears when the backoff

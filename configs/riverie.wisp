@@ -476,6 +476,7 @@ surface pill {
 
 lock {
 	bg         = BLACK;
+	fade_ms    = 200;
 	ring       = PRIM;
 	ring_bad   = RED;
 	fg         = YELLOW;
@@ -504,6 +505,7 @@ wallpaper {
 	wipe_soft  = 200;
 	fade_ms    = 300;
 	bg         = BLACK;
+	fade_ms    = 200;
 }
 
 media {

@@ -93,7 +93,7 @@ static const PropSchema SCHEMAS[] = {
     { "group", "group",
       " align bg border border_width gap height pad pad_x radius " },
     { "lock", "lock block",
-      " pam prompt bg ring ring_bad fg dim caps font_size wrong_ms wall"
+      " pam prompt bg ring ring_bad fg dim caps font_size wrong_ms wall fade_ms"
       " retry_ms retry_growth retry_max_ms lockout_after privacy"
       " wipe_on_backspace " },
     { "lock_frame", "lock frame",

@@ -802,6 +802,8 @@ void lock_on_surf_configure(Widget *w, uint32_t serial, int width, int height);
 void lock_on_key(Widget *w, uint32_t key, uint32_t state, uint32_t mods);
 void lock_on_helper_event(void);         /* helper pipe became readable */
 int  lock_helper_fd(void);               /* -1 when no helper running */
+int  lock_fade_fd(void);                 /* -1 unless a fade is running */
+void lock_on_fade_tick(void);            /* one fade step; closes the fd at the end */
 int  lock_active(void);
 /* Hotplug: spawn a lock surface for an output that arrives mid-lock,
  * and quietly drop one when its output goes away. */

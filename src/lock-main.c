@@ -126,6 +126,8 @@ int main(int argc, char **argv) {
                      * session must stay locked even if init tries to clean
                      * us up; only PAM success ends the lock. */
                 }
+            } else if (fd == lock_fade_fd()) {
+                lock_on_fade_tick();
             } else if (fd == lock_helper_fd()) {
                 lock_on_helper_event();
             } else if (fd == key_rep_tfd) {

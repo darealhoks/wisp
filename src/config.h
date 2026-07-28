@@ -303,6 +303,11 @@
 #ifndef LOCK_WALLPAPER
 #define LOCK_WALLPAPER   0
 #endif
+/* Appear/disappear crossfade of the whole lock surface, ms. 0 = instant, and
+ * the fade timerfd is then never created. */
+#ifndef LOCK_FADE_MS
+#define LOCK_FADE_MS     0
+#endif
 /* Repaint period for a declared `{time}` element; 0 = no clock, no timer. */
 #ifndef LOCK_CLOCK_MS
 #define LOCK_CLOCK_MS    0
