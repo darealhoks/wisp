@@ -271,6 +271,34 @@
 #ifndef LOCK_WRONG_MS
 #define LOCK_WRONG_MS    1200
 #endif
+/* Rate limiting. Delay after the Nth wrong password is
+ * LOCK_RETRY_MS * LOCK_RETRY_GROWTH^(N-1), clamped to LOCK_RETRY_MAX_MS and
+ * never below LOCK_WRONG_MS. 0 = only the wrong-flash, no throttle. */
+#ifndef LOCK_RETRY_MS
+#define LOCK_RETRY_MS    0
+#endif
+#ifndef LOCK_RETRY_GROWTH
+#define LOCK_RETRY_GROWTH 2
+#endif
+#ifndef LOCK_RETRY_MAX_MS
+#define LOCK_RETRY_MAX_MS 300000
+#endif
+/* Wrong tries after which the lock latches `locked_out` and every further
+ * attempt waits LOCK_RETRY_MAX_MS. Deliberately not permanent: this is the
+ * only door back into the session, so a hard brick would be a self-DoS. */
+#ifndef LOCK_LOCKOUT_AFTER
+#define LOCK_LOCKOUT_AFTER 0
+#endif
+/* Don't reveal how much is typed: {dots} shows at most one mark, {count}
+ * shows nothing. */
+#ifndef LOCK_PRIVACY
+#define LOCK_PRIVACY     0
+#endif
+/* One backspace clears the whole buffer (pairs with privacy — with no visible
+ * length, per-character deletion is unusable anyway). */
+#ifndef LOCK_WIPE_ON_BACKSPACE
+#define LOCK_WIPE_ON_BACKSPACE 0
+#endif
 /* Draw WALL_PATH (the wallpaper block's image) as the lock background. */
 #ifndef LOCK_WALLPAPER
 #define LOCK_WALLPAPER   0

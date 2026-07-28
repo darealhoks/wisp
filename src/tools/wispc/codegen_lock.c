@@ -20,6 +20,9 @@
 #define LSHOW_CAPS       3
 #define LSHOW_VERIFYING  4
 #define LSHOW_LAYOUT_ALT 5
+#define LSHOW_EMPTY      6
+#define LSHOW_THROTTLED  7
+#define LSHOW_LOCKED_OUT 8
 #define LSHOW_NEG     0x80
 
 static Expr *elem_prop(LockElem *e, const char *name) {
@@ -54,7 +57,10 @@ static int lock_show(Expr *e) {
     if (ident_is(e, "caps"))       return LSHOW_CAPS | neg;
     if (ident_is(e, "verifying"))  return LSHOW_VERIFYING | neg;
     if (ident_is(e, "layout_alt")) return LSHOW_LAYOUT_ALT | neg;
-    diag_error(e->loc, "lock show= must be always/typing/wrong/caps/verifying/layout_alt, optionally negated with '!'");
+    if (ident_is(e, "empty"))      return LSHOW_EMPTY | neg;
+    if (ident_is(e, "throttled"))  return LSHOW_THROTTLED | neg;
+    if (ident_is(e, "locked_out")) return LSHOW_LOCKED_OUT | neg;
+    diag_error(e->loc, "lock show= must be always/typing/empty/wrong/caps/verifying/layout_alt/throttled/locked_out, optionally negated with '!'");
     return LSHOW_ALWAYS;
 }
 

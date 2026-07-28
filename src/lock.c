@@ -51,7 +51,8 @@ static struct {
     char    input[256];          /* UTF-8 bytes (passwords can be multi-byte) */
     int     input_len;
     int     wrong;
-    int64_t wrong_until;
+    int     fails;               /* wrong tries this session; drives the delay */
+    int64_t wrong_until;         /* no attempt accepted before this */
     pid_t   helper_pid;
     int     helper_fd;
 } ls = { .helper_fd = -1 };
@@ -62,6 +63,22 @@ static int utf8_count(const char *s, int len) {
     for (int i = 0; i < len; i++)
         if ((((unsigned char)s[i]) & 0xc0) != 0x80) n++;
     return n;
+}
+
+static int locked_out(void) {
+    return LOCK_LOCKOUT_AFTER > 0 && ls.fails >= LOCK_LOCKOUT_AFTER;
+}
+static int throttled(void) { return now_ms() < ls.wrong_until; }
+
+/* Backoff for the ls.fails'th wrong try. Computed in int64 and clamped, so a
+ * config with a large growth can't overflow into a negative (= no) delay. */
+static int64_t retry_delay(void) {
+    int64_t d = LOCK_RETRY_MS;
+    int growth = LOCK_RETRY_GROWTH < 1 ? 1 : LOCK_RETRY_GROWTH;
+    if (locked_out()) return LOCK_RETRY_MAX_MS;
+    for (int i = 1; i < ls.fails && d < LOCK_RETRY_MAX_MS; i++) d *= growth;
+    if (d > LOCK_RETRY_MAX_MS) d = LOCK_RETRY_MAX_MS;
+    return d < LOCK_WRONG_MS ? LOCK_WRONG_MS : d;
 }
 
 int lock_active(void)   { return ls.requested; }
@@ -137,12 +154,14 @@ static void lock_expand(const LockEl *e, char *out, size_t cap) {
         switch ((unsigned char)*p) {
         case LT_DOTS: {
             int n = utf8_count(ls.input, ls.input_len);
+            if (LOCK_PRIVACY) n = n > 0;
             if (n > (int)sizeof tmp - 1) n = (int)sizeof tmp - 1;
             memset(tmp, '*', (size_t)n); tmp[n] = 0;
             break;
         }
         case LT_COUNT:
-            snprintf(tmp, sizeof tmp, "%d", utf8_count(ls.input, ls.input_len));
+            if (LOCK_PRIVACY) tmp[0] = 0;
+            else snprintf(tmp, sizeof tmp, "%d", utf8_count(ls.input, ls.input_len));
             break;
         case LT_LAYOUT: v = xkb_layout_name(); break;
         case LT_PROMPT: v = LOCK_PROMPT; break;
@@ -172,6 +191,9 @@ static int lock_show(const LockEl *e) {
     case LSHOW_CAPS:       v = xkb_caps_on; break;
     case LSHOW_VERIFYING:  v = ls.helper_pid > 0; break;
     case LSHOW_LAYOUT_ALT: v = xkb_group != 0; break;
+    case LSHOW_EMPTY:      v = ls.input_len == 0; break;
+    case LSHOW_THROTTLED:  v = throttled(); break;
+    case LSHOW_LOCKED_OUT: v = locked_out(); break;
     default:               v = 1; break;
     }
     return (e->show & LSHOW_NEG) ? !v : v;
@@ -306,6 +328,7 @@ static void teardown_all(int issued_unlock) {
     explicit_bzero(ls.input, sizeof ls.input);
     ls.input_len = 0;
     ls.wrong = 0;
+    ls.fails = 0;
     ls.wrong_until = 0;
     ls.requested = ls.locked_state = 0;
 }
@@ -379,7 +402,8 @@ void lock_on_helper_event(void) {
         teardown_all(1);
     } else {
         ls.wrong = 1;
-        ls.wrong_until = now_ms() + LOCK_WRONG_MS;
+        ls.fails++;
+        ls.wrong_until = now_ms() + retry_delay();
         lock_render_all();
     }
 }
@@ -389,7 +413,10 @@ void lock_on_key(Widget *w, uint32_t key, uint32_t state, uint32_t mods) {
     if (state == 0) return;
     if (key == KEY_LSHIFT || key == KEY_RSHIFT || key == KEY_CAPSLOCK) return;
 
-    if (ls.wrong) { ls.wrong = 0; ls.wrong_until = 0; }
+    /* The wrong flash doubles as the retry timer: it clears when the backoff
+     * has run out, not on the next keystroke. Nothing repaints in between —
+     * the only observer is the next key, and this stays a 0-tick idle. */
+    if (ls.wrong && !throttled()) ls.wrong = 0;
 
     if (key == KEY_ESC) {
         explicit_bzero(ls.input, sizeof ls.input);
@@ -399,7 +426,7 @@ void lock_on_key(Widget *w, uint32_t key, uint32_t state, uint32_t mods) {
     }
     if (key == KEY_BS) {
         if (ls.input_len > 0) {
-            int nl = utf8_back(ls.input, ls.input_len);
+            int nl = LOCK_WIPE_ON_BACKSPACE ? 0 : utf8_back(ls.input, ls.input_len);
             explicit_bzero(ls.input + nl, ls.input_len - nl);
             ls.input_len = nl;
             ls.input[nl] = 0;
@@ -408,7 +435,7 @@ void lock_on_key(Widget *w, uint32_t key, uint32_t state, uint32_t mods) {
         return;
     }
     if (key == KEY_ENTER) {
-        if (ls.input_len == 0) return;
+        if (ls.input_len == 0 || throttled()) return;
         spawn_helper();
         return;
     }

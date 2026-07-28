@@ -781,7 +781,8 @@ enum { LEL_FRAME = 0, LEL_TEXT };
 enum { LT_DOTS = 1, LT_COUNT, LT_LAYOUT, LT_PROMPT, LT_TIME };
 /* `show =` conditions; LSHOW_NEG is OR'd in by a `!cond`. */
 enum { LSHOW_ALWAYS = 0, LSHOW_TYPING, LSHOW_WRONG, LSHOW_CAPS,
-       LSHOW_VERIFYING, LSHOW_LAYOUT_ALT, LSHOW_NEG = 0x80 };
+       LSHOW_VERIFYING, LSHOW_LAYOUT_ALT, LSHOW_EMPTY, LSHOW_THROTTLED,
+       LSHOW_LOCKED_OUT, LSHOW_NEG = 0x80 };
 /* Anchor bits: absent on an axis = centered on it. */
 enum { LA_TOP = 1, LA_BOTTOM = 2, LA_LEFT = 4, LA_RIGHT = 8 };
 
