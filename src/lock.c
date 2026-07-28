@@ -71,17 +71,16 @@ static const Font *font_px(int px, const Font *fall) {
     return fall;
 }
 
-/* Render one lock surface: black screen, a centered prompt that fills with
- * asterisks as you type, a wrong-password line, a CAPS line. Keyboard only. */
-static void lock_render(Widget *w) {
-    if (!w->configured || w->w <= 0 || w->h <= 0) return;
-    widget_ensure_pool(w, 1);
-    BufSlot *s = widget_free_slot(w);
-    if (!s) return;
-    int W = w->w, H = w->h;
+/* Background stage: everything under the prompt. Flat fill today; the seam a
+ * lock wallpaper grows into. */
+static void lock_draw_bg(uint32_t *px, int W, int H) {
+    clear_buf(px, W, H, LOCK_BG);
+}
 
-    clear_buf(s->px, W, H, LOCK_BG);
-
+/* Content stage: black screen, a centered prompt that fills with asterisks as
+ * you type, a wrong-password line, a CAPS line. Hardcoded layout — the seam
+ * codegen takes over when the lock body becomes a declared surface. */
+static void lock_draw_content(uint32_t *px, int W, int H) {
     const Font *fs = font_px(LOCK_FONT_SIZE, &font_small);
     int cx = W / 2, cy = H / 2;
 
@@ -90,17 +89,28 @@ static void lock_render(Widget *w) {
         char stars[128];
         if (n > (int)sizeof stars - 1) n = (int)sizeof stars - 1;
         memset(stars, '*', n); stars[n] = 0;
-        draw_text(s->px, W, H, cx - text_width(fs, stars) / 2,
+        draw_text(px, W, H, cx - text_width(fs, stars) / 2,
                   cy - fs->line_h / 2, fs, stars, LOCK_FG);
     }
 
     if (ls.wrong)
-        draw_text(s->px, W, H, cx - text_width(fs, "wrong password") / 2,
+        draw_text(px, W, H, cx - text_width(fs, "wrong password") / 2,
                   cy + fs->line_h, fs, "wrong password", LOCK_RING_WRONG);
 
     if (xkb_caps_on)
-        draw_text(s->px, W, H, cx - text_width(fs, "CAPS") / 2,
+        draw_text(px, W, H, cx - text_width(fs, "CAPS") / 2,
                   cy + 2 * fs->line_h + 8, fs, "CAPS", LOCK_CAPS);
+}
+
+/* Frame stage: buffer plumbing only — acquire, draw, attach. Keyboard only. */
+static void lock_render(Widget *w) {
+    if (!w->configured || w->w <= 0 || w->h <= 0) return;
+    widget_ensure_pool(w, 1);
+    BufSlot *s = widget_free_slot(w);
+    if (!s) return;
+
+    lock_draw_bg(s->px, w->w, w->h);
+    lock_draw_content(s->px, w->w, w->h);
 
     widget_attach(w, s, 0);
 }
