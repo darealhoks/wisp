@@ -87,7 +87,7 @@ static const PropSchema SCHEMAS[] = {
       " fillet_inner_top fillet_offset_y fillet_outer_bottom fillet_outer_left"
       " fillet_outer_right fillet_outer_top fillet_r fillet_tl fillet_tr"
       " focus_follow font_size gap height hover icon_gap icons image input"
-      " layer margin max max_visible pad pad_x pad_y prog_fg prog_h prog_track"
+      " layer margin margin_x max max_visible pad pad_x pad_y prog_fg prog_h prog_track"
       " prompt radius radius_bl radius_br radius_inner radius_outer radius_tl"
       " radius_tr reveal_anim_ms reveal_easing reveal_gutter reveal_on_hover"
       " delay_ms dismiss_on_unfocus keyboard on_escape row_h scroll separator separator_frac separator_h size slide_ms sort spawned_by terminal"

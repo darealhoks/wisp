@@ -363,6 +363,7 @@ surface notifs {
 	layer   = overlay;
 	anchor  = top | right;
 	margin  = 46;          // clears the bar (height 34 + its own margin 6)
+	margin_x = 6;          // flush with the bar's right edge
 	width   = 380;
 	height  = 420;
 	exclusive_zone = -1;
@@ -376,7 +377,7 @@ surface notifs {
 	dismiss_on_unfocus;    // clicking anywhere else closes it, like a dropdown
 	                       // (kbd is on_demand, so an open panel never eats typing)
 
-	bg = #ee0e131c;
+	bg = CRUST;
 	radius = 8;
 	border = BORD;
 	border_width = 2;
@@ -543,14 +544,16 @@ surface osd {
 	fg = TEXT;
 }
 
-#osd:warn {
-	bg = REST;
-}
+// text-only: a per-slab bg breaks the seamless chain the stacked slabs read as
 #osd widget:warn {
 	fg = ORANGE;
 }
 #prog:warn {
 	track_fg = ORANGE;
+}
+
+#osd widget:urgent {
+	fg = RED;
 }
 #prog:mute {
 	track_fg = RED;

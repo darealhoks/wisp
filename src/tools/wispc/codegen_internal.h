@@ -298,7 +298,7 @@ void emit_hit_snapshot(FILE *o, const char *nm);
  * gutter/armpit/fillet-corner numbers. cid_* is the wedge direction per corner
  * (see the anchor switch in emit_generated_surface). */
 typedef struct {
-    int anchor, layer, margin, width, height, excl_zone;
+    int anchor, layer, margin, margin_x, width, height, excl_zone;
     int gut_g, gutter_top, gutter_bottom, armpit, reveal_g;
     int cid_tl, cid_tr, cid_br, cid_bl;
 } SurGeom;

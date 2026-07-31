@@ -155,7 +155,7 @@ int emit_surface_life(FILE *o, Decl *sur, CGCtx *ctx, const char *nm,
     } else {
         /* Always set, even at 0: a reload adopts the old process's layer
          * surface, which may carry the previous preset's margin. */
-        fprintf(o, "    widget_set_margin(w, %d, %d, %d, %d);\n", g->margin, g->margin, g->margin, g->margin);
+        fprintf(o, "    widget_set_margin(w, %d, %d, %d, %d);\n", g->margin, g->margin_x, g->margin, g->margin_x);
         fprintf(o, "    widget_set_exclusive_zone(w, %d);\n", g->excl_zone);
         /* `on_escape` needs key events, and a layer surface only gets them with
          * keyboard interactivity. Default `on_demand`: an exclusive panel eats

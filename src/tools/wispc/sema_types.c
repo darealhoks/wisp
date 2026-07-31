@@ -227,7 +227,7 @@ typedef enum { PT_ANY, PT_NUM, PT_COLOR } PropTy;
 static PropTy prop_expected(const char *n, size_t L) {
     static const char *NUM =
         " width height pad pad_x pad_y x_offset y_offset border_width"
-        " border_top border_bottom border_left border_right margin"
+        " border_top border_bottom border_left border_right margin margin_x"
         " exclusive_zone font_size clip_top gap radius radius_tl radius_tr"
         " radius_bl radius_br radius_inner radius_outer thumb_size thumb_radius"
         " thumb_border_width track_radius value_gap value_scale value_max"

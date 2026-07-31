@@ -92,6 +92,9 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     int height        = eval_int   (surface_prop(sur, "height"),         24);
     int width         = eval_int   (surface_prop(sur, "width"),          0);
     int margin        = eval_int   (surface_prop(sur, "margin"),         0);
+    /* Horizontal inset, so a panel can clear the bar vertically while keeping
+     * the bar's own side inset (uniform `margin` would push it off the edge). */
+    int margin_x      = eval_int   (surface_prop(sur, "margin_x"),  margin);
     /* HUD surfaces with `reveal_on_hover = N` get an N-px trigger strip on the
      * slide edge (top for anchor=top, etc) that receives pointer-enter to drive
      * reveal. `reveal_gutter` is the UNPAINTED band on that same edge — bar/
@@ -1196,7 +1199,7 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     }
     fputs("}\n\n", o);
 
-    SurGeom __g = { anchor, layer, margin, width, height, excl_zone,
+    SurGeom __g = { anchor, layer, margin, margin_x, width, height, excl_zone,
                     gut_g, gutter_top, gutter_bottom, armpit, reveal_g,
                     cg_cid_tl, cg_cid_tr, cg_cid_br, cg_cid_bl };
     int __rc = emit_surface_life(o, sur, ctx, nm, items, nitems, &__g);
