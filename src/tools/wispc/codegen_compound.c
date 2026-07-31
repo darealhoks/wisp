@@ -202,13 +202,15 @@ int emit_generated_compound(FILE *o, Decl *cmp, CGCtx *ctx, const char *nm) {
         }
 
         /* Per-region hit table + dispatch state. */
-        fprintf(o, "typedef struct { int x, y, w, h; int kind; int arg; int slider_idx; int st_idx; } %s_Hit;\n", rnm);
+        fprintf(o, "typedef struct { int x, y, w, h; int kind; int arg; int slider_idx; int st_idx; const char *tip; } %s_Hit;\n", rnm);
         fprintf(o, "static %s_Hit __%s_hits_buf[64];\n", rnm, rnm);
         fprintf(o, "static int __%s_nhit;\n", rnm);
         fprintf(o, "static int __%s_pressed_idx = -1;\n", rnm);
         fprintf(o, "static int __%s_pressed_slider = -1;\n", rnm);
         fprintf(o, "static int __%s_pressed_st = -1;\n", rnm);
         fprintf(o, "static Widget *__%s_pressed_w;\n", rnm);
+        fprintf(o, "static int __%s_hover_st __attribute__((unused)) = -1;\n", rnm);
+        fprintf(o, "static Widget *__%s_hover_w __attribute__((unused));\n", rnm);
         fprintf(o, "static Widget *__%s_widgets[4]; static int __%s_nw;\n", rnm, rnm);
         emit_hit_store(o, rnm, 4);
         fputs("\n", o);
@@ -232,6 +234,9 @@ int emit_generated_compound(FILE *o, Decl *cmp, CGCtx *ctx, const char *nm) {
 
         /* render_<rnm>(Widget *w): paint just this region. */
         fprintf(o, "void render_%s(Widget *w) {\n", rnm);
+        /* The render clip is process-global: any early return below would hand
+         * the next surface's draw whatever band this one left armed. */
+        fputs("    render_clip_reset();\n", o);
         fputs("    if (!w->configured || w->w <= 0 || w->h <= 0) return;\n", o);
         fprintf(o, "    int __wi = __%s_slot(w); if (__wi < 0) __wi = 0; (void)__wi;\n", rnm);
         fputs("    widget_ensure_pool(w, 1);\n", o);
@@ -289,8 +294,8 @@ int emit_generated_compound(FILE *o, Decl *cmp, CGCtx *ctx, const char *nm) {
         fputs("    (void)__reg_x; (void)__reg_y; (void)__reg_w; (void)__reg_h;\n", o);
         if (vertical) fputs("    int y = __reg_y; (void)y;\n", o);
         else          fputs("    int y = __reg_y + (__reg_h - f->line_h) / 2;\n", o);
-        fprintf(o, "    struct { int tw, vis; uint32_t cp, fg, icon_fg, bg, border, press_bg; const uint32_t *pm; int pms; const char *txt; int pad, align; int h; int ch; int body_lines; } st[%d];\n", arr);
-        fprintf(o, "    for (int __i = 0; __i < %d; __i++) { st[__i].vis = 0; st[__i].h = 0; st[__i].ch = 0; st[__i].body_lines = 1; st[__i].border = 0; st[__i].press_bg = 0; st[__i].icon_fg = 0; }\n", arr);
+        fprintf(o, "    struct { int tw, vis; uint32_t cp, fg, icon_fg, bg, border, press_bg, hover_bg; const uint32_t *pm; int pms; const char *txt; int pad, align; int h; int ch; int body_lines; } st[%d];\n", arr);
+        fprintf(o, "    for (int __i = 0; __i < %d; __i++) { st[__i].vis = 0; st[__i].h = 0; st[__i].ch = 0; st[__i].body_lines = 1; st[__i].border = 0; st[__i].press_bg = 0; st[__i].hover_bg = 0; st[__i].icon_fg = 0; }\n", arr);
         fputs("    (void)st;\n", o);
         fputs("    int center_total = 0;\n", o);
         fprintf(o, "    int end_extent = %s;\n", vertical ? "__reg_h" : "__reg_w");
@@ -342,6 +347,9 @@ int emit_generated_compound(FILE *o, Decl *cmp, CGCtx *ctx, const char *nm) {
 
     /* Compound-level dispatchers: route by widget identity to per-region fn. */
     fprintf(o, "void render_%s(Widget *w) {\n", nm);
+    /* The render clip is process-global: the no-match tail below returns
+     * without drawing, so clear it before dispatching. */
+    fputs("    render_clip_reset();\n", o);
     for (int r = 0; r < nregs; r++) {
         const char *regname = sname(regs[r]->name, regs[r]->nlen);
         fprintf(o, "    for (int i = 0; i < __%s_%s_nw; i++) if (__%s_%s_widgets[i] == w) { render_%s_%s(w); return; }\n",
@@ -349,23 +357,25 @@ int emit_generated_compound(FILE *o, Decl *cmp, CGCtx *ctx, const char *nm) {
     }
     fputs("    (void)w;\n}\n\n", o);
 
-    const char *fns[4] = { "on_press", "on_release", "on_motion", "on_click" };
-    const char *sigs[4] = {
+    const char *fns[5] = { "on_press", "on_release", "on_motion", "on_click", "on_leave" };
+    const char *sigs[5] = {
         "Widget *w, int wx, int wy, int btn",
         "Widget *w, int wx, int wy, int btn",
         "Widget *w, int wx, int wy",
         "Widget *w, int wx, int wy, int btn",
+        "Widget *w",
     };
-    const char *args[4] = { "w, wx, wy, btn", "w, wx, wy, btn", "w, wx, wy", "w, wx, wy, btn" };
-    for (int k = 0; k < 4; k++) {
+    const char *args[5] = { "w, wx, wy, btn", "w, wx, wy, btn", "w, wx, wy", "w, wx, wy, btn", "w" };
+    for (int k = 0; k < 5; k++) {
         fprintf(o, "void %s_%s(%s) {\n", nm, fns[k], sigs[k]);
         for (int r = 0; r < nregs; r++) {
             const char *regname = sname(regs[r]->name, regs[r]->nlen);
             fprintf(o, "    for (int i = 0; i < __%s_%s_nw; i++) if (__%s_%s_widgets[i] == w) { %s_%s_%s(%s); return; }\n",
                     nm, regname, nm, regname, nm, regname, fns[k], args[k]);
         }
-        if (k == 2) fputs("    (void)w; (void)wx; (void)wy;\n", o);
-        else        fputs("    (void)w; (void)wx; (void)wy; (void)btn;\n", o);
+        if (k == 4)      fputs("    (void)w;\n", o);
+        else if (k == 2) fputs("    (void)w; (void)wx; (void)wy;\n", o);
+        else             fputs("    (void)w; (void)wx; (void)wy; (void)btn;\n", o);
         fputs("}\n\n", o);
     }
 
@@ -395,7 +405,9 @@ int emit_generated_compound(FILE *o, Decl *cmp, CGCtx *ctx, const char *nm) {
 int emit_surfaces(FILE *o, Unit *u, CGCtx *ctx) {
     reg_reset();
     fputs("/* Generated by wispc. Do not edit. */\n", o);
-    fputs("#include \"wisp.h\"\n#include <stdio.h>\n#include <string.h>\n#include <stdlib.h>\n#include <unistd.h>\n#include <signal.h>\n\n", o);
+    fputs("#include \"wisp.h\"\n#include <stdio.h>\n#include <string.h>\n#include <stdlib.h>\n#include <unistd.h>\n#include <signal.h>\n", o);
+    if (ctx->r && ctx->r->has_image) fputs("#include \"image.h\"\n", o);
+    fputs("\n", o);
     /* tags(labels=, pinned=) override the config.h defaults per-preset. */
     {
         const char *labels = NULL; size_t llen = 0;
@@ -579,7 +591,9 @@ int emit_surfaces(FILE *o, Unit *u, CGCtx *ctx) {
           "}\n\n", o);
 
     /* First pass: emit each surface's render/click/create_on/redraw_all. */
-    const char *surf_names[16]; int nsurf = 0;
+    const char *surf_names[16]; int surf_scroll[16] = {0}; int nsurf = 0;
+    int surf_snap[16] = {0};   /* `scroll = rows` — a notch is one row, not N px */
+    const char *surf_esc[16] = {0};   /* `on_escape` command string, NULL = none */
     /* Menus join the render/input/redraw dispatchers but not the tags or
      * title fanouts — they have no bar state and no visibility lifecycle. */
     const char *menu_names[8]; int nmenu = 0;
@@ -626,7 +640,14 @@ int emit_surfaces(FILE *o, Unit *u, CGCtx *ctx) {
             int is_menu_tmpl = sb && sb->kind == EX_IDENT
                             && sb->ident.n == 4 && memcmp(sb->ident.s, "menu", 4) == 0;
             if (is_menu_tmpl && surface_has_body(d)
-                && emit_menu_render(o, d, NULL, ctx, "menu_default")) return 1;
+                && emit_menu_render(o, d, NULL, ctx, "menu_default", 0)) return 1;
+            /* `spawned_by = tooltip` → render_tooltip(): a one-body label
+             * surface, same lowering as a menu with `$text` in place of the
+             * `menu` self-local. Symbol name is fixed so tooltip.c can call it
+             * regardless of what the decl is called. */
+            int is_tip = sb && sb->kind == EX_IDENT
+                      && sb->ident.n == 7 && memcmp(sb->ident.s, "tooltip", 7) == 0;
+            if (is_tip && emit_menu_render(o, d, NULL, ctx, "tooltip", 1)) return 1;
             continue;
         }
         if (d->is_menu) {
@@ -637,11 +658,33 @@ int emit_surfaces(FILE *o, Unit *u, CGCtx *ctx) {
             char *mn = malloc(d->nlen + 8);
             sprintf(mn, "menu_%.*s", (int)d->nlen, d->name);
             menu_names[nmenu++] = mn;
-            if (emit_menu_render(o, d, menu_tmpl, ctx, mn)) return 1;
+            if (emit_menu_render(o, d, menu_tmpl, ctx, mn, 0)) return 1;
             continue;
         }
         char *nm_dup = strndup0(d->name, d->nlen);
         if (nsurf >= 16) { diag_error(d->loc, "codegen: too many surfaces"); free(nm_dup); return 1; }
+        {
+            Expr *sc = d->kind == D_SURFACE ? surface_prop(d, "scroll") : NULL;
+            surf_snap[nsurf] = sc && sc->kind == EX_IDENT && sc->ident.n == 4
+                            && memcmp(sc->ident.s, "rows", 4) == 0;
+            surf_scroll[nsurf] = surf_snap[nsurf] ? 1 : eval_int(sc, 0);
+        }
+        surf_esc[nsurf] = NULL;
+        if (d->kind == D_SURFACE) {
+            Expr *esc = surface_prop(d, "on_escape");
+            if (esc && esc->kind == EX_STRING) {
+                /* Emitted into a C string literal below, so quote/backslash
+                 * have to survive the trip. */
+                char *q = malloc(esc->str.n * 2 + 1); size_t k = 0;
+                for (size_t j = 0; j < esc->str.n; j++) {
+                    char c = esc->str.s[j];
+                    if (c == '"' || c == '\\') q[k++] = '\\';
+                    q[k++] = c;
+                }
+                q[k] = 0;
+                surf_esc[nsurf] = q;
+            }
+        }
         surf_names[nsurf++] = nm_dup;
         if (d->kind == D_COMPOUND) {
             if (emit_generated_compound(o, d, ctx, nm_dup)) return 1;
@@ -692,6 +735,48 @@ int emit_surfaces(FILE *o, Unit *u, CGCtx *ctx) {
     }
     fputs("    (void)w; (void)wx; (void)wy;\n}\n\n", o);
 
+    fputs("void bar_input_leave(Widget *w) {\n", o);
+    for (int i = 0; i < ndisp; i++) {
+        fprintf(o, "    for (int i = 0; i < __%s_nw; i++) if (__%s_widgets[i] == w) { %s_on_leave(w); return; }\n",
+                disp_names[i], disp_names[i], disp_names[i]);
+    }
+    fputs("    (void)w;\n}\n\n", o);
+
+    /* Wheel: only surfaces that declared `scroll` get a branch, so a config
+     * with none compiles to a stub the compositor's axis events fall through. */
+    fputs("void bar_input_scroll(Widget *w, int dir) {\n", o);
+    for (int i = 0; i < nsurf; i++) {
+        if (!surf_scroll[i]) continue;
+        /* The pointer doesn't move, so no motion event follows the notch — but
+         * the row under it did. Re-aim hover against the pre-scroll hit table,
+         * offset by the applied delta (rows shift up by exactly that), so the
+         * single render already paints the new highlight instead of retargeting
+         * a frame later. Non-start-aligned items don't scroll, so probing them
+         * shifted can mis-hit — same limitation as the scroll itself. The hover
+         * damage band is dropped: every row moved, so this frame must be whole. */
+        char step[128];
+        if (surf_snap[i]) snprintf(step, sizeof step, "__%s_row_step(w, dir)", surf_names[i]);
+        else              snprintf(step, sizeof step, "widget_scroll(w, dir * %d)", surf_scroll[i]);
+        fprintf(o, "    for (int i = 0; i < __%s_nw; i++) if (__%s_widgets[i] == w) { int __d = %s; if (__d) { %s_hover_set(w, ptr_x, ptr_y + __d); w->dmg_y0 = 0; w->dmg_y1 = 0; render_%s(w); } return; }\n",
+                surf_names[i], surf_names[i], step, surf_names[i], surf_names[i]);
+    }
+    fputs("    (void)w; (void)dir;\n}\n\n", o);
+
+    /* Escape on a keyboard-interactive surface (`on_escape = "<cmd>"`). Only
+     * surfaces that declared it get a branch; evdev KEY_ESC is 1. */
+    fputs("void bar_input_key(Widget *w, unsigned key) {\n", o);
+    for (int i = 0; i < nsurf; i++) {
+        if (!surf_esc[i] && !surf_scroll[i]) continue;
+        fprintf(o, "    for (int i = 0; i < __%s_nw; i++) if (__%s_widgets[i] == w) {\n",
+                surf_names[i], surf_names[i]);
+        if (surf_esc[i])
+            fprintf(o, "        if (key == 1) { exec_cmd(\"%s\"); return; }\n", surf_esc[i]);
+        /* Arrows/Enter on a scrollable container — the generated selection walk. */
+        if (surf_scroll[i]) fprintf(o, "        %s_on_key(w, key);\n", surf_names[i]);
+        fputs("        return; }\n", o);
+    }
+    fputs("    (void)w; (void)key;\n}\n\n", o);
+
     fputs("void bar_redraw_all(void) {\n", o);
     for (int i = 0; i < ndisp; i++)
         fprintf(o, "    %s_redraw();\n", disp_names[i]);
@@ -703,7 +788,7 @@ int emit_surfaces(FILE *o, Unit *u, CGCtx *ctx) {
     (void)has_tags_src;
     fputs("extern void wispgen_tags_changed(void);\n", o);
     fputs("static void __apply_tags(Widget *w, uint32_t m, uint32_t a, uint32_t u) {\n"
-          "    w->s.bar.tag_mask = m; w->s.bar.active_mask = a; w->s.bar.urgent_mask = u; w->s.bar.have_tags = 1;\n"
+          "    w->tag_mask = m; w->active_mask = a; w->urgent_mask = u; w->have_tags = 1;\n"
           "}\n", o);
     fputs("void bar_set_tags(uint32_t m, uint32_t a, uint32_t u) {\n", o);
     for (int i = 0; i < nsurf; i++)
@@ -715,11 +800,11 @@ int emit_surfaces(FILE *o, Unit *u, CGCtx *ctx) {
           "    wispgen_tags_changed();\n}\n", o);
     fputs("void bar_set_title(const char *s) {\n", o);
     for (int i = 0; i < nsurf; i++)
-        fprintf(o, "    for (int i = 0; i < __%s_nw; i++) snprintf(__%s_widgets[i]->s.bar.title, MAX_TEXT, \"%%s\", s ? s : \"\");\n",
+        fprintf(o, "    for (int i = 0; i < __%s_nw; i++) snprintf(__%s_widgets[i]->title, MAX_TEXT, \"%%s\", s ? s : \"\");\n",
                 surf_names[i], surf_names[i]);
     fputs("    wispgen_tags_changed();\n}\n", o);
     fputs("void bar_set_title_on(Output *o, const char *s) {\n"
-          "    if (o && o->bar) snprintf(o->bar->s.bar.title, MAX_TEXT, \"%s\", s ? s : \"\");\n"
+          "    if (o && o->bar) snprintf(o->bar->title, MAX_TEXT, \"%s\", s ? s : \"\");\n"
           "    wispgen_tags_changed();\n}\n\n", o);
 
     emit_reg_destroyed(o);

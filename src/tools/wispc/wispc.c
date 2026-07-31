@@ -60,6 +60,8 @@ static void emit_features(FILE *o, SemaResult *r) {
     P(net_rates_used, "NET_RATES");
     P(has_pipewire, "PIPEWIRE");
     P(has_toplevel, "TOPLEVEL");
+    P(has_tooltip, "TOOLTIP");
+    fprintf(o, "#define NOTIF_HIST_CAP %d\n", NOTIF_HIST_CAP);
     #undef P
     fputs("\n#endif\n", o);
 }
@@ -72,6 +74,7 @@ static void emit_objects_mk(FILE *o, SemaResult *r) {
     fputs("    $(BUILD)/wl.o \\\n", o);
     fputs("    $(BUILD)/widget.o \\\n", o);
     fputs("    $(BUILD)/render.o \\\n", o);
+    fputs("    $(BUILD)/render_arc.o \\\n", o);
     /* elide/wrap text fitting — the generated widget path always references it. */
     fputs("    $(BUILD)/textfit.o \\\n", o);
     fputs("    $(BUILD)/ctl.o \\\n", o);
@@ -98,10 +101,11 @@ static void emit_objects_mk(FILE *o, SemaResult *r) {
     for (int i = 0; i < r->nspawned; i++)
         if (r->spawned_names[i] && strcmp(r->spawned_names[i], "osd") == 0) { osd_via_spawn = 1; break; }
     if (r->has_osd && !osd_via_spawn) fputs("    $(BUILD)/osd.o \\\n", o);
+    if (r->has_tooltip)          fputs("    $(BUILD)/tooltip.o \\\n", o);
     if (r->has_wallpaper)        fputs("    $(BUILD)/wall.o \\\n", o);
     /* image.o: PNG decode for the wallpaper, launcher icons (apps.c) and
      * themed tray icons (tray.c). */
-    if (r->has_wallpaper || r->has_menu || r->has_tray)
+    if (r->has_wallpaper || r->has_menu || r->has_tray || r->has_image)
         fputs("    $(BUILD)/image.o \\\n", o);
     /* lock.o lives in wisp-lock, not the daemon — see lock-features.h. */
     if (r->has_gamma)            fputs("    $(BUILD)/gamma.o \\\n", o);
@@ -112,7 +116,7 @@ static void emit_objects_mk(FILE *o, SemaResult *r) {
     if (r->has_power)            fputs("    $(BUILD)/power.o \\\n", o);
     if (r->has_bluez)            fputs("    $(BUILD)/bluez.o \\\n", o);
     if (r->has_mpris)            fputs("    $(BUILD)/mpris.o \\\n", o);
-    if (r->has_tray)             fputs("    $(BUILD)/tray.o \\\n", o);
+    if (r->has_tray)             fputs("    $(BUILD)/tray.o \\\n    $(BUILD)/dbusmenu.o \\\n", o);
     if (r->has_pipewire)         fputs("    $(BUILD)/pipewire.o \\\n", o);
     if (r->has_toplevel)         fputs("    $(BUILD)/wl_toplevel.o \\\n", o);
     if (r->has_anim)             fputs("    $(BUILD)/anim.o \\\n", o);

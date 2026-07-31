@@ -46,6 +46,9 @@ typedef struct {
     ScopeEnt *locals;
     const char **deps; int ndeps, capdeps;
     const char **targs; int ntargs, captargs;
+    Prop *tip_prop;          /* first `tooltip =` seen; checked once every
+                              * surface is walked, since the tooltip template
+                              * may be declared after the bar that uses it. */
 } S;
 
 Decl *find_decl_in(Decl **arr, int n, const char *name, size_t nlen);

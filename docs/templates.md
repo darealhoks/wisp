@@ -166,6 +166,35 @@ surface osd {
 - A widget named `icon` donates its `width` as the reserved text column, so icon-less slabs stay aligned.
 - Layer, exclusive zone, visibility and input are all inert; `osd.c` creates and sizes the surface itself.
 
+## Tooltip
+
+```wisp
+surface tooltip {
+	spawned_by = tooltip;
+	layer = overlay;
+	exclusive_zone = -1;
+
+	font_size  = 14;
+	width      = 320;   // clamp; the surface auto-widths to $text and elides past it
+	height     = 26;
+	pad_x      = 8;
+	anchor_gap = 4;
+	delay_ms   = 500;   // hover dwell before it appears
+
+	bg = #ff0e131c;
+	border = #ff2e3a4e;
+	border_width = 1;
+	radius = 6;
+
+	widget label { align = left; text = $text; fg = #ffa5adbb; elide; }
+}
+```
+
+- Bindings: `$text` only. Triggered by `tooltip = "…"` on any bar or HUD cell, or manually with `wispctl tooltip <x> <width> <below> "text"` / `wispctl tooltip hide`.
+- Decoration only: `keyboard_interactivity` is 0 and the input region is zero-area, so a tooltip can never take focus or a click.
+- It always hangs below the anchoring cell, x-clamped to the output; there is no flip-above near a screen edge.
+- Declaring `tooltip` on a cell with no `spawned_by = tooltip` surface is a compile error, not a silent no-op.
+
 ## OSD pill
 
 ```wisp
@@ -256,6 +285,7 @@ menu power {
 menu emoji { preset = emoji; }
 ```
 
+- Row fields: `row.label`, `row.icon`, `row.has_icon`, `row.index`, `row.selected`, plus `row.enabled`, `row.separator`, `row.toggle` and `row.checked` — the last four are populated by tray dropdowns from dbusmenu. A separator can never be selected: click, hover and the arrow keys all step over it. Give the menu `separator_h` and a `separator` colour and separator rows shrink to that slot and draw a 1px line instead of a cell, `separator_frac` percent of the content width.
 - `axis = vertical` is the top-centred launcher float; the header row must declare a `height` or the header measures as zero.
 - `row_h` sizing is computed against font size 14, so set it explicitly whenever `font_size` is not 14.
 - `icons = true` decodes app icons and is the launcher's biggest RAM and IO cost.
@@ -296,7 +326,7 @@ surface menu {
 ```
 
 - Anything other than `axis = vertical` is the full-width dmenu strip, items left to right.
-- Row fields are `label` `icon` `selected` `index`; `icon` reserves its column even on rows without one.
+- Row fields are `label` `icon` `selected` `index`; `icon` reserves its column even on rows without one, unless no row in the menu has one at all.
 - Per-menu overrides on a `menu NAME {}` declaration (`width`, `row_h`, `max_visible`, `anchor_gap`, `pad_y`) inherit when 0.
 - A bare `hover;` in a menu declaration makes pointer motion move the selection, at the cost of repainting on motion.
 
@@ -480,13 +510,40 @@ lock {
 	pam = "system-auth";
 	prompt = "Password";
 	bg = #ff000000;
-	ring = #ff64799c;
-	ring_bad = #ffe0603f;
+	wall = true;
+	dim = #60000000;
 	fg = #ffa8bfdd;
-	dim = #ff64799c;
+	ring_bad = #ffe0603f;
 	caps = #ffe0603f;
 	font_size = 20;
 	wrong_ms = 1200;
+	retry_ms = 1000;
+	lockout_after = 10;
+
+	text clock { anchor = top; y = 120; text = "{time}"; format = "%H:%M";
+	             fg = #ffa8bfdd; font_size = 64; }
+
+	// One ring per state — that is how per-state colour is spelled.
+	ring halo { y = -120; radius = 52; thickness = 6; segments = 12; gap = 4;
+	            bg = #d90e131c; fg = #ffa8bfdd; show = !wrong; }
+	// Keypress arc only while something is typed: a stroke-less ring of the
+	// same geometry, gated on `typing`.
+	ring keys { y = -120; radius = 52; thickness = 6; fg = #00000000;
+	            show = typing; highlight = #ffdbe2ee; highlight_bs = #ffa5adbb;
+	            separator = #ff0e131c; }
+	ring halo_bad { y = -120; radius = 52; thickness = 6; segments = 12; gap = 4;
+	                bg = #d90e131c; fg = #ffe0603f; show = wrong; }
+
+	// No anchor bit on an axis means centred; x/y are then nudges.
+	frame card { width = 320; height = 96; radius = 8;
+	             bg = #d90e131c; border = #ff64799c; border_width = 2; }
+	text label { y = -24; text = "{prompt}"; fg = #ffa5adbb; font_size = 14; }
+	text dots  { text = "{dots}"; show = !wrong; fg = #ffa8bfdd; }
+	text bad   { text = "wrong password"; show = wrong; fg = #ffe0603f; }
+	text caps_ind { y = 80; text = "CAPS LOCK"; show = caps;
+	                fg = #ffe0603f; font_size = 14; }
+	text kbd   { anchor = bottom | right; x = 48; y = 48; text = "{layout}";
+	             show = layout_alt; fg = #ffa5adbb; font_size = 14; }
 }
 
 surface bar {
@@ -504,8 +561,12 @@ surface bar {
 ```
 
 - The lock is a separate binary, `wisp-lock`, which links PAM. The daemon never does, and `wispctl lock` execs it rather than talking to the socket.
-- `bg` is only the fallback fill when the wallpaper is missing.
-- `font_size` is the only block property that feeds the baked font size list.
+- Every visible piece is a declared `frame`/`text`/`ring` element. Declare none and you get the legacy layout: centred dots plus a wrong and a CAPS line.
+- A `ring`'s `radius` is the ring's own radius and `gap` is in degrees; there are no per-state ring colours, only more `ring` elements with different `show`.
+- `highlight` is the per-keypress arc; it is opt-in, jumps angle on every character and backspace, and needs no timer because the keystroke already repaints. It draws whenever its element's `show` passes, so gate it on `typing` for swaylock's behaviour of no arc on an empty buffer.
+- `wall = true` draws the compiled `wallpaper { path }` (default `~/.local/share/dwl/wallpaper.png`), mapping the daemon's on-disk cover-fit cache and decoding it once itself if that cache is cold. A runtime `wispctl wall` override is not followed, and a missing file falls back to `bg`.
+- `dim` is composited over the background, so an opaque colour hides the wallpaper entirely.
+- `font_size` on the block and on each element feeds the baked font size list.
 
 ## Wallpaper and media
 
@@ -540,6 +601,6 @@ media { }
 ## Gotchas
 
 - Every block here is a whole config, not a fragment. Pasting two of them into one file is fine, but two `surface bar` declarations is a duplicate-declaration error.
-- The `osd`, `pill` and `menu` template names are load-bearing; `spawned_by` alone does not select the engine.
+- The `osd`, `pill`, `menu` and `tooltip` template names are load-bearing; `spawned_by` alone does not select the engine.
 - Run `wispc --emit` as well as `--check` after editing any of these, several classes of error only appear at codegen.
 - Combining the vertical and horizontal menu templates is not possible; there is one `surface menu` per config.

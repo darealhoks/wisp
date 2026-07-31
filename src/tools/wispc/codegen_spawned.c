@@ -38,10 +38,12 @@ int emit_spawned_osd_skeleton(FILE *o, Decl *sur, CGCtx *ctx, const char *nm, in
     /* Per-surface hit table — sized but unused (no click dispatch wired;
      * osd.c's dismiss-on-click owns the whole slab). */
     fprintf(o, "static int __%s_nhit;\n", nm);
-    fprintf(o, "typedef struct { int x, y, w, h; int kind; int arg; int slider_idx; int st_idx; } %s_Hit;\n", nm);
+    fprintf(o, "typedef struct { int x, y, w, h; int kind; int arg; int slider_idx; int st_idx; const char *tip; } %s_Hit;\n", nm);
     fprintf(o, "static %s_Hit __%s_hits_buf[64];\n", nm, nm);
     fprintf(o, "static int __%s_pressed_st = -1;\n", nm);
     fprintf(o, "static Widget *__%s_pressed_w;\n", nm);
+    fprintf(o, "static int __%s_hover_st __attribute__((unused)) = -1;\n", nm);
+    fprintf(o, "static Widget *__%s_hover_w __attribute__((unused));\n", nm);
 
     /* Fallbacks only — a bg/border that is an expression (a `:warn` overlay)
      * lowers per-slab instead; evaluating it here would demand a literal. */
@@ -75,6 +77,9 @@ int emit_spawned_osd_skeleton(FILE *o, Decl *sur, CGCtx *ctx, const char *nm, in
     int r_bl = (!fl_b && !fl_l) ? slab_radius : 0;
 
     fprintf(o, "void render_%s(Widget *w) {\n", nm);
+    /* The render clip is process-global: any early return below would hand
+     * the next surface's draw whatever band this one left armed. */
+    fputs("    render_clip_reset();\n", o);
     fputs("    if (!w->configured || w->w <= 0 || w->h <= 0) return;\n", o);
     fputs("    int __wi = 0; (void)__wi;\n", o);   /* OSD template: singleton widget */
     /* Nothing left in the ring: hand back a transparent buffer (never NULL —
@@ -228,8 +233,8 @@ int emit_spawned_osd_skeleton(FILE *o, Decl *sur, CGCtx *ctx, const char *nm, in
 
     /* Measure + draw passes — same scaffolding as a real surface, just inside
      * the slab loop. center_pos math uses __reg_w as the extent. */
-    fprintf(o, "        struct { int tw, vis; uint32_t cp, fg, icon_fg, bg, border, press_bg; const uint32_t *pm; int pms; const char *txt; int pad, align; int h; int ch; int body_lines; } st[%d];\n", n_arr);
-    fprintf(o, "        for (int __i = 0; __i < %d; __i++) { st[__i].vis = 0; st[__i].h = 0; st[__i].ch = 0; st[__i].body_lines = 1; st[__i].border = 0; st[__i].press_bg = 0; st[__i].icon_fg = 0; }\n", n_arr);
+    fprintf(o, "        struct { int tw, vis; uint32_t cp, fg, icon_fg, bg, border, press_bg, hover_bg; const uint32_t *pm; int pms; const char *txt; int pad, align; int h; int ch; int body_lines; } st[%d];\n", n_arr);
+    fprintf(o, "        for (int __i = 0; __i < %d; __i++) { st[__i].vis = 0; st[__i].h = 0; st[__i].ch = 0; st[__i].body_lines = 1; st[__i].border = 0; st[__i].press_bg = 0; st[__i].hover_bg = 0; st[__i].icon_fg = 0; }\n", n_arr);
     fputs("        (void)st;\n", o);
     fputs("        int center_total = 0;\n", o);
     fputs("        int __center_trail_pad = 0; (void)__center_trail_pad;\n", o);
@@ -337,18 +342,27 @@ int emit_spawned_osd_skeleton(FILE *o, Decl *sur, CGCtx *ctx, const char *nm, in
  * rows are one runtime-for cell, so the measure/draw/hit machinery is exactly
  * a bar's — all this adds is the body fill and the pool handling that menu.c
  * used to open-code. Lifecycle (create, size, filter, keys, scroll, reply)
- * stays in menu.c, which is why this emits no create_on/apply_visibility. */
-int emit_menu_render(FILE *o, Decl *sur, Decl *tmpl, CGCtx *ctx, const char *nm) {
+ * stays in menu.c, which is why this emits no create_on/apply_visibility.
+ *
+ * `tip` selects `spawned_by = tooltip`: the same single-body surface with one
+ * $-binding instead of the `menu` self-local. Everything a tooltip needs —
+ * body fill, border, one measure/draw pass, pool handling — is already this
+ * function; tooltip.c owns the lifecycle the way menu.c owns a menu's. */
+int emit_menu_render(FILE *o, Decl *sur, Decl *tmpl, CGCtx *ctx, const char *nm, int tip) {
     BarItem items[64]; int err = 0;
-    /* `menu.prompt` falls back to the surface's declared prompt when the
-     * caller passed no title. */
-    Expr *pr = surface_prop(sur, "prompt");
-    char prompt_lit[128];
-    if (pr && pr->kind == EX_STRING)
-        snprintf(prompt_lit, sizeof prompt_lit, "\"%.*s\"", (int)pr->str.n, pr->str.s);
-    else
-        snprintf(prompt_lit, sizeof prompt_lit, "\"\"");
-    push_local(ctx, "menu", 4, LB_MENU_SELF, prompt_lit, NULL);
+    if (tip) {
+        push_local(ctx, "text", 4, LB_DOLLAR_BIND, "w->s.tip.text", "str");
+    } else {
+        /* `menu.prompt` falls back to the surface's declared prompt when the
+         * caller passed no title. */
+        Expr *pr = surface_prop(sur, "prompt");
+        char prompt_lit[128];
+        if (pr && pr->kind == EX_STRING)
+            snprintf(prompt_lit, sizeof prompt_lit, "\"%.*s\"", (int)pr->str.n, pr->str.s);
+        else
+            snprintf(prompt_lit, sizeof prompt_lit, "\"\"");
+        push_local(ctx, "menu", 4, LB_MENU_SELF, prompt_lit, NULL);
+    }
     int nitems = collect_bar_items(sur->surface.items, sur->surface.n,
                                    items, 64, ctx, &err);
     if (err) return 1;
@@ -363,13 +377,15 @@ int emit_menu_render(FILE *o, Decl *sur, Decl *tmpl, CGCtx *ctx, const char *nm)
         if (widget_is_slider(items[i].w)) items[i].slider_idx = n_sliders++;
     assign_handler_idx(items, nitems);
 
-    fprintf(o, "typedef struct { int x, y, w, h; int kind; int arg; int slider_idx; int st_idx; } %s_Hit;\n", nm);
+    fprintf(o, "typedef struct { int x, y, w, h; int kind; int arg; int slider_idx; int st_idx; const char *tip; } %s_Hit;\n", nm);
     fprintf(o, "static %s_Hit __%s_hits_buf[64];\n", nm, nm);
     fprintf(o, "static int __%s_nhit;\n", nm);
     fprintf(o, "static int __%s_pressed_idx = -1;\n", nm);
     fprintf(o, "static int __%s_pressed_slider = -1;\n", nm);
     fprintf(o, "static int __%s_pressed_st = -1;\n", nm);
     fprintf(o, "static Widget *__%s_pressed_w;\n", nm);
+    fprintf(o, "static int __%s_hover_st __attribute__((unused)) = -1;\n", nm);
+    fprintf(o, "static Widget *__%s_hover_w __attribute__((unused));\n", nm);
     /* One menu widget exists at a time, but the hit store is per-slot, so the
      * widget registers itself on first render instead of via a create_on. */
     fprintf(o, "Widget *__%s_widgets[1]; int __%s_nw;\n", nm, nm);
@@ -401,6 +417,9 @@ int emit_menu_render(FILE *o, Decl *sur, Decl *tmpl, CGCtx *ctx, const char *nm)
         diag_error(sur->loc, "menu '%s': axis must match the `spawned_by = menu` "
                              "template's axis", sur->name);
     int vert        = surface_is_vertical(!ax && tmpl ? tmpl : sur);
+    ctx->menu_sep_h    = eval_int(surface_prop(sur, "separator_h"), 0);
+    ctx->menu_sep_col  = eval_color_ctx(ctx, surface_prop(sur, "separator"), 0);
+    ctx->menu_sep_frac = eval_int(surface_prop(sur, "separator_frac"), 100);
     uint32_t bg     = eval_color_ctx(ctx, surface_prop(sur, "bg"), 0xff000000);
     uint32_t bord   = eval_color_ctx(ctx, surface_prop(sur, "border"), 0);
     int bord_w      = eval_int(surface_prop(sur, "border_width"), 0);
@@ -410,6 +429,9 @@ int emit_menu_render(FILE *o, Decl *sur, Decl *tmpl, CGCtx *ctx, const char *nm)
     int pad_y       = eval_int(surface_prop(sur, "pad_y"), pad);
 
     fprintf(o, "void render_%s(Widget *w) {\n", nm);
+    /* The render clip is process-global: any early return below would hand
+     * the next surface's draw whatever band this one left armed. */
+    fputs("    render_clip_reset();\n", o);
     fputs("    if (!w->configured || w->w <= 0 || w->h <= 0) return;\n", o);
     fprintf(o, "    if (__%s_nw == 0 || __%s_widgets[0] != w) { __%s_widgets[0] = w; __%s_nw = 1; }\n",
             nm, nm, nm, nm);
@@ -438,9 +460,9 @@ int emit_menu_render(FILE *o, Decl *sur, Decl *tmpl, CGCtx *ctx, const char *nm)
     else /* text baseline cursor for horizontally-laid items */
         fputs("    int y = (__chs - f->line_h) / 2 + __coy; (void)y;\n", o);
     fprintf(o,
-        "    struct { int tw, vis; uint32_t cp, fg, icon_fg, bg, border, press_bg; const uint32_t *pm; int pms; const char *txt; int pad, align; int h; int ch; int body_lines; } st[%d];\n",
+        "    struct { int tw, vis; uint32_t cp, fg, icon_fg, bg, border, press_bg, hover_bg; const uint32_t *pm; int pms; const char *txt; int pad, align; int h; int ch; int body_lines; } st[%d];\n",
         n_arr);
-    fprintf(o, "    for (int __i = 0; __i < %d; __i++) { st[__i].vis = 0; st[__i].h = 0; st[__i].ch = 0; st[__i].body_lines = 1; st[__i].border = 0; st[__i].press_bg = 0; st[__i].icon_fg = 0; }\n", n_arr);
+    fprintf(o, "    for (int __i = 0; __i < %d; __i++) { st[__i].vis = 0; st[__i].h = 0; st[__i].ch = 0; st[__i].body_lines = 1; st[__i].border = 0; st[__i].press_bg = 0; st[__i].hover_bg = 0; st[__i].icon_fg = 0; }\n", n_arr);
     fputs("    (void)st;\n", o);
     fputs("    int center_total = 0;\n", o);
     fputs("    int __center_trail_pad = 0; (void)__center_trail_pad;\n", o);
@@ -477,5 +499,6 @@ int emit_menu_render(FILE *o, Decl *sur, Decl *tmpl, CGCtx *ctx, const char *nm)
     fprintf(o, "void %s_redraw(void) {\n"
                "    for (int i = 0; i < __%s_nw; i++) render_%s(__%s_widgets[i]);\n"
                "}\n\n", nm, nm, nm, nm);
+    ctx->menu_sep_h = 0; ctx->menu_sep_col = 0;
     return 0;
 }

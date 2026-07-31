@@ -54,15 +54,19 @@ static uint8_t *slurp(const char *path, int *len) {
     return buf;
 }
 
-uint8_t *image_load(const char *path, int *w, int *h) {
+uint8_t *image_load_max(const char *path, int *w, int *h, int max_dim) {
     char *real = expand_home(path);
     int flen = 0;
     uint8_t *fbuf = slurp(real, &flen);
     free(real);
     if (!fbuf) return NULL;
-    uint8_t *px = image_decode_png(fbuf, flen, w, h);
+    uint8_t *px = image_decode_png_max(fbuf, flen, w, h, max_dim);
     free(fbuf);
     return px;
+}
+
+uint8_t *image_load(const char *path, int *w, int *h) {
+    return image_load_max(path, w, h, 0);
 }
 
 /* Resolve a freedesktop icon *name* to a PNG path. Absolute paths pass
@@ -118,6 +122,16 @@ int image_find_icon(const char *name, const char *extra, char *out, size_t sz) {
 uint8_t *image_decode_png(const uint8_t *buf, int len, int *w, int *h) {
     int c = 0;
     return stbi_load_from_memory(buf, len, w, h, &c, 4);
+}
+
+uint8_t *image_decode_png_max(const uint8_t *buf, int len, int *w, int *h, int max_dim) {
+    if (max_dim > 0) {
+        int iw = 0, ih = 0, c = 0;
+        /* header only — no pixel allocation happens if this rejects */
+        if (!stbi_info_from_memory(buf, len, &iw, &ih, &c)) return NULL;
+        if (iw <= 0 || ih <= 0 || iw > max_dim || ih > max_dim) return NULL;
+    }
+    return image_decode_png(buf, len, w, h);
 }
 
 void image_free(uint8_t *px) { stbi_image_free(px); }
@@ -319,6 +333,56 @@ void image_blit_cover_dim(uint32_t *dst, int dw, int dh,
 void image_blit_cover(uint32_t *dst, int dw, int dh,
                       const uint8_t *src, int sw, int sh) {
     image_blit_cover_dim(dst, dw, dh, src, sw, sh, 0, 0, 0);
+}
+
+/* --- decoded-square cache for the DSL `image` prop ---------------------- */
+
+/* ponytail: round-robin eviction, no mtime revalidation — a repaint must not
+ * re-decode a PNG. A path whose file changes in place keeps the old pixels
+ * until wisp reloads; key on mtime here if that ever bites. Failures are
+ * cached as pm=NULL so a missing file costs one stat per (path,size), not one
+ * per frame.
+ * IMGCELL_N must exceed the distinct image cells one render can draw, or
+ * eviction frees a pixmap the caller already parked in st[].pm for the draw
+ * pass (use-after-free) and every frame re-decodes. The largest runtime-`for`
+ * cap is MENU_ROWS_CAP=32, so 64 leaves room for static cells on top.
+ * Keys are strdup'd: no truncation (a long spec used to miss its own entry and
+ * long specs sharing a prefix collided) and idle BSS stays at a pointer each. */
+#define IMGCELL_N 64
+static struct { char *key; int px; uint32_t *pm; } imgcell[IMGCELL_N];
+static int imgcell_next;
+
+const uint32_t *image_cell(const char *spec, int px) {
+    if (!spec || !spec[0] || px <= 0 || px > 512) return NULL;
+    for (int i = 0; i < IMGCELL_N; i++)
+        if (imgcell[i].key && imgcell[i].px == px && !strcmp(imgcell[i].key, spec))
+            return imgcell[i].pm;
+
+    char path[512];
+    int w = 0, h = 0;
+    uint8_t *rgba = NULL;
+    /* A '/' or '~' means "a file"; anything else is a freedesktop icon name. */
+    if (spec[0] == '/' || spec[0] == '~' || strchr(spec, '/'))
+        rgba = image_load_max(spec, &w, &h, 1 << 13);
+    else if (image_find_icon(spec, NULL, path, sizeof path))
+        rgba = image_load_max(path, &w, &h, 1 << 13);
+
+    uint32_t *pm = NULL;
+    if (rgba && w > 0 && h > 0) pm = image_scale_square(rgba, w, h, px);
+    image_free(rgba);
+
+    int slot = imgcell_next++ % IMGCELL_N;
+    free(imgcell[slot].pm);
+    free(imgcell[slot].key);
+    imgcell[slot].key = strdup(spec);
+    imgcell[slot].px = px;
+    imgcell[slot].pm = pm;
+    if (!imgcell[slot].key) {   /* OOM: can't own it, so don't hand it out */
+        free(pm);
+        imgcell[slot].pm = NULL;
+        return NULL;
+    }
+    return pm;
 }
 
 uint32_t *image_scale_square(const uint8_t *rgba, int sw, int sh, int ds) {

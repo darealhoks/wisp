@@ -63,14 +63,16 @@ fail to link.
 
 - Equal specificity on the same property of the same node is a **hard error** naming both rules. CSS's later-wins does not exist here.
 - An inline property in a body beats every rule, always.
-- `:hover` is rejected with a pointer to the `hover;` marker, which is a menu selection behaviour, not a style state.
-- `:pressed` may only set `bg`.
+- `:hover` and `:pressed` may only set `bg`. They are pointer state resolved at runtime, so unlike the other pseudos they need no base value — and they do nothing on a menu row, where `hover;` moves the selection instead.
+- `:pressed` beats `:hover` on the same cell.
 - `:active`, `:urgent`, `:mute` and `:warn` need a base value already on the node, and only work on `for` cells or inside a spawned template.
 
 ## Layout traps
 
 - Anything above the rows in a menu template must declare a `height`, or the header height computes as zero.
 - Menu row sizing is measured against font size 14, so declare `row_h` whenever you change `font_size`.
+- A `height` **expression** on a menu row cell desyncs the hit grid from the pixels. `row_h` and `separator_h` on the menu are the only supported way to vary row height.
+- `separator` and `separator_frac` do nothing on a menu unless `separator_h` is non-zero and `separator` has alpha; on an OSD stack they mean the inter-slab rule instead.
 - An OSD slab has no `pad_x`, so the leading gap before the first widget is that widget's own `width`.
 - `enter_anim` and `exit_anim` require a `visible` expression to have anything to trigger on.
 - A group's container colours must be static; a ternary there is an error. Only member properties may be dynamic.
@@ -100,6 +102,23 @@ fail to link.
 - Under `ext-workspace-v1` there is no client count, so `tag.occupied` means "exists and is not hidden".
 - `make` alone is not enough. `wispctl reload` re-execs the installed binary, so use `make install`.
 - The daemon must start before your tray apps do; wisp owns the StatusNotifier watcher name.
+- Icon names resolve as PNGs only, under an app-supplied dir, the XDG hicolor `apps/` sizes, loose `<data>/icons/NAME.png`, then `/usr/share/pixmaps`. No theme index, no SVG.
+
+## Lock traps
+
+- `lock { dim }` is a scrim drawn over the background, not a text colour. An opaque value covers the wallpaper completely; give it alpha.
+- `lock { ring = … }` is only the default `fg` for `ring` elements. It draws nothing on its own — declare a `ring NAME { … }` element.
+- On a `ring`, `radius` is the ring's radius, not a corner radius, and `gap` is in **degrees**. `gap >= 360 / segments` leaves nothing to draw.
+- Ring colour per state is several `ring` elements with different `show`, not per-state properties. Overlapping conditions all draw, in declaration order.
+- `show` holds exactly one condition, so a caps-lock highlight colour is a `show = !caps` / `show = caps` pair of rings, not a `caps_highlight` property.
+- A ring with no `highlight` draws no keypress arc at all — it is opt-in, and `highlight_arc` and `separator` do nothing without it.
+- The keypress arc follows its element's `show`, not the input state. On a `show = !wrong` ring it is already lit before the first keystroke; gate it on `typing` instead.
+- Declaring one element replaces the whole legacy layout, not just that line. Nothing draws the prompt, the dots or the caps indicator unless you declare it.
+- `text = "…"` is a property, `text NAME { … }` (or `text { … }`) is an element. The parser splits on what follows the keyword.
+- A lock `text` element with no `anchor` is centred on both axes, and `x`/`y` become nudges rather than insets.
+- `{layout}` is a label lifted out of the keymap's `name[groupN]` lines. Key translation stays on group 1, so an alternate layout still types the first layout's characters.
+- A `{time}` element is the only reason `wisp-lock` wakes without input, and `%S`/`%T`/`%s` in its `format` turn a per-minute timer into 1 Hz.
+- `lockout_after` is not permanent: the correct password still clears it. Do not treat it as a hard lockout.
 
 ## Gotchas
 

@@ -1,0 +1,6 @@
+tests/diag/tooltip-misuse.wisp:8:5: error: 'tooltip' must be a literal string
+      tooltip = "{PCT}%";
+      ^
+tests/diag/tooltip-misuse.wisp:8:5: error: 'tooltip' needs a `surface … { spawned_by = tooltip; … }` to draw it
+      tooltip = "{PCT}%";
+      ^

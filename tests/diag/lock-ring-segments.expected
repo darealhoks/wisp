@@ -1,0 +1,3 @@
+tests/diag/lock-ring-segments.wisp:2:39: error: lock ring segments=0 out of range — 1..360
+    ring dial { radius = 40; segments = 0; }
+                                        ^

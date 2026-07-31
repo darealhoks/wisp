@@ -227,6 +227,9 @@ Two halves, both needed for a working launcher.
 | `row_h` | 0 = font line height + 10 | sizing is measured against font size 14, so declare `row_h` whenever `font_size` is not 14 |
 | `pad_y` | 6 | |
 | `anchor_gap` | 0 | gap between a clicked bar cell and the popup |
+| `separator_h` | 0 = a separator row gets a full `row_h` slot | non-zero gives `row.separator` rows their own shorter slot, so the row grid stops being uniform |
+| `separator` | 0 (off) | with `separator_h > 0`, a separator row draws no cell at all: a 1px line of this colour, centred in its slot |
+| `separator_frac` | 100 | percent of the content width that line spans |
 | `terminal` | `"foot -e"` | used for `Terminal=true` desktop entries |
 | `icons` | 0 | app-icon decode, the launcher's biggest RAM and IO cost |
 | `axis` | `horizontal` | `vertical` is a top-centred launcher float, anything else a full-width dmenu strip |
@@ -235,8 +238,10 @@ Two halves, both needed for a working launcher.
 
 Body bindings: `for row in rows { cell { … } }` with fields `label` (string),
 `icon` (pixmap, which reserves its column even on rows without one, so labels
-stay aligned), `selected` (bool) and `index` (int). Also `menu.prompt`,
-`menu.query` and `menu.count`.
+stay aligned — but a menu whose owner decoded no icon at all gets no icon table
+and the column collapses instead), `has_icon` (bool), `selected` (bool),
+`index` (int) and the flag bools `enabled`, `separator`, `toggle`, `checked`.
+Also `menu.prompt`, `menu.query` and `menu.count`.
 
 The header height is computed by summing the declared `height` of every
 non-`for` top-level body item, so **anything above the rows must declare a
@@ -256,7 +261,7 @@ menu emoji { preset = emoji; }
 strings, all three required. `preset = emoji` is the only preset that exists.
 
 Per-menu overrides, where 0 means inherit: `width`, `row_h`, `max_visible`,
-`anchor_gap`, `pad_y`. A bare `hover;` marker makes pointer motion move the
+`separator_h`, `anchor_gap`, `pad_y`. A bare `hover;` marker makes pointer motion move the
 selection, for pointer-driven tray dropdowns; menus without it never repaint on
 motion, which is the idle-zero-CPU rule.
 
@@ -314,18 +319,97 @@ directly, it is not a socket command.
 | property | default | note |
 |---|---|---|
 | `pam` | `"system-auth"` | PAM service name |
-| `prompt` | `"Password:"` | |
-| `bg` | `0xff000000` | fallback fill when the wallpaper is missing |
-| `ring` | `0xff5f8a93` | |
-| `ring_bad` | `0xffd06878` | |
-| `fg` | `0xffa8d5cc` | |
-| `dim` | `0xff7a808b` | |
-| `caps` | `0xffe0c060` | caps-lock indicator |
-| `font_size` | 14 | also fed to the bake |
-| `wrong_ms` | 1200 | |
+| `prompt` | `"Password:"` | the `{prompt}` token, nothing draws it on its own |
+| `bg` | `0xff000000` | flat fill under everything; used when `wall` is off or the cache is missing |
+| `wall` | `false` | draw the compiled wallpaper path as the background, from the daemon's cover-fit cache |
+| `dim` | `0xff7a808b` | scrim composited **over** the background, so give it an alpha |
+| `fg` | `0xffa8d5cc` | default-layout text colour |
+| `ring_bad` | `0xffd06878` | default-layout "wrong password" colour |
+| `caps` | `0xffe0c060` | default-layout caps indicator colour |
+| `ring` | `0xff5f8a93` | default `fg` for `ring` elements that declare none |
+| `font_size` | 14 | fallback size for elements with no `font_size` |
+| `wrong_ms` | 1200 | how long the `wrong` state stays up |
+| `retry_ms` | 0 | first backoff after a wrong password; 0 disables throttling |
+| `retry_growth` | 2 | multiplier per further failure |
+| `retry_max_ms` | 300000 | backoff clamp |
+| `lockout_after` | 0 | failures after which every attempt waits `retry_max_ms`; 0 disables |
+| `privacy` | `false` | `{dots}` shows at most one mark and `{count}` shows nothing |
+| `wipe_on_backspace` | `false` | one backspace clears the whole buffer |
 
-`font_size` is the only block property `wispc --font-sizes`
-scrapes, clamped to 4..256.
+Backoff after the Nth wrong password is `retry_ms * retry_growth^(N-1)`, clamped
+to `retry_max_ms` and never shorter than `wrong_ms`. `lockout_after` latches, but
+only until the right password: the lock is the one door back into the session,
+so there is deliberately no permanent brick.
+
+`font_size` is scraped for the bake, clamped to 4..256, on the block **and** on
+every element.
+
+### lock elements
+
+The whole layout is declared. `frame NAME { … }`, `text NAME { … }` and
+`ring NAME { … }` inside the block lower to a table the locker walks in
+declaration order; the name is optional and is documentation only. With no
+elements declared you get the legacy layout: centred dots, a wrong line and a
+CAPS line under it.
+
+| property | frame | text | ring | note |
+|---|---|---|---|---|
+| `anchor` | yes | yes | yes | `top` `bottom` `left` `right`, OR-combined; an axis with no bit is **centred** |
+| `x` / `y` | yes | yes | yes | inset from the anchored edge, or a nudge on a centred axis |
+| `width` / `height` | yes | - | - | text is sized by its own content |
+| `radius` | yes | - | yes | corner radius on a frame; the **ring's own radius** on a ring, default 50 |
+| `border`, `border_width` | yes | - | yes | `border_width` defaults to 1 when `border` is set |
+| `bg` | yes | - | yes | on a ring this is the disc inside it, skipped when its alpha is 0 |
+| `fg` | - | yes | yes | the ring stroke; a ring with no `fg` uses the block's `ring` |
+| `font_size` | - | yes | - | |
+| `thickness` | - | - | yes | radial width of the stroke in px, default 8 |
+| `segments` | - | - | yes | equal arcs the ring splits into, 1..360, default 1 |
+| `gap` | - | - | yes | **degrees** blanked between arcs, default 0 |
+| `highlight` | - | - | yes | keypress arc colour; absent or alpha 0 = no highlight |
+| `highlight_bs` | - | - | yes | the same arc after a backspace, default = `highlight` |
+| `highlight_arc` | - | - | yes | its length in **degrees**, default 60 (swaylock's `M_PI/3`) |
+| `separator` | - | - | yes | lines at both ends of the highlight arc, 2px |
+| `text` | - | yes | - | template, see below |
+| `format` | - | yes | - | strftime format behind `{time}`, default `"%H:%M"` |
+| `show` | yes | yes | yes | state condition, see below |
+
+A ring is placed by its bounding box, `2 * radius + thickness + 2 *
+border_width` on a side. `border` draws a line on **both** faces of the ring,
+inside and outside, like swaylock's. Sectors run clockwise from 12 o'clock and
+the first gap is centred there, so `segments = 1` with a `gap` is a full ring
+with one notch at the top, and `gap` at or above `360 / segments` draws nothing.
+
+`highlight` is swaylock's per-keypress arc: it jumps to a new pseudo-random
+angle at least a quarter turn away on every character and every backspace, and
+`wisp-lock` repaints on that keystroke anyway, so it costs no timer. The only
+runtime state behind it is the angle and whether the last input was a
+backspace. It draws whenever its element's `show` passes, including on an empty
+buffer at wherever the angle was left — put it on its own `show = typing` ring
+with `fg = #00000000` for swaylock's behaviour of nothing lit until something is
+typed.
+
+There are no per-state ring colours, and none for caps lock either. Declare one
+`ring` per state with the same geometry and different colours — `show = !wrong`, `show = verifying`,
+`show = wrong` — which covers swaylock's ring-color / ring-ver-color /
+ring-wrong-color / ring-clear-color in the layer the rest of the lock already
+uses. `show` holds one condition, so swaylock's
+`caps-lock-key-highlight-color` is the same trick on the other axis: a
+`show = !caps` ring and a `show = caps` ring with different `highlight`, and a
+`show = wrong` ring painting over both.
+
+`text` interpolates a closed token set and nothing else: `{dots}` the typed
+mask, `{count}` the character count, `{prompt}` the block's `prompt`, `{layout}`
+the active keyboard layout name, `{time}` `format` through strftime. Any other
+interpolation is a compile error.
+
+`show =` takes one of `always` `typing` `empty` `wrong` `caps` `verifying`
+`layout_alt` `throttled` `locked_out`, optionally negated with `!`
+(`show = !wrong;`). `layout_alt` is true whenever the active XKB group is not
+the first one.
+
+A declared `{time}` is the only thing on the lock that changes without input, so
+it arms a timer in `wisp-lock`: per-minute, or 1 Hz if `format` contains `%S`,
+`%T` or `%s`. Without `{time}` the locker sleeps between keystrokes.
 
 Skeleton: [[templates#lock]].
 
@@ -401,6 +485,8 @@ The contents of every surface kind.
 | `border_top/bottom/left/right` | 1 | |
 | `radius`, `radius_tl/tr/br/bl` | 0 | any nonzero uses the antialiased rounded path |
 | `press_bg` | 0 | background while pressed and over |
+| `hover_bg` | 0 | background while the pointer is over; `press_bg` wins over it |
+| `tooltip` | none | literal string; hovering the cell for `delay_ms` pops the `spawned_by = tooltip` surface. Not interpolatable — the pointer outlives the frame |
 | `body_lines` | 1 | integer expression |
 | `body_fit` | marker | slab height tracks the real line count, `body_lines` becomes a ceiling |
 | `text_align` | center | pins the multi-line block |
@@ -515,3 +601,4 @@ What differs in practice:
 - A `graph` inside a `group` is a hard error; a slider inside a group compiles fine despite older docs.
 - Anything above the rows in a menu template must declare a `height`, or the header height is measured as zero.
 - `media { … }` with any property inside is an error, the block is a pure marker.
+- Declaring any lock `frame`/`text` element drops the built-in layout entirely; `dim` is a scrim over the background, and `ring` is drawn by nothing.

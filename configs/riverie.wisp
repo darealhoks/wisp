@@ -17,6 +17,7 @@ source tray_s = tray(icon_size=20);
 source vol_s  = pipewire();
 
 source hid    = ui_hidden();
+source notif_s = notifications();
 
 const TEXT   = #ffdbe2ee;
 const SUBTXT = #ffa5adbb;
@@ -137,6 +138,7 @@ surface bar {
 		widget cpu    {
 			icon = 0xf4bc;
 			text = "{cpu_s.pct}%";
+			tooltip = "CPU load";
 			fg = cpu_s.pct >= 90 ? RED
 				: cpu_s.pct >= 75 ? ORANGE : TEXT;
 			icon_fg = cpu_s.pct >= 90 ? RED
@@ -148,6 +150,7 @@ surface bar {
 		widget temp   {
 			icon = 0xf06d;
 			text = "{temp_s.c}°C";
+			tooltip = "Package temperature";
 			fg = temp_s.c >= 85 ? RED
 				: temp_s.c >= 70 ? ORANGE : TEXT;
 			icon_fg = temp_s.c >= 85 ? RED
@@ -158,6 +161,7 @@ surface bar {
 		}
 		widget mem    {
 			icon = 0xefc5;
+			tooltip = "Memory in use";
 			text = mem_s.used_mb >= 1024
 				? "{mem_s.used_mb / 1024}.{mem_s.used_mb * 10 / 1024 % 10} GB"
 				: "{mem_s.used_mb} MB";
@@ -173,7 +177,10 @@ surface bar {
 		for tray_item in tray_s.items {
 			cell.tray {
 				icon       = tray_item.icon;
-				bg         = tray_item.menu_open ? REST : #00000000;
+				// an app with its own attention artwork says it itself
+				bg         = tray_item.status == "NeedsAttention"
+					&& !tray_item.has_attention_icon ? RED
+					: tray_item.menu_open ? REST : #00000000;
 				text       = tray_item.has_icon || TRAY_ICONS_ONLY ? "" : tray_item.id;
 				visible    = tray_item.status != "Passive"
 					&& (tray_item.has_icon || !TRAY_ICONS_ONLY);
@@ -266,7 +273,7 @@ source mirror_on  = toplevel(app_id="at.yrlf.wl_mirror");
 surface hud {
 	layer = overlay;
 	anchor = top;
-	width  = 242;
+	width  = 294;          // 6 × 32px button + 5 × 8px separator, each +6 gap
 	height = 40;
 	font_size = 14;
 	reveal_on_hover = 20;
@@ -289,6 +296,15 @@ surface hud {
 		on_click() = exec("wispctl dnd toggle");
 	}
 	widget sep2.sep {
+		text = "/";
+	}
+	widget notif_btn.btn {
+		icon = 0xf0f3;
+		fg = notif_s.open ? WSACT
+			: notif_s.count > 0 ? TERT : TEXT;
+		on_click() = exec("wispctl notif toggle");
+	}
+	widget sep2b.sep {
 		text = "/";
 	}
 	widget vol_btn.btn {
@@ -326,11 +342,100 @@ surface hud {
 	radius = 8;
 }
 
-#gamma_btn, #dnd_btn, #mirror_btn {
+#gamma_btn, #dnd_btn, #mirror_btn, #notif_btn {
 	transition_fg = 180ms;
 }
 .btn:pressed {
 	bg = REST;
+}
+
+// ==================================
+//       NOTIFICATION CENTER
+// ==================================
+
+// Persistent panel over the history ring. `wispctl notif toggle` (bar bell)
+// flips notif_s.open, which creates/destroys the surface — closed costs no
+// pool and no timer.
+surface notifs {
+	layer   = overlay;
+	anchor  = top | right;
+	margin  = 46;          // clears the bar (height 34 + its own margin 6)
+	width   = 380;
+	height  = 420;
+	exclusive_zone = -1;
+	axis    = vertical;
+	scroll  = rows;        // one wheel notch = exactly one card, whatever its height
+	font_size = 14;
+	visible = notif_s.open;
+	on_escape = "wispctl notif close";
+
+	bg = #ee0e131c;
+	radius = 8;
+	border = BORD;
+	border_width = 2;
+
+	group nhead {
+		sticky;                // stays pinned; the cards scroll beneath it
+		height = 30;
+		widget nhead_t.dim {
+			width = 250;
+			text = "notifications";
+		}
+		widget nclear {
+			text = "clear all";
+			fg   = SUBTXT;
+			on_click() = exec("wispctl notif clear");
+		}
+	}
+	widget nempty.dim {
+		height  = 30;
+		text    = "nothing yet";
+		visible = notif_s.count == 0;
+	}
+	for note in notif_s.history {
+		cell.note {
+			icon = note.icon;
+			text = "{note.summary}\n{note.body}";
+			body_lines = 4;
+			body_fit;
+			wrap;
+			text_align = start;
+			fg = note.urgent ? RED : TEXT;
+			// click a card to dismiss it
+			on_click() = exec("wispctl notif dismiss {note.id}");
+		}
+	}
+}
+
+#nhead {
+	pad_x = 10;
+	gap   = 0;
+	bg    = #00000000;
+	border = #00000000;    // don't inherit the panel frame around the header
+}
+#nclear {
+	height = 22;           // else the press fill spans the whole header band
+	radius = 6;
+}
+#nclear:pressed {
+	bg = REST;
+}
+#nempty {
+	pad_x = 12;
+}
+.note {
+	bg     = REST;
+	radius = 6;
+	pad_x  = 10;
+	pad_y  = 6;
+	pad    = 6;
+	width  = 356;
+}
+.note:hover {
+	bg = #ff1b2233;
+}
+.note:pressed {
+	bg = WSBORD;
 }
 
 // ==================================
@@ -486,12 +591,23 @@ lock {
 	font_size  = 20;
 	wall       = true;
 
-	// No anchor bits → centered on both axes; x/y are then nudges.
-	frame card { width = 320; height = 96; radius = 8;
-	             bg = #d90e131c; border = BORD; border_width = 2; }
-	text dots  { text = "{dots}"; fg = TEXT; }
-	text caps_ind { y = 80; text = "CAPS LOCK"; show = caps;
-	                fg = ORANGE; font_size = 14; }
+	// swaylock's default face: one centered ring, nothing else. No anchor bits
+	// → centered on both axes. Per-state colour is just another ring with a
+	// different show=, drawn in order: base, then PAM, then wrong on top.
+	// swaylock's proportions (radius:thickness 5:1), scaled up from its 50/10.
+	ring dial { radius = 80; thickness = 16; bg = #cc0e131c;
+	            border = BORD; border_width = 2; fg = PRIM; show = !wrong; }
+	// The 60° arc that jumps to a new angle on every keystroke. Its own element
+	// with a transparent stroke, so it only exists while there is input —
+	// swaylock shows no highlight on an empty buffer.
+	ring keys { radius = 80; thickness = 16; fg = #00000000; show = typing;
+	            highlight = TERT; highlight_bs = SUBTXT; separator = CRUST; }
+	ring busy { radius = 80; thickness = 16; fg = TERT; show = verifying; }
+	ring bad  { radius = 80; thickness = 16; fg = RED;  show = wrong; }
+
+	text verify { text = "Verifying"; show = verifying; fg = SUBTXT; font_size = 14; }
+	text bad_t  { text = "Wrong";     show = wrong;     fg = RED;    font_size = 14; }
+	text caps_t { text = "Caps Lock"; show = caps;      fg = ORANGE; font_size = 14; y = 110; }
 }
 
 gamma {
@@ -518,6 +634,39 @@ media {
 }
 
 // ==================================
+//              Tooltip
+// ==================================
+
+// Decoration only — never focusable, never clickable (tooltip.c pins
+// keyboard_interactivity 0 + a zero-area input region). `width` is a clamp:
+// the surface auto-widths to $text and elides past it.
+surface tooltip {
+	spawned_by = tooltip;
+	layer = overlay;
+	exclusive_zone = -1;
+
+	font_size  = 14;
+	width      = 320;
+	height     = 26;
+	pad_x      = 8;
+	pad_y      = 4;
+	anchor_gap = 4;
+	delay_ms   = 500;   // hover dwell before it appears
+
+	bg           = CRUST;
+	border       = BORD;
+	border_width = 1;
+	radius       = 6;
+
+	widget label {
+		align = left;
+		text  = $text;
+		fg    = SUBTXT;
+		elide;
+	}
+}
+
+// ==================================
 //              Menus
 // ==================================
 
@@ -535,6 +684,7 @@ surface menu {
 	prompt = "run: ";
 	sort   = "most_used";
 	icons  = true;
+	hover;
 
 	pad_x = 8;
 	pad_y = 6;
@@ -583,6 +733,7 @@ surface menu {
 }
 
 menu power {
+	hover;
 	item {
 		icon = 0xf011;
 		label = "Poweroff";
@@ -612,11 +763,15 @@ menu power {
 
 menu emoji {
 	preset = emoji;
+	hover;
 }
 
 menu tray {
 	width       = 200;
 	row_h       = 24;
+	separator_h = 13;       // 1px hairline + 6px either side
+	separator   = REST;     // same near-invisible line the OSD stack uses
+	separator_frac = 92;
 	max_visible = 24;
 	anchor_gap  = 6;
 	hover;
@@ -633,7 +788,14 @@ menu tray {
 		cell {
 			height = 24;
 			text   = row.label;
-			fg     = TEXT;
+			// one icon column: the app's own raster wins it, the checkmark
+			// only shows on rows that brought no icon (a checkbox row
+			// virtually never does). 0 = no glyph, so a menu where no row
+			// has an icon loses the column instead of indenting every label
+			icon   = row.has_icon ? row.icon : (row.checked ? 0xf00c : 0);
+			icon_box = 12;   // == the square menu_icons_load decodes for row_h 24
+			icon_gap = 6;
+			fg     = row.enabled ? TEXT : SUBTXT;
 			bg     = row.selected ? BORD : #00000000;
 			radius = 4;
 			pad_x  = 8;

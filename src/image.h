@@ -17,6 +17,13 @@ void     image_free(uint8_t *px);
  * Returns malloc'd RGBA8 or NULL; free with image_free. */
 uint8_t *image_decode_png(const uint8_t *buf, int len, int *w, int *h);
 
+/* Same, but rejected without allocating pixels if the PNG header claims more
+ * than `max_dim` on either axis. stb's global 16 K cap still lets a few KB of
+ * deflate bomb ask for a GB, so anything an app hands us (dbusmenu icon-data,
+ * icon-theme files under an app-supplied IconThemePath) decodes through this. */
+uint8_t *image_decode_png_max(const uint8_t *buf, int len, int *w, int *h, int max_dim);
+uint8_t *image_load_max(const char *path, int *w, int *h, int max_dim);
+
 /* Resolve a freedesktop icon name (or absolute path) to an existing PNG file,
  * written to `out`. `extra` is an app-supplied theme dir searched first (SNI's
  * IconThemePath), or NULL. Returns non-zero on a hit. */
@@ -34,6 +41,14 @@ int      image_mtime(const char *path, int64_t *mtime);
  * Averaging happens premultiplied — the correct filter for translucent edges.
  * Used for menu app icons and notification cover art. */
 uint32_t *image_scale_square(const uint8_t *rgba, int sw, int sh, int ds);
+
+/* Cached decode+scale for the DSL `image` widget prop: `spec` is a file path
+ * (leading "~/" expanded) or a freedesktop icon name, `px` the square side.
+ * Returns a premultiplied-ARGB px*px square owned by the cache (never free it),
+ * or NULL if it can't be decoded. Repaint-safe: a hit is a strcmp. The pointer
+ * stays valid until 64 further *misses* evict its slot, which is more distinct
+ * images than one render can draw — so parking it for the draw pass is safe. */
+const uint32_t *image_cell(const char *spec, int px);
 
 /* Bilinear cover-fit: scale `src` (RGBA8, sw*sh) to fill dst (ARGB8888,
  * dw*dh) at max scale with a centred crop. Output pixels are opaque. */

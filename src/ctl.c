@@ -198,7 +198,7 @@ const WispMenu *wisp_menu_find(const char *name) {
 
 /* Open a menu declared in the .wisp. Entries are pre-rendered by wispc
  * (icon already UTF-8); the emoji preset expands the baked gemoji table. */
-static int open_declared_menu(Client *c, const char *name) {
+static int open_declared_menu(Client *c, const char *name, const TipAnchor *at) {
     for (const WispMenu *m = wisp_menus; m->name; m++) {
         if (strcmp(m->name, name)) continue;
         if (menu_toggle(m->name)) { (void)!write(c->fd, "ok\n", 3); return 0; }
@@ -225,6 +225,7 @@ static int open_declared_menu(Client *c, const char *name) {
         /* trailing space: the query cell hugs the prompt cell (gap = 0) */
         snprintf(title, sizeof title, "%s: ", name);
         menu_set_geom(&m->geom);
+        if (at->out) menu_set_anchor(at);
         Widget *mw = menu_create_action(title, items, cmds, n);
         if (!mw)
             return fail(c, "menu: no free widget slot or out of memory");
@@ -310,22 +311,37 @@ static int dispatch(Client *c, char *cmd) {
             menu_cancel_all();
             (void)!write(c->fd, "ok\n", 3); return 0;
         }
+        /* `--at x,w[,below]`: place the popup under an explicit rect on the
+         * focused output, same geometry the click stamp feeds. Parsed here and
+         * only handed to menu.c once the menu is definitely being created, so a
+         * toggle-close can't leave a stale anchor pending. */
+        TipAnchor at = {0};
+        char **av = argv; int ac = argc;
+        if (ac >= 3 && !strcmp(av[1], "--at")) {
+            const char *p = av[2];
+            at.out = focused_output;
+            at.x = atoi(p);
+            if ((p = strchr(p, ','))) at.w = atoi(p + 1);
+            if (p && (p = strchr(p + 1, ','))) at.below = atoi(p + 1);
+            av += 2; ac -= 2;
+        }
         /* `menu <name>` opens a menu declared in the .wisp; two or more args
          * is still the ad-hoc "pick one of these strings" form. */
-        if (argc == 2) return open_declared_menu(c, argv[1]);
-        if (argc < 3) return fail(c, "usage: menu <title> <item>... | menu <name>");
-        const char *title = argv[1];
+        if (ac == 2) return open_declared_menu(c, av[1], &at);
+        if (ac < 3) return fail(c, "usage: menu [--at x,w[,below]] <title> <item>... | menu <name>");
+        const char *title = av[1];
         /* Same-title re-invocation toggles; the first client got its -1. */
         if (menu_toggle(title)) { (void)!write(c->fd, "-1\t\n", 4); return 0; }
-        int n = argc - 2;
+        int n = ac - 2;
         if (n > MAX_ITEMS) n = MAX_ITEMS;
         /* 40 KB scratch — declared inside the branch so non-menu commands
          * (bar tags, osd, notify, ...) don't reserve it in the stack frame. */
         char items[MAX_ITEMS][ITEM_MAX];
         for (int i = 0; i < n; i++) {
-            size_t l = strnlen(argv[2 + i], ITEM_MAX - 1);
-            memcpy(items[i], argv[2 + i], l); items[i][l] = 0;
+            size_t l = strnlen(av[2 + i], ITEM_MAX - 1);
+            memcpy(items[i], av[2 + i], l); items[i][l] = 0;
         }
+        if (at.out) menu_set_anchor(&at);
         Widget *w = menu_create(title[0] ? title : NULL, items, n, c->fd);
         if (!w) return fail(c, "menu: no free widget slot or out of memory");
         snprintf(w->s.menu.tag, sizeof w->s.menu.tag, "%s", title);
@@ -363,6 +379,21 @@ static int dispatch(Client *c, char *cmd) {
         osd_post(slot ? slot : 0, summary, "", icon, NULL, progress, 0, muted, OSD_TIMEOUT_OSD);
         (void)!write(c->fd, "ok\n", 3); return 0;
     }
+#ifdef WISP_HAS_TOOLTIP
+    /* tooltip <x> <width> <below> <text> | tooltip hide
+     * Explicit popup anchoring: the rect the label hangs under, in the focused
+     * output's logical coords. The hover stage calls tooltip_show() directly. */
+    if (!strcmp(op, "tooltip")) {
+        if (argc == 2 && !strcmp(argv[1], "hide")) {
+            tooltip_hide();
+            (void)!write(c->fd, "ok\n", 3); return 0;
+        }
+        if (argc < 5) return fail(c, "usage: tooltip <x> <width> <below> <text> | tooltip hide");
+        TipAnchor at = { focused_output, atoi(argv[1]), atoi(argv[2]), atoi(argv[3]) };
+        tooltip_show(argv[4], &at);
+        (void)!write(c->fd, "ok\n", 3); return 0;
+    }
+#endif
     /* notify <urgency:0|1|2> <summary> [body] [icon-cp] [timeout-ms]
      *   timeout: -1 → urgency default; 0 → sticky. */
     if (!strcmp(op, "notify")) {
@@ -489,6 +520,35 @@ static int dispatch(Client *c, char *cmd) {
         (void)!write(c->fd, "ok\n", 3);
         return 0;
     }
+#ifdef WISP_HAS_DBUS
+    /* notif open|close|toggle|status|dismiss <id>|clear — the notification
+     * center. `open` is what a panel surface gates on via `notifications().open`;
+     * `id` is the entry serial the cell's on_click(p) hands back (`note.id`) —
+     * an index would race the ring shifting under the click. */
+    if (!strcmp(op, "notif")) {
+        if (argc < 2) return fail(c, "usage: notif open|close|toggle|status|dismiss <id>|clear");
+        const char *sub = argv[1];
+        if (!strcmp(sub, "open"))        notif_open = 1;
+        else if (!strcmp(sub, "close"))  notif_open = 0;
+        else if (!strcmp(sub, "toggle")) notif_open = !notif_open;
+        else if (!strcmp(sub, "status")) {
+            (void)!write(c->fd, notif_open ? "on\n" : "off\n", notif_open ? 3 : 4);
+            return 0;
+        }
+        else if (!strcmp(sub, "clear"))  notif_clear();
+        else if (!strcmp(sub, "dismiss")) {
+            if (argc < 3) return fail(c, "usage: notif dismiss <id>");
+            notif_dismiss((uint32_t)strtoul(argv[2], NULL, 10));
+        }
+        else return fail(c, "unknown notif subcommand: %s", sub);
+        {
+            extern void wispgen_wisp_state_changed(void) __attribute__((weak));
+            if (wispgen_wisp_state_changed) wispgen_wisp_state_changed();
+        }
+        (void)!write(c->fd, "ok\n", 3);
+        return 0;
+    }
+#endif
 #ifdef WISP_HAS_OSD
     /* dnd on|off|toggle|status — when on, dbus app notifications (urgency<2)
      * are swallowed. Critical urgency=2 always passes through. */

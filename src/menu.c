@@ -60,6 +60,32 @@ static int match_score(const char *item, const char *q) {
     return best;
 }
 
+/* Separators occupy a row slot but are never selectable: they take no click,
+ * no hover and arrow keys step over them. All three go through row_sep(). */
+static int row_sep(const Widget *w, int fi) {
+    const unsigned char *fl = w->s.menu.row_flags;
+    return fl && fi >= 0 && fi < w->s.menu.n_filtered
+        && (fl[w->s.menu.filtered[fi]] & MENU_ROW_SEPARATOR);
+}
+
+/* First selectable filtered row from i (inclusive) stepping dir, else -1. */
+static int sel_scan(const Widget *w, int i, int dir) {
+    for (; i >= 0 && i < w->s.menu.n_filtered; i += dir)
+        if (!row_sep(w, i)) return i;
+    return -1;
+}
+
+/* Pull sel off a separator (forward first, then back). -1 = the menu is all
+ * separators; Enter then picks nothing and no row draws as selected. */
+static void sel_fix(Widget *w) {
+    if (w->s.menu.n_filtered <= 0) { w->s.menu.sel = 0; return; }
+    if (w->s.menu.sel < 0) w->s.menu.sel = 0;
+    if (!row_sep(w, w->s.menu.sel)) return;
+    int i = sel_scan(w, w->s.menu.sel, +1);
+    if (i < 0) i = sel_scan(w, w->s.menu.sel, -1);
+    w->s.menu.sel = i;
+}
+
 static void rebuild_filtered(Widget *w) {
     int n = 0;
     int sc[MAX_ITEMS];
@@ -84,6 +110,7 @@ static void rebuild_filtered(Widget *w) {
     w->s.menu.n_filtered = n;
     if (w->s.menu.sel >= n) w->s.menu.sel = n - 1;
     if (w->s.menu.sel < 0)  w->s.menu.sel = 0;
+    sel_fix(w);
 }
 
 static int menu_row_h(const Widget *w, const Font *f) {
@@ -91,10 +118,43 @@ static int menu_row_h(const Widget *w, const Font *f) {
     return rh ? rh : (MENU_ROW_H ? MENU_ROW_H : f->line_h + 10);
 }
 
+/* Height of one filtered row. `separator_h` is the only thing that makes the
+ * grid non-uniform, so everything below walks rows instead of dividing — the
+ * generated renderer walks them in the same order. */
+static int row_h_at(const Widget *w, const Font *f, int fi) {
+    int sh = w->s.menu.geom.sep_h;
+    return (sh > 0 && row_sep(w, fi)) ? sh : menu_row_h(w, f);
+}
+
+/* Rows from `top` that fit in `avail` px (at least one, so a row taller than
+ * the window still scrolls). */
+static int vis_from(const Widget *w, const Font *f, int top, int avail) {
+    int n = 0, y = 0;
+    for (int i = top; i < w->s.menu.n_filtered; i++) {
+        int h = row_h_at(w, f, i);
+        if (n && y + h > avail) break;
+        y += h; n++;
+    }
+    return n;
+}
+
+/* Surface height for the first `slots` rows of the UNfiltered list — see the
+ * stability note in menu_render. */
+static int rows_total_h(const Widget *w, const Font *f, int slots) {
+    const unsigned char *fl = w->s.menu.row_flags;
+    int rh = menu_row_h(w, f), sh = w->s.menu.geom.sep_h, y = 0;
+    for (int i = 0; i < slots; i++)
+        y += (sh > 0 && fl && (fl[i] & MENU_ROW_SEPARATOR)) ? sh : rh;
+    return y;
+}
+
 /* Set by ctl.c from the WispMenu entry just before menu_create; one menu is
  * live at a time, so a single pending slot is enough. */
 static WispMenuGeom pend_geom;
 void menu_set_geom(const WispMenuGeom *g) { pend_geom = *g; }
+
+static TipAnchor pend_anchor;
+void menu_set_anchor(const TipAnchor *at) { pend_anchor = *at; }
 
 int menu_icon_px(void) {
     int rh = MENU_ROW_H ? MENU_ROW_H : font_small.line_h + 10;
@@ -108,25 +168,32 @@ int menu_icon_px(void) {
 void menu_render(Widget *w) {
     if (!w->configured) return;
     const Font *f = &font_small;
-    int rh = menu_row_h(w, f);
     const WispMenuGeom *g = &w->s.menu.geom;
     if (MENU_VERTICAL) {
         /* Height from the TOTAL item count, not the filtered count: a
          * per-keystroke resize costs a commit + configure round-trip + pool
          * realloc, which reads as lag. Empty rows just show background. */
         int slots = w->s.menu.n_items < g->max_vis ? w->s.menu.n_items : g->max_vis;
-        int want_h = g->hdr_h + slots * rh + 2 * g->pad_y;
+        int want_h = g->hdr_h + rows_total_h(w, f, slots) + 2 * g->pad_y;
         if (w->w != g->width || w->h != want_h) {
             widget_set_size(w, g->width, want_h);
             wl_req(w->surface, SURFACE_REQ_COMMIT, NULL, 0, -1);
             return;
         }
-        int vis = w->s.menu.n_filtered < slots ? w->s.menu.n_filtered : slots;
+        int avail = w->h - g->hdr_h - 2 * g->pad_y;
         int *top = &w->s.menu.view_top;
-        if (w->s.menu.sel < *top) *top = w->s.menu.sel;
-        if (w->s.menu.sel >= *top + vis) *top = w->s.menu.sel - vis + 1;
-        if (*top > w->s.menu.n_filtered - vis) *top = w->s.menu.n_filtered - vis;
+        /* sel_scan() returns -1 (no selectable row: empty filter, all-separator
+         * menu) — never follow it into the view, or view_top goes negative and
+         * the generated row loop reads filtered[-1]. */
+        if (w->s.menu.sel >= 0) {
+            if (w->s.menu.sel < *top) *top = w->s.menu.sel;
+            while (*top < w->s.menu.sel &&
+                   w->s.menu.sel >= *top + vis_from(w, f, *top, avail)) (*top)++;
+        }
         if (*top < 0) *top = 0;
+        /* Pull back into any slack left at the end of the list. */
+        while (*top > 0 && *top - 1 + vis_from(w, f, *top - 1, avail) >= w->s.menu.n_filtered)
+            (*top)--;
     } else {
         /* Horizontal: scroll by whole items so the selection stays inside the
          * strip. Widths are re-measured here against an approximate reserve
@@ -137,30 +204,41 @@ void menu_render(Widget *w) {
         int avail = w->w - text_width(f, w->s.menu.prompt)
                   - text_width(f, w->s.menu.query) - 48;
         int *top = &w->s.menu.view_top;
-        if (w->s.menu.sel < *top) *top = w->s.menu.sel;
-        while (*top < w->s.menu.sel) {
-            int x = 0;
-            for (int i = *top; i <= w->s.menu.sel && x <= avail; i++)
-                x += text_width(f, w->s.menu.items[w->s.menu.filtered[i]]) + 16;
-            if (x <= avail) break;
-            (*top)++;
+        if (w->s.menu.sel >= 0) {
+            if (w->s.menu.sel < *top) *top = w->s.menu.sel;
+            while (*top < w->s.menu.sel) {
+                int x = 0;
+                for (int i = *top; i <= w->s.menu.sel && x <= avail; i++)
+                    x += text_width(f, w->s.menu.items[w->s.menu.filtered[i]]) + 16;
+                if (x <= avail) break;
+                (*top)++;
+            }
         }
         if (*top < 0) *top = 0;
     }
     w->s.menu.render(w);
 }
 
-/* Filtered-row index under a pointer, or -1. Rows are a fixed grid, so it's
- * arithmetic. Horizontal menus have variable-width items and no hit grid of
- * their own, so only the vertical layout is hit-tested. */
+static int menu_avail(const Widget *w) {
+    return w->h - w->s.menu.geom.hdr_h - 2 * w->s.menu.geom.pad_y;
+}
+
+/* Filtered-row index under a pointer, or -1. Horizontal menus have variable-width items and no hit grid of
+ * their own, so only the vertical layout is hit-tested. Bounded to the rows
+ * actually on screen: a partially-clipped last row must not be selectable, or
+ * hovering the bottom edge would scroll the list out from under the pointer. */
 static int menu_row_at(const Widget *w, int px_y) {
     if (!MENU_VERTICAL) return -1;
-    int rh = menu_row_h(w, &font_small);
-    int top = w->s.menu.geom.pad_y + w->s.menu.geom.hdr_h;
-    int r = (px_y - top) / rh;
-    if (px_y < top || r < 0) return -1;
-    int i = w->s.menu.view_top + r;
-    return i < w->s.menu.n_filtered ? i : -1;
+    const Font *f = &font_small;
+    int y = w->s.menu.geom.pad_y + w->s.menu.geom.hdr_h;
+    if (px_y < y) return -1;
+    int end = w->s.menu.view_top + vis_from(w, f, w->s.menu.view_top, menu_avail(w));
+    for (int i = w->s.menu.view_top; i < end; i++) {
+        int h = row_h_at(w, f, i);
+        if (px_y < y + h) return row_sep(w, i) ? -1 : i;
+        y += h;
+    }
+    return -1;
 }
 
 void menu_on_click(Widget *w, int px_x, int px_y) {
@@ -181,12 +259,43 @@ void menu_on_hover(Widget *w, int px_x, int px_y) {
     menu_render(w);
 }
 
+/* Topmost row that still fills the window — scrolling past it would show
+ * empty space below the last item. */
+static int menu_max_top(const Widget *w, const Font *f, int avail) {
+    for (int t = 0; t < w->s.menu.n_filtered; t++)
+        if (t + vis_from(w, f, t, avail) >= w->s.menu.n_filtered) return t;
+    return 0;
+}
+
+/* The wheel moves the VIEW, not the selection: rows slide under a stationary
+ * pointer and (with `hover;`) the selection re-derives from where the pointer
+ * now is. A list that fits entirely does nothing at all. */
 void menu_on_scroll(Widget *w, int dir) {
-    int s = w->s.menu.sel + dir;
-    if (s < 0) s = 0;
-    if (s >= w->s.menu.n_filtered) s = w->s.menu.n_filtered - 1;
-    if (s == w->s.menu.sel || s < 0) return;
-    w->s.menu.sel = s;
+    if (!MENU_VERTICAL) {
+        int s = sel_scan(w, w->s.menu.sel + dir, dir < 0 ? -1 : +1);
+        if (s < 0 || s == w->s.menu.sel) return;
+        w->s.menu.sel = s;
+        menu_render(w);
+        return;
+    }
+    const Font *f = &font_small;
+    int avail = menu_avail(w);
+    int top = w->s.menu.view_top + dir, max_top = menu_max_top(w, f, avail);
+    if (top < 0) top = 0;
+    if (top > max_top) top = max_top;
+    if (top == w->s.menu.view_top) return;
+    w->s.menu.view_top = top;
+
+    /* Keep the selection inside the new window, else menu_render's
+     * scroll-into-view clamp would undo the scroll on the next repaint. */
+    int vis = vis_from(w, f, top, avail);
+    int s = w->s.menu.geom.wants_hover ? menu_row_at(w, ptr_y) : -1;
+    if (s < 0) {
+        s = w->s.menu.sel;
+        if (s < top)             s = sel_scan(w, top, +1);
+        else if (s >= top + vis) s = sel_scan(w, top + vis - 1, -1);
+    }
+    if (s >= 0) w->s.menu.sel = s;
     menu_render(w);
 }
 
@@ -198,6 +307,12 @@ void menu_set_ranks(Widget *w, const int *rank) {
 void menu_set_icons(Widget *w, uint32_t *const *icons, int icon_px) {
     w->s.menu.icons = icons;
     w->s.menu.icon_px = icon_px;
+    menu_render(w);
+}
+
+void menu_set_row_flags(Widget *w, const unsigned char *flags) {
+    w->s.menu.row_flags = flags;
+    sel_fix(w);          /* row 0 may be a separator */
     menu_render(w);
 }
 
@@ -224,7 +339,12 @@ void spawn_detached(const char *shell_cmd) {
     }
 }
 
-void menu_update_items(Widget *w, char items[][ITEM_MAX], int n) {
+/* One swap for list + flags + icons: a live refresh (tray.c) frees the old
+ * icon squares just before calling, so there must be no render between the
+ * new list landing and the new icon table landing. */
+void menu_update_items(Widget *w, char items[][ITEM_MAX], int n,
+                       const unsigned char *flags,
+                       uint32_t *const *icons, int icon_px) {
     if (n <= 0) return;
     if (n > MAX_ITEMS) n = MAX_ITEMS;
     char (*ni)[ITEM_MAX] = calloc((size_t)n, sizeof *ni);
@@ -236,8 +356,19 @@ void menu_update_items(Widget *w, char items[][ITEM_MAX], int n) {
     w->s.menu.items    = ni;
     w->s.menu.filtered = nfil;
     w->s.menu.n_items  = n;
-    rebuild_filtered(w);
+    w->s.menu.row_flags = flags;  /* old flags indexed the old list; never keep them */
+    w->s.menu.icons    = icons;
+    w->s.menu.icon_px  = icon_px;
+    rebuild_filtered(w);          /* clamps sel and pulls it off a separator */
     menu_render(w);
+}
+
+/* The one live menu, or NULL — menu_create cancels any previous popup, so a
+ * W_MENU widget existing at all means it is the current one. */
+Widget *menu_live(void) {
+    for (int i = 0; i < MAX_WIDGETS; i++)
+        if (widgets[i].kind == W_MENU) return &widgets[i];
+    return NULL;
 }
 
 void menu_reply_and_close(Widget *w, int picked) {
@@ -287,21 +418,23 @@ void menu_on_key(Widget *w, uint32_t key, uint32_t state) {
     if (key == KEY_LSHIFT || key == KEY_RSHIFT) return;
     if (key == KEY_ESC) { menu_reply_and_close(w, -1); return; }
     if (key == KEY_ENTER) {
-        int picked = w->s.menu.n_filtered > 0
+        int picked = w->s.menu.n_filtered > 0 && w->s.menu.sel >= 0
                    ? w->s.menu.filtered[w->s.menu.sel] : -1;
         menu_reply_and_close(w, picked); return;
     }
     /* horizontal nav + arrow fallbacks for muscle memory */
     if (key == KEY_RIGHT || key == KEY_DOWN || key == KEY_TAB) {
-        if (w->s.menu.sel + 1 < w->s.menu.n_filtered) w->s.menu.sel++;
+        int s = sel_scan(w, w->s.menu.sel + 1, +1);
+        if (s >= 0) w->s.menu.sel = s;
         menu_render(w); return;
     }
     if (key == KEY_LEFT  || key == KEY_UP) {
-        if (w->s.menu.sel > 0) w->s.menu.sel--;
+        int s = w->s.menu.sel > 0 ? sel_scan(w, w->s.menu.sel - 1, -1) : -1;
+        if (s >= 0) w->s.menu.sel = s;
         menu_render(w); return;
     }
-    if (key == KEY_HOME) { w->s.menu.sel = 0; menu_render(w); return; }
-    if (key == KEY_END)  { w->s.menu.sel = w->s.menu.n_filtered ? w->s.menu.n_filtered - 1 : 0; menu_render(w); return; }
+    if (key == KEY_HOME) { w->s.menu.sel = sel_scan(w, 0, +1); menu_render(w); return; }
+    if (key == KEY_END)  { w->s.menu.sel = sel_scan(w, w->s.menu.n_filtered - 1, -1); menu_render(w); return; }
     if (key == KEY_BS) {
         if (w->s.menu.query_len > 0) {
             int nl = utf8_back(w->s.menu.query, w->s.menu.query_len);
@@ -360,6 +493,7 @@ Widget *menu_create(const char *title, char items[][ITEM_MAX], int n, int client
     w->s.menu.view_top = 0;
     w->s.menu.icons = NULL;
     w->s.menu.icon_px = 0;
+    w->s.menu.row_flags = NULL;
     w->s.menu.render = render_menu_default;
 
     /* Per-menu geometry, else the template's. Consumed here so a later
@@ -370,21 +504,27 @@ Widget *menu_create(const char *title, char items[][ITEM_MAX], int n, int client
     if (!g->width)   g->width   = MENU_W;
     if (!g->max_vis) g->max_vis = MENU_MAX_VIS;
     if (!g->gap)     g->gap     = MENU_GAP;
+    if (!g->wants_hover) g->wants_hover = MENU_WANTS_HOVER;
     if (!g->own_body) { g->pad_y = MENU_PAD_Y; g->hdr_h = MENU_HDR_H; }
 
     /* A menu opened as a result of a bar click hangs under the cell that was
      * clicked. The rect can't ride the exec() → wispctl → ctl round trip, so
      * it's picked up from the last click instead, time-boxed so an unrelated
-     * `wispctl menu` later doesn't inherit it.
-     * ponytail: 500 ms window; give ctl an explicit --at x,w if a second,
-     * non-click caller ever needs to place a popup. */
-    int anchored = click_anchor.ms && now_ms() - click_anchor.ms < 500
-                   && click_anchor.out && MENU_VERTICAL;
-    click_anchor.ms = 0;
+     * `wispctl menu` later doesn't inherit it. `menu --at` sets an explicit
+     * anchor instead, which wins and leaves the click stamp alone. */
+    TipAnchor a = pend_anchor;
+    int anchored = a.out ? MENU_VERTICAL
+                 : (click_anchor.ms && now_ms() - click_anchor.ms < 500
+                    && click_anchor.out && MENU_VERTICAL);
+    if (!a.out) {
+        a = (TipAnchor){ click_anchor.out, click_anchor.x, click_anchor.w, click_anchor.below };
+        click_anchor.ms = 0;
+    }
+    pend_anchor = (TipAnchor){0};
     w->s.menu.anchored = anchored;
 
     /* Menu sits on the user's current monitor — wherever dwl says focus is. */
-    Output *o = anchored ? click_anchor.out : focused_output;
+    Output *o = anchored ? a.out : focused_output;
     if (!o) {
         for (int i = 0; i < MAX_OUTPUTS; i++)
             if (outputs[i].active) { o = &outputs[i]; break; }
@@ -392,18 +532,17 @@ Widget *menu_create(const char *title, char items[][ITEM_MAX], int n, int client
     widget_setup_surface(w, LAYER_OVERLAY, "wisp-menu", o);
     if (MENU_VERTICAL) {
         const Font *f = &font_small;
-        int rh = menu_row_h(w, f);
         int vis = n < g->max_vis ? n : g->max_vis;
-        widget_set_size(w, g->width, g->hdr_h + vis * rh + 2 * g->pad_y);
+        widget_set_size(w, g->width, g->hdr_h + rows_total_h(w, f, vis) + 2 * g->pad_y);
         if (anchored) {
             /* Centered on the cell, kept fully on-screen. mode_w is physical;
              * layer-shell margins are logical. */
             int ow = o->scale120 > 0 ? o->mode_w * 120 / o->scale120 : o->mode_w;
-            int mx = click_anchor.x + click_anchor.w / 2 - g->width / 2;
+            int mx = a.x + a.w / 2 - g->width / 2;
             if (mx > ow - g->width) mx = ow - g->width;
             if (mx < 0) mx = 0;
             widget_set_anchor(w, LS_ANCHOR_TOP | LS_ANCHOR_LEFT);
-            widget_set_margin(w, click_anchor.below + g->gap, 0, 0, mx);
+            widget_set_margin(w, a.below + g->gap, 0, 0, mx);
         } else {
             widget_set_anchor(w, LS_ANCHOR_TOP);   /* top-only anchor auto-centers */
             widget_set_margin(w, MENU_MARGIN, 0, 0, 0);

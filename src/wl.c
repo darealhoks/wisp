@@ -523,6 +523,12 @@ void output_destroy(Output *o) {
     if (osd_on_output_destroyed) osd_on_output_destroyed(o);
 #endif
 
+#ifdef WISP_HAS_TOOLTIP
+    /* A tooltip is transient: drop it rather than re-anchor. Its Output back-
+     * pointer would otherwise dangle into a reused slot. */
+    tooltip_hide();
+#endif
+
     /* Drop any cutouts scoped to this output before the slot can be reused. */
     cutout_drop_output(o);
 

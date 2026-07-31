@@ -25,7 +25,8 @@ static const SrcDef SOURCES[] = {
     {"exec_line",            "value",  "value", F_EXEC },
     {"inotify",              "value",  "value", F_NONE },
     {"dbus_signal",          "value",  "value history", F_DBUS },
-    {"mpris",                "title",  "title artist status player", F_MPRIS },
+    {"notifications",        "count",  "count open history", F_DBUS },
+    {"mpris",                "title",  "title artist status player art", F_MPRIS },
     {"tray",                 "count",  "count items", F_TRAY },
     {"pipewire",             "vol",    "vol mute mic_vol mic_mute ok", F_PIPEWIRE },
     {"toplevel",             "exists", "exists count title", F_TOPLEVEL },
@@ -67,11 +68,12 @@ static const PropSchema SCHEMAS[] = {
     { "widget", "widget",
       " align bg body_fit body_lines border border_bottom border_left border_right"
       " border_top border_width elide enter_anim enter_easing exit_anim"
-      " exit_easing fg graph graph_fg graph_max graph_samples height icon icon_box icon_fg icon_gap"
+      " exit_easing fg graph graph_fg graph_max graph_samples height hover_bg icon icon_box icon_fg icon_gap"
+      " image image_size"
       " orientation pad pad_x pad_y press_bg radius"
       " radius_bl radius_br radius_tl radius_tr shadow shadow_blur shadow_spread"
-      " shadow_x shadow_y show_value slider text text_align thumb_border thumb_border_width"
-      " thumb_color thumb_radius thumb_shape thumb_size track_bg track_fg"
+      " shadow_x shadow_y show_value slider sticky text text_align thumb_border thumb_border_width"
+      " thumb_color thumb_radius thumb_shape thumb_size tooltip track_bg track_fg"
       " track_radius transition_bg transition_border transition_easing"
       " transition_fg transition_size value value_align value_fg value_format"
       " value_gap value_max value_scale visible width wrap x_offset y_offset " },
@@ -88,10 +90,10 @@ static const PropSchema SCHEMAS[] = {
       " layer margin max max_visible pad pad_x pad_y prog_fg prog_h prog_track"
       " prompt radius radius_bl radius_br radius_inner radius_outer radius_tl"
       " radius_tr reveal_anim_ms reveal_easing reveal_gutter reveal_on_hover"
-      " row_h separator separator_frac size slide_ms sort spawned_by terminal"
+      " delay_ms on_escape row_h scroll separator separator_frac separator_h size slide_ms sort spawned_by terminal"
       " timeout timeout_low timeout_normal visible width " },
     { "group", "group",
-      " align bg border border_width gap height pad pad_x radius " },
+      " align bg border border_width gap height pad pad_x radius sticky " },
     { "lock", "lock block",
       " pam prompt bg ring ring_bad fg dim caps font_size wrong_ms wall"
       " retry_ms retry_growth retry_max_ms lockout_after privacy"
@@ -100,6 +102,8 @@ static const PropSchema SCHEMAS[] = {
       " anchor bg border border_width height radius show width x y " },
     { "lock_text", "lock text",
       " anchor fg font_size format show text x y " },
+    { "lock_ring", "lock ring",
+      " anchor bg border border_width fg gap highlight highlight_arc highlight_bs radius segments separator show thickness x y " },
     { "gamma", "gamma block",
       " day_k night_k flat_k day_hour night_hour fade_min transition_ms " },
     { "wallpaper", "wallpaper block",
@@ -477,6 +481,15 @@ static void walk_widget(S *s, Widget *w) {
         case WB_PROP:
             check_prop("widget", b->prop);
             typecheck_prop(s, "widget", b->prop);
+            if (b->prop->nlen == 5 && memcmp(b->prop->name, "image", 5) == 0)
+                s->r->has_image = true;
+            if (b->prop->nlen == 7 && memcmp(b->prop->name, "tooltip", 7) == 0) {
+                if (!s->tip_prop) s->tip_prop = b->prop;
+                /* The hit table holds the pointer across frames, so it has to
+                 * be .rodata — an interpolated string is a render-local buffer. */
+                if (!b->prop->val || b->prop->val->kind != EX_STRING)
+                    diag_error(b->prop->loc, "'tooltip' must be a literal string");
+            }
             /* transition_easing accepts a bare easing ident (ease_in/ease_out/
              * ease_in_out/linear); don't run the undef-ident check on it. */
             if (b->prop->nlen == 17 && memcmp(b->prop->name, "transition_easing", 17) == 0) {
@@ -538,6 +551,54 @@ static int eval_anchor_mask(Expr *e) {
     if (e->kind == EX_INT) return (int)e->i;
     return -1;
 }
+static int prop_flag(WBody *items, int n, const char *name) {
+    for (int i = 0; i < n; i++)
+        if (items[i].kind == WB_PROP && strcmp(items[i].prop->name, name) == 0) return 1;
+    return 0;
+}
+static int group_prop_flag(Group *g, const char *name) {
+    for (int i = 0; i < g->nprops; i++)
+        if (strcmp(g->props[i]->name, name) == 0) return 1;
+    return 0;
+}
+
+/* `scroll` shifts the start-aligned item stack along Y, so it is meaningless
+ * without `axis = vertical` — catching it here means `--check` reports it, not
+ * a codegen backstop nobody runs. */
+static void validate_scroll(Decl *d) {
+    Prop *sc = NULL; int vertical = 0;
+    for (int i = 0; i < d->surface.n; i++) {
+        SBody *b = &d->surface.items[i];
+        if (b->kind != SB_PROP) continue;
+        if (strcmp(b->prop->name, "scroll") == 0) sc = b->prop;
+        else if (strcmp(b->prop->name, "axis") == 0)
+            vertical = b->prop->val && b->prop->val->kind == EX_IDENT
+                    && b->prop->val->ident.n == 8
+                    && memcmp(b->prop->val->ident.s, "vertical", 8) == 0;
+    }
+    if (sc && !vertical)
+        diag_error(sc->val ? sc->val->loc : d->loc,
+                   "`scroll` needs `axis = vertical;` on the same surface — "
+                   "a horizontal surface stacks along x, which scroll doesn't move");
+    if (!sc) return;
+    /* `sticky` pins a row above the scrolled region, which only works for a
+     * LEADING run of rows: the scrolled stack starts where that run ends. */
+    int seen_scrolling = 0;
+    for (int i = 0; i < d->surface.n; i++) {
+        SBody *b = &d->surface.items[i];
+        int sticky = 0; Loc loc = d->loc;
+        if (b->kind == SB_WIDGET) { sticky = prop_flag(b->widget->items, b->widget->nitems, "sticky"); loc = b->widget->loc; }
+        else if (b->kind == SB_GROUP) { sticky = group_prop_flag(b->group, "sticky"); loc = b->group->loc; }
+        else continue;
+        if (!sticky) { seen_scrolling = 1; continue; }
+        if (seen_scrolling) {
+            diag_error(loc, "`sticky` only works on the leading rows of a scrollable surface — "
+                            "a pinned row below scrolling ones would be overrun by them");
+            return;
+        }
+    }
+}
+
 static void validate_compound_regions(Decl *d) {
     int anchor = -1;
     for (int i = 0; i < d->surface.n; i++) {
@@ -585,7 +646,15 @@ static void analyze_surface(S *s, Decl *d) {
         SBody *b = &d->surface.items[i];
         if (b->kind == SB_PROP) {
             const char *pn = b->prop->name;
-            if (strcmp(pn, "spawned_by") == 0) s->in_template = true;
+            if (strcmp(pn, "spawned_by") == 0) {
+                s->in_template = true;
+                /* `spawned_by = tooltip` compiles src/tooltip.c in — the engine
+                 * exists only when a config declares the surface. */
+                Expr *v = b->prop->val;
+                if (v && v->kind == EX_IDENT && v->ident.n == 7
+                    && memcmp(v->ident.s, "tooltip", 7) == 0)
+                    s->r->has_tooltip = true;
+            }
             else if (strcmp(pn, "reveal_on_hover") == 0) has_hud = true;
             else if (strcmp(pn, "reveal_anim_ms") == 0)  s->r->has_anim = true;
             else if (strcmp(pn, "exclusive_zone") == 0) {
@@ -718,6 +787,7 @@ SemaResult *sema_check(Arena *a, Unit *u) {
             if (find_decl_in(s.s.sur, s.s.nsur, d->name, d->nlen))
                 diag_error(d->loc, "duplicate surface '%s'", d->name);
             s.s.sur[s.s.nsur++] = d;
+            if (d->kind == D_SURFACE) validate_scroll(d);
             if (d->kind == D_COMPOUND) s.r->has_bar = true;
             break;
         case D_CONST:
@@ -732,8 +802,18 @@ SemaResult *sema_check(Arena *a, Unit *u) {
             for (int j = 0; j < d->block.n; j++) check_prop("lock", d->block.props[j]);
             for (int j = 0; j < d->block.nels; j++) {
                 LockElem *e = d->block.els[j];
-                for (int k = 0; k < e->n; k++)
-                    check_prop(e->is_text ? "lock_text" : "lock_frame", e->props[k]);
+                static const char *sch[] = { "lock_frame", "lock_text", "lock_ring" };
+                for (int k = 0; k < e->n; k++) {
+                    Prop *p = e->props[k];
+                    check_prop(sch[e->kind], p);
+                    if (e->kind != LK_RING || p->nlen != 8 ||
+                        memcmp(p->name, "segments", 8) != 0) continue;
+                    if (!p->val || p->val->kind != EX_INT) continue;
+                    if (p->val->i < 1 || p->val->i > 360)
+                        diag_error(p->val->loc,
+                                   "lock ring segments=%lld out of range — 1..360",
+                                   (long long)p->val->i);
+                }
             }
             break;
         case D_GAMMA:
@@ -793,6 +873,12 @@ SemaResult *sema_check(Arena *a, Unit *u) {
     /* OSD/menu anchor to the focused monitor; wl_toplevel.c is the only
      * compositor-agnostic source of that (activated toplevel's output). */
     if (s.r->has_osd || s.r->has_menu) s.r->has_toplevel = 1;
+
+    /* `tooltip =` with nothing to draw it would silently do nothing at
+     * runtime — the engine only exists when the template is declared. */
+    if (s.tip_prop && !s.r->has_tooltip)
+        diag_error(s.tip_prop->loc,
+                   "'tooltip' needs a `surface … { spawned_by = tooltip; … }` to draw it");
 
     free(s.deps);
     return s.r;

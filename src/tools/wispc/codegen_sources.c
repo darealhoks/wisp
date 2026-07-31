@@ -37,7 +37,7 @@ static const SrcDrv DRVS[] = {
                                {"connected", "bz_connected()", 0},
                                {"device",    "bz_device()",    1},
                                {"battery",   "bz_battery()",   0}} },
-    { "tags",DRV_TAGS,{{"title", "(($W)->s.bar.title)", 1}} },
+    { "tags",DRV_TAGS,{{"title", "(($W)->title)", 1}} },
     /* DRV_WISP: value is read straight from daemon state, so polling it via
      * `exec_line("wispctl …")` (a fork + socket round-trip back into ourselves
      * every tick) is pure waste — these are free and update instantly. */
@@ -49,7 +49,13 @@ static const SrcDrv DRVS[] = {
     { "mpris",   DRV_WISP,    {{"title",  "mpris_title()",  1},
                                {"artist", "mpris_artist()", 1},
                                {"status", "mpris_status()", 1},
-                               {"player", "mpris_player()", 1}} },
+                               {"player", "mpris_player()", 1},
+                               {"art",    "mpris_art()",    1}} },
+    /* The notification center: `count`/`open` are scalars off notify.c, `history`
+     * is for-only (lowered in collect_bar_items). No fd — notify.c and ctl.c
+     * ping wispgen_wisp_state_changed() when the ring or the flag moves. */
+    { "notifications",DRV_WISP,{{"count", "notif_count()", 0},
+                               {"open",  "notif_open", 0}} },
     /* tray likewise; `items` is for-only, lowered in collect_bar_items. */
     { "tray",    DRV_WISP,    {{"count", "tray_count()", 0}} },
     /* pipewire rides DRV_WISP: no fd registered by gen code (pipewire.c owns
@@ -70,6 +76,13 @@ static const SrcDrv DRVS[] = {
     { "dbus_signal",DRV_DBUS, {{"value", "", 1}} },  /* lowering: see lower_member */
 };
 #define NDRVS (int)(sizeof DRVS / sizeof DRVS[0])
+
+const char *drv_rev_expr(const SrcDrv *d) {
+    /* notifications(): `history` is for-only, so count/open can't see a replaced
+     * entry — notify.c bumps this on every ring mutation instead. */
+    if (strcmp(d->name, "notifications") == 0) return "notif_revision()";
+    return NULL;
+}
 
 const SrcDrv *find_drv(const char *name, size_t n) {
     for (int i = 0; i < NDRVS; i++)
@@ -1001,8 +1014,18 @@ void emit_bindings(FILE *o, SrcInst *srcs, int nsrc, SemaResult *r,
          * value moved; without this guard the bar repaints every second at
          * idle. Compare every driver field (any could be bound) and bail if
          * none changed. Other driver kinds only fire on a real event. */
-        if (srcs[i].drv->drv == DRV_STATUS) {
+        /* DRV_WISP sources fire from wispgen_wisp_state_changed(), a fanout every
+         * in-process subsystem pings — so a tray icon or an mpris title moving
+         * used to repaint the notification centre too. Guarded only when the
+         * driver declares rev_expr: without it the for-only ring is invisible to
+         * a field compare and the guard would suppress real changes. */
+        if (srcs[i].drv->drv == DRV_STATUS
+            || (srcs[i].drv->drv == DRV_WISP && drv_rev_expr(srcs[i].drv))) {
             fputs("    int __chg = 0;\n", o);
+            if (drv_rev_expr(srcs[i].drv))
+                fprintf(o, "    { int __v = (int)(%s); static int __lastrev = -2147483647;\n"
+                           "      if (__v != __lastrev) { __lastrev = __v; __chg = 1; } }\n",
+                        drv_rev_expr(srcs[i].drv));
             for (int f = 0; f < 8 && srcs[i].drv->fields[f].field; f++) {
                 const char *ex = srcs[i].drv->fields[f].c_expr;
                 if (srcs[i].drv->fields[f].is_string) {

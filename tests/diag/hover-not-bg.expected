@@ -1,0 +1,3 @@
+tests/diag/hover-not-bg.wisp:9:3: error: ':hover' can only set 'bg' (lowers to hover_bg), not 'fg'
+    fg = #ff000000;
+    ^

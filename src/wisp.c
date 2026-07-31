@@ -55,6 +55,33 @@ void key_rep_cancel(void) {
 /* Input dispatchers (called from wl.c)                          */
 /* ============================================================ */
 
+/* Scroll accumulation. A notched wheel sends one axis event per detent, but a
+ * touchpad sends a stream of small continuous values — one row step per wire
+ * event made every two-finger scroll fly. Prefer the compositor's own notch
+ * count (axis_value120 / axis_discrete, both sent *before* their axis event)
+ * and only fall back to summing the continuous value. A sub-notch remainder
+ * just sits in the accumulator: no dispatch, no repaint, no frame. */
+#define AXIS_NOTCH_F  (10 << 8)   /* wl_fixed 10.0 — libinput's per-detent unit */
+#define AXIS_MAX_STEPS 8          /* wire-supplied step counts are untrusted */
+static int32_t axis_acc;          /* wl_fixed, vertical only */
+static int     axis_notches;      /* latched from value120/discrete, per frame */
+static int     axis_hires;        /* compositor gave a notch count this frame */
+
+static void axis_dispatch(Widget *w, int steps) {
+    int dir = steps > 0 ? 1 : -1;
+    if (steps < 0) steps = -steps;
+    if (steps > AXIS_MAX_STEPS) steps = AXIS_MAX_STEPS;
+    (void)w; (void)dir;   /* wisp-lock links neither menu nor bar */
+    while (steps--) {
+#ifdef WISP_HAS_MENU
+        if (w->kind == W_MENU) { menu_on_scroll(w, dir); continue; }
+#endif
+#ifdef WISP_HAS_BAR
+        if (w->kind == W_BAR || w->kind == W_HUD) bar_input_scroll(w, dir);
+#endif
+    }
+}
+
 void on_pointer_event(uint16_t op, uint8_t *body, uint32_t bodylen) {
     switch (op) {
     case 0: {  /* enter: serial, surface, x, y */
@@ -64,6 +91,7 @@ void on_pointer_event(uint16_t op, uint8_t *body, uint32_t bodylen) {
         int32_t fx = *(int32_t *)(body + 8), fy = *(int32_t *)(body + 12);
         ptr_x = fx >> 8; ptr_y = fy >> 8;
         enter_serial = serial;
+        axis_acc = 0; axis_notches = 0; axis_hires = 0;  /* don't carry a partial notch across surfaces */
         Widget *w = widget_by_surface(ptr_focus);
         (void)w;
 #ifdef WISP_HAS_LOCK
@@ -89,6 +117,11 @@ void on_pointer_event(uint16_t op, uint8_t *body, uint32_t bodylen) {
         (void)w;
 #ifdef WISP_HAS_HUD
         if (w && w->kind == W_HUD) hud_on_pointer_leave(w);
+#endif
+#ifdef WISP_HAS_BAR
+        /* Mirrors the motion dispatch below: same surfaces, so a hover tint
+         * can't survive the pointer leaving. */
+        if (w && (w->kind == W_BAR || w->kind == W_HUD)) bar_input_leave(w);
 #endif
         ptr_focus = 0;
         break;
@@ -153,29 +186,58 @@ void on_pointer_event(uint16_t op, uint8_t *body, uint32_t bodylen) {
             } else {
                 bar_input_release(w, ptr_x, ptr_y, (int)button);
             }
-            /* Mark bar dirty so press_bg / release transitions paint next frame.
-             * Weak ref: configs without a "bar" surface still link cleanly;
-             * the branch above gates on W_BAR so this code is dead in that
-             * case but the linker still resolves the symbol. */
-            extern int dirty_bar __attribute__((weak));
-            if (&dirty_bar) dirty_bar = 1;
+            /* Repaint THIS surface, not "the bar": every declared non-HUD
+             * surface is a W_BAR widget, so poking dirty_bar left a panel's
+             * press_bg stuck on until something else happened to redraw it. */
+            bar_render(w);
             break;
         }
 #endif
         break;
     }
     case 4: {  /* axis: time(4) axis(4) value(fixed 24.8) */
-#ifdef WISP_HAS_MENU
         if (bodylen >= 12) {
+            uint32_t axis = *(uint32_t *)(body + 4);
+            int32_t  v    = *(int32_t *)(body + 8);
             Widget *w = widget_by_surface(ptr_focus);
-            if (w && w->kind == W_MENU) {
-                int32_t v = *(int32_t *)(body + 8);
-                if (v) menu_on_scroll(w, v > 0 ? 1 : -1);
+            /* Vertical axis only (0); a horizontal wheel/tilt scrolls nothing. */
+            if (w && axis == 0) {
+                int steps = axis_notches;
+                if (!axis_hires) {
+                    /* Clamp before summing: the value is compositor-supplied. */
+                    if (v >  100 * AXIS_NOTCH_F) v =  100 * AXIS_NOTCH_F;
+                    if (v < -100 * AXIS_NOTCH_F) v = -100 * AXIS_NOTCH_F;
+                    axis_acc += v;
+                    steps = axis_acc / AXIS_NOTCH_F;
+                    axis_acc -= steps * AXIS_NOTCH_F;
+                }
+                if (steps) axis_dispatch(w, steps);
             }
+            axis_notches = 0; axis_hires = 0;
         }
-#endif
         break;
     }
+    case 5:  /* axis_frame: a new frame can't reuse the previous notch count */
+        axis_notches = 0; axis_hires = 0;
+        break;
+    case 8:  /* axis_discrete: axis(4) discrete(4) — precedes its axis event */
+        if (bodylen >= 8 && *(uint32_t *)body == 0) {
+            axis_notches = *(int32_t *)(body + 4);
+            axis_hires = 1;
+        }
+        break;
+    case 9:  /* axis_value120: axis(4) value120(4), 120 units per notch */
+        if (bodylen >= 8 && *(uint32_t *)body == 0) {
+            int32_t v120 = *(int32_t *)(body + 4);
+            if (v120 >  120 * 100) v120 =  120 * 100;
+            if (v120 < -120 * 100) v120 = -120 * 100;
+            /* High-res wheels tick below a notch: accumulate, don't round to 0. */
+            axis_acc += v120 * AXIS_NOTCH_F / 120;
+            axis_notches = axis_acc / AXIS_NOTCH_F;
+            axis_acc -= axis_notches * AXIS_NOTCH_F;
+            axis_hires = 1;
+        }
+        break;
     default: break;
     }
 }
@@ -232,6 +294,11 @@ void on_keyboard_event(uint16_t op, uint8_t *body, uint32_t bodylen) {
             break;
         }
 #endif
+#ifdef WISP_HAS_BAR
+        /* Declared surfaces take keyboard focus only when they declare
+         * `on_escape`; the generated dispatcher is a stub otherwise. */
+        if (w->kind == W_BAR) { if (state == 1) bar_input_key(w, key); break; }
+#endif
 #ifdef WISP_HAS_LOCK
         if (w->kind == W_LOCK) {
             lock_on_key(w, key, state, 0);
@@ -276,6 +343,9 @@ void widget_repaint(Widget *w, int first_configure) {
 #ifdef WISP_HAS_MENU
     if (w->kind == W_MENU) menu_render(w);
 #endif
+#ifdef WISP_HAS_TOOLTIP
+    if (w->kind == W_TIP) tooltip_render(w);
+#endif
 #ifdef WISP_HAS_OSD
     if (w->kind == W_OSD) {
         if (first_configure) osd_on_first_configure(w);
@@ -284,6 +354,11 @@ void widget_repaint(Widget *w, int first_configure) {
 #endif
 #ifdef WISP_HAS_HUD
     if (w->kind == W_HUD) {
+        /* A configure also arrives when the compositor re-arranges its layers —
+         * e.g. another layer surface maps. Blanking a revealed HUD there flashes
+         * the whole thing transparent for a frame; only a hidden HUD wants the
+         * empty prime. hud_render re-ensures the pool, so a resize is safe too. */
+        if (w->s.hud.visible || w->s.hud.animating) { hud_render(w); return; }
         /* Ensure BEFORE taking a slot: a configure can resize the surface (e.g.
          * a reload-adopted widget whose pool is still the old preset's size),
          * and memsetting a stale-size slot writes past its mapping. */

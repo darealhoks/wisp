@@ -101,17 +101,40 @@ static void emit_template(FILE *o, Expr *e) {
 static void emit_el(FILE *o, LockElem *e, CGCtx *ctx) {
     Expr *anc = elem_prop(e, "anchor");
     int anchor = anc ? eval_anchor(anc) : 0;
-    fprintf(o, "    { %s, %d, %d, %d, %d, %d, %d, %d, %d, %d, 0x%08xu, 0x%08xu, 0x%08xu, ",
-            e->is_text ? "LEL_TEXT" : "LEL_FRAME",
+    static const char *kinds[] = { "LEL_FRAME", "LEL_TEXT", "LEL_RING" };
+    int ring = e->kind == LK_RING;
+    /* Ring geometry borrows the box slots: w = thickness, h = segments. */
+    int w = ring ? eval_int(elem_prop(e, "thickness"), 8)
+                 : eval_int(elem_prop(e, "width"), 0);
+    int h = ring ? eval_int(elem_prop(e, "segments"), 1)
+                 : eval_int(elem_prop(e, "height"), 0);
+    if (ring && h < 1) h = 1;            /* sema already rejected literals */
+    /* Rings default to the block's `ring` colour; text/frames have no such
+     * fallback, so they keep the opaque-white default. */
+    char fg[16];
+    const char *fgs = "LOCK_RING";
+    if (!ring || elem_prop(e, "fg")) {
+        snprintf(fg, sizeof fg, "0x%08xu",
+                 (unsigned)eval_color_ctx(ctx, elem_prop(e, "fg"), 0xffffffffu));
+        fgs = fg;
+    }
+    unsigned hl = ring ? (unsigned)eval_color_ctx(ctx, elem_prop(e, "highlight"), 0) : 0;
+    unsigned bs = ring ? (unsigned)eval_color_ctx(ctx, elem_prop(e, "highlight_bs"), hl) : 0;
+    fprintf(o, "    { %s, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, 0x%08xu, %s, 0x%08xu, "
+               "0x%08xu, 0x%08xu, 0x%08xu, ",
+            kinds[e->kind],
             anchor, lock_show(elem_prop(e, "show")),
-            eval_int(elem_prop(e, "x"), 0), eval_int(elem_prop(e, "y"), 0),
-            eval_int(elem_prop(e, "width"), 0), eval_int(elem_prop(e, "height"), 0),
-            eval_int(elem_prop(e, "radius"), 0),
+            eval_int(elem_prop(e, "x"), 0), eval_int(elem_prop(e, "y"), 0), w, h,
+            eval_int(elem_prop(e, "radius"), ring ? 50 : 0),
             eval_int(elem_prop(e, "border_width"), elem_prop(e, "border") ? 1 : 0),
             eval_int(elem_prop(e, "font_size"), 0),
+            ring ? eval_int(elem_prop(e, "gap"), 0) : 0,
+            ring ? eval_int(elem_prop(e, "highlight_arc"), 60) : 0,
             (unsigned)eval_color_ctx(ctx, elem_prop(e, "bg"), 0),
-            (unsigned)eval_color_ctx(ctx, elem_prop(e, "fg"), 0xffffffffu),
-            (unsigned)eval_color_ctx(ctx, elem_prop(e, "border"), 0));
+            fgs,
+            (unsigned)eval_color_ctx(ctx, elem_prop(e, "border"), 0),
+            hl, bs,
+            ring ? (unsigned)eval_color_ctx(ctx, elem_prop(e, "separator"), 0) : 0);
     emit_template(o, elem_prop(e, "text"));
     fputs(", ", o);
     Expr *fmt = elem_prop(e, "format");
@@ -151,9 +174,9 @@ static void scan_clock(LockElem **els, int n, int *has, int *secs) {
  * in the compiler, so the runtime carries exactly one layout path. */
 static void emit_default_els(FILE *o, int fs) {
     fprintf(o,
-        "    { LEL_TEXT, 0, LSHOW_TYPING, 0, 0, 0, 0, 0, 0, 0, 0, LOCK_FG, 0, \"\\001\", \"%%H:%%M\" },\n"
-        "    { LEL_TEXT, 0, LSHOW_WRONG, 0, %d, 0, 0, 0, 0, 0, 0, LOCK_RING_WRONG, 0, \"wrong password\", \"%%H:%%M\" },\n"
-        "    { LEL_TEXT, 0, LSHOW_CAPS, 0, %d, 0, 0, 0, 0, 0, 0, LOCK_CAPS, 0, \"CAPS\", \"%%H:%%M\" },\n",
+        "    { LEL_TEXT, 0, LSHOW_TYPING, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, LOCK_FG, 0, 0, 0, 0, \"\\001\", \"%%H:%%M\" },\n"
+        "    { LEL_TEXT, 0, LSHOW_WRONG, 0, %d, 0, 0, 0, 0, 0, 0, 0, 0, LOCK_RING_WRONG, 0, 0, 0, 0, \"wrong password\", \"%%H:%%M\" },\n"
+        "    { LEL_TEXT, 0, LSHOW_CAPS, 0, %d, 0, 0, 0, 0, 0, 0, 0, 0, LOCK_CAPS, 0, 0, 0, 0, \"CAPS\", \"%%H:%%M\" },\n",
         fs * 3 / 2, fs * 3);
 }
 

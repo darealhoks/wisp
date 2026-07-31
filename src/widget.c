@@ -199,6 +199,15 @@ void widget_set_size(Widget *w, int width, int height) {
     uint32_t a[2] = { (uint32_t)width, (uint32_t)height };
     wl_req(w->layer_surface, LS_REQ_SET_SIZE, a, 2, -1);
 }
+int widget_scroll(Widget *w, int dpx) {
+    int off = w->scroll_off + dpx;
+    if (off > w->scroll_max) off = w->scroll_max;
+    if (off < 0) off = 0;
+    int applied = off - w->scroll_off;
+    w->scroll_off = off;
+    return applied;
+}
+
 void widget_set_anchor(Widget *w, uint32_t bits) {
     wl_req(w->layer_surface, LS_REQ_SET_ANCHOR, &bits, 1, -1);
 }

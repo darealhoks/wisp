@@ -386,6 +386,21 @@ lock {
 	text date  { anchor = top; y = 210; text = "{time}"; format = "%A %e %B";
 	             fg = #ff7a808b; font_size = 16; }
 
+	// Unsegmented, and no fg → picks up the block's `ring` / `ring_bad`.
+	// The caps-lock highlight colour is a second ring on `show = caps`, not a
+	// property: `show` holds one condition, so the caps pair splits on caps and
+	// the wrong ring simply paints over both.
+	ring dial      { anchor = bottom | right; x = 160; y = 48; radius = 44;
+	                 thickness = 10; bg = #cc101418; border = #ff101418;
+	                 highlight = #ffa8d5cc; highlight_bs = #ff7a808b;
+	                 separator = #ff101418; show = !caps; }
+	ring dial_caps { anchor = bottom | right; x = 160; y = 48; radius = 44;
+	                 thickness = 10; bg = #cc101418; border = #ff101418;
+	                 highlight = #ffe0c060; highlight_bs = #ff7a808b;
+	                 separator = #ff101418; show = caps; }
+	ring dial_bad  { anchor = bottom | right; x = 160; y = 48; radius = 44;
+	                 thickness = 10; fg = #ffd06878; show = wrong; }
+
 	frame card { anchor = bottom | left; x = 48; y = 48;
 	             width = 360; height = 96; radius = 12;
 	             bg = #cc101418; border = #ff5f8a93; border_width = 1; }

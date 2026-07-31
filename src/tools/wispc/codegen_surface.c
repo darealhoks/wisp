@@ -240,6 +240,33 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     int partial_cap = (ctx->nsrc <= 64) &&
         surface_partial_ok(sur, items, nitems, vertical, has_bord, armpit,
                            armpit_any_outer, reveal_g, n_sliders);
+
+    /* `scroll = <px>` (pixel step) or `scroll = rows` (snap a notch to the next
+     * row top). Both make this a scrollable container; the row table below is
+     * emitted for either, since arrow-key selection walks it too. */
+    Expr *scroll_e = surface_prop(sur, "scroll");
+    int scroll_snap = scroll_e && scroll_e->kind == EX_IDENT
+                   && scroll_e->ident.n == 4 && memcmp(scroll_e->ident.s, "rows", 4) == 0;
+    int scroll_px = scroll_snap ? 1 : eval_int(scroll_e, 0);
+    int vp_pad = 0;   /* content-rect inset for the scroll case, set below */
+    /* Leading items marked `sticky;` stay pinned above the scrolled region. Only
+     * a prefix can be sticky (sema.c:validate_scroll rejects the rest, along with
+     * a non-vertical `scroll`): the scrolled stack starts where the prefix ends. */
+    int n_sticky = 0;
+    if (scroll_px > 0) {
+        while (n_sticky < nitems) {
+            int is_grp = items[n_sticky].group_id >= 0;
+            int cnt = 1;
+            if (is_grp) {
+                int gid = items[n_sticky].group_id;
+                while (n_sticky + cnt < nitems && items[n_sticky + cnt].group_id == gid) cnt++;
+            }
+            if (!(is_grp ? group_flag(items[n_sticky].grp, "sticky")
+                         : widget_flag(items[n_sticky].w, "sticky"))) break;
+            n_sticky += cnt;
+        }
+    }
+    ctx->scroll_rows = scroll_px > 0;
     if (n_sliders > 0) {
         /* Emit thunks before render_<nm> so they're in scope. */
         for (int i = 0; i < nitems; i++) {
@@ -281,7 +308,7 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     /* Per-surface hit + widget arrays (used by render and click dispatch).
      * slider_idx is -1 for ordinary click hits, >=0 to identify a slider
      * widget within the surface (drives the drag thunk). */
-    fprintf(o, "typedef struct { int x, y, w, h; int kind; int arg; int slider_idx; int st_idx; } %s_Hit;\n", nm);
+    fprintf(o, "typedef struct { int x, y, w, h; int kind; int arg; int slider_idx; int st_idx; const char *tip; } %s_Hit;\n", nm);
     fprintf(o, "static %s_Hit __%s_hits_buf[64];\n", nm, nm);
     fprintf(o, "static int __%s_nhit;\n", nm);
     fprintf(o, "static int __%s_pressed_idx = -1;\n", nm);
@@ -291,6 +318,32 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
      * gated on pressed_w so a press on one output doesn't tint another. */
     fprintf(o, "static int __%s_pressed_st = -1;\n", nm);
     fprintf(o, "static Widget *__%s_pressed_w;\n", nm);
+    /* hover_bg: same shape as pressed, driven by motion/leave instead. Pressed
+     * wins over hover on the same cell (the draw pass applies hover first). */
+    fprintf(o, "static int __%s_hover_st __attribute__((unused)) = -1;\n", nm);
+    fprintf(o, "static Widget *__%s_hover_w __attribute__((unused));\n", nm);
+    /* Scrollable container: per-widget row table, rebuilt by every render. `rowy`
+     * is each scrolled row's top in CONTENT coordinates (unscrolled, relative to
+     * rowbase) with one trailing sentinel for the content end, `rowst` its st[]
+     * index. Row-snap scrolling and arrow-key selection both walk it, so neither
+     * has to assume a uniform row height. */
+    if (scroll_px > 0) {
+        fprintf(o, "static int __%s_rowy[8][%d];\n", nm, n_arr + 1);
+        fprintf(o, "static int __%s_rowst[8][%d];\n", nm, n_arr + 1);
+        fprintf(o, "static int __%s_rown[8];\n", nm);
+        fprintf(o, "static int __%s_rowbase[8];\n", nm);
+        /* Content-rect bottom, so the key handler's scroll-into-view uses the
+         * same viewport edge render_<nm> clipped and sized scroll_max against. */
+        fprintf(o, "static int __%s_rowbot[8];\n", nm);
+        fprintf(o, "static int __%s_selrow[8] = { -1, -1, -1, -1, -1, -1, -1, -1 };\n", nm);
+        fprintf(o, "static void __%s_rowrec(int wi, int y, int si) {\n", nm);
+        fprintf(o, "    int n = __%s_rown[wi];\n", nm);
+        fprintf(o, "    if (n >= %d) return;\n", n_arr);
+        fprintf(o, "    __%s_rowy[wi][n] = y;\n", nm);
+        fprintf(o, "    __%s_rowst[wi][n] = si;\n", nm);
+        fprintf(o, "    __%s_rown[wi] = n + 1;\n", nm);
+        fputs("}\n", o);
+    }
     fprintf(o, "Widget *__%s_widgets[8]; int __%s_nw;\n", nm, nm);
     emit_hit_store(o, nm, 8);
     fputs("\n", o);
@@ -320,9 +373,32 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
         int slots = items[i].is_runtime_for_cell ? items[i].runtime_for_cap : 1;
         fprintf(o, "static VisSlot %s_vis%d[8][%d];\n", nm, i, slots);
     }
+    /* A parked reveal-on-hover surface renders nothing, so its tween slots stop
+     * tracking the declared values: a state change while parked would otherwise
+     * make the next reveal animate *out of* the pre-change look — the widget
+     * showing an already-stale state for one transition. */
+    int reveal = eval_int(surface_prop(sur, "reveal_on_hover"), 0) > 0;
+    int has_slots = 0;
+    for (int i = 0; i < nitems; i++)
+        if (item_has_any_transition(items[i].w) || widget_has_vis_anim(items[i].w)) has_slots = 1;
+    if (reveal && has_slots) {
+        fprintf(o, "static void __%s_tweens_reset(Widget *w, int wi) {\n", nm);
+        fputs("    anim_cancel_owner(w);\n", o);
+        for (int i = 0; i < nitems; i++) {
+            if (item_has_any_transition(items[i].w))
+                emit_item_slot_reset(o, items[i].w, nm, i);
+            if (widget_has_vis_anim(items[i].w))
+                fprintf(o, "    memset(&%s_vis%d[wi], 0, sizeof %s_vis%d[wi]);\n", nm, i, nm, i);
+        }
+        fputs("}\n", o);
+    }
     fputs("#endif\n", o);
 
     fprintf(o, "void render_%s(Widget *w) {\n", nm);
+    /* The render clip is process-global: any early return below (unconfigured,
+     * parked HUD, no free slot) would otherwise hand the next surface's draw
+     * whatever band the previous one left armed. Reset before the first return. */
+    fputs("    render_clip_reset();\n", o);
     fputs("    if (!w->configured || w->w <= 0 || w->h <= 0) return;\n", o);
     /* Per-instance tween state: the surface exists once per output. */
     fprintf(o, "    int __wi = __%s_slot(w); if (__wi < 0) __wi = 0; (void)__wi;\n", nm);
@@ -331,8 +407,11 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
      * never gets used (until reveal) is the main idle-RAM regression. The
      * trigger input region stays addressable without a buffer because it was
      * set on the surface at hud_register time. */
-    if (eval_int(surface_prop(sur, "reveal_on_hover"), 0) > 0) {
-        fputs("    if (w->kind == W_HUD && !w->s.hud.visible && !w->s.hud.animating) return;\n", o);
+    if (reveal) {
+        fputs("    if (w->kind == W_HUD && !w->s.hud.visible && !w->s.hud.animating) {\n", o);
+        if (has_slots)
+            fprintf(o, "#ifdef WISP_HAS_ANIM\n        __%s_tweens_reset(w, __wi);\n#endif\n", nm);
+        fputs("        return;\n    }\n", o);
     }
     fputs("    widget_ensure_pool(w, 2);\n", o);
     fputs("    BufSlot *sl = widget_free_slot(w);\n", o);
@@ -594,6 +673,19 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     fputs("    int __reg_x = __cox, __reg_y = __coy;\n", o);
     fputs("    int __reg_w = __cws, __reg_h = __chs;\n", o);
     fputs("    (void)__reg_x; (void)__reg_y; (void)__reg_w; (void)__reg_h;\n", o);
+    /* Damage band (scrollable surfaces): the caller (a hover/press change) asked
+     * for a Y range instead of a whole frame. Copy the last frame forward and
+     * clip EVERYTHING — surface bg, border, every row — to the band, so the rows
+     * outside it are neither re-blitted nor re-committed. The clip is set before
+     * the bg fill on purpose: the panel's rounded body and border repaint inside
+     * the band, which is what keeps a row's antialiased corners correct. */
+    if (scroll_px > 0) {
+        fputs("    int __band0 = w->dmg_y0, __band1 = w->dmg_y1;\n", o);
+        fputs("    w->dmg_y0 = 0; w->dmg_y1 = 0;\n", o);
+        fputs("    int __yp = 0;\n", o);
+        fputs("    if (__band1 > __band0 && widget_copy_forward(w, sl)) __yp = 1;\n", o);
+        fputs("    if (__yp) render_set_clip(__band0, __band1);\n", o);
+    }
     /* Partial-repaint decision (phase A). Snapshot + consume the source-dirty
      * mask; when this bar is eligible, no tween runs, no press is held, and the
      * previous frame can be copied forward, only the cells whose sources ticked
@@ -613,6 +705,8 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     }
     if (partial_cap)
         fputs("    if (!__partial) clear_buf(sl->px, w->w, w->h, 0);\n", o);
+    else if (scroll_px > 0)
+        fputs("    if (!__yp) clear_buf(sl->px, w->w, w->h, 0);\n", o);
     else
         fputs("    clear_buf(sl->px, w->w, w->h, 0);\n", o);
     /* Optional `clip_top = N;` surface prop: hide any pixel of the surface
@@ -886,6 +980,22 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
                         arm_out_br, arm_out_br, arm_out_br, armpit_col);
         }
     }
+    /* THE content rect for a scrollable surface. The painted body above keeps
+     * the full rect; from here on the __cox/__coy/__cws/__chs rect is the body
+     * inset by the border
+     * ring plus a breathing gap, and every consumer — item layout, the clip
+     * band, the shaped clip, scroll_max, and the keyboard scroll-into-view —
+     * reads that one rect. Without the inset the stack laid out from the
+     * buffer edge, so the sticky header started under the top border and an
+     * over-long card was cut flush against the rounded frame. */
+    if (scroll_px > 0) {
+        int bw = has_bord ? sur_bord_w : 0;
+        vp_pad = bw + 2;
+        fprintf(o, "    __cox += %d; __coy += %d;\n", vp_pad, vp_pad);
+        fprintf(o, "    __cws -= %d; __chs -= %d;\n", 2 * vp_pad, 2 * vp_pad);
+        fputs("    __reg_x = __cox; __reg_y = __coy;\n", o);
+        fputs("    __reg_w = __cws; __reg_h = __chs;\n", o);
+    }
     fprintf(o, "    const Font *f = &font_%d;\n",
             eval_int(surface_prop(sur, "font_size"), 14));
     if (vertical)
@@ -893,9 +1003,9 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     else
         fputs("    int y = (__chs - f->line_h) / 2 + __coy; (void)y;\n", o);
     fprintf(o,
-        "    struct { int tw, vis; uint32_t cp, fg, icon_fg, bg, border, press_bg; const uint32_t *pm; int pms; const char *txt; int pad, align; int h; int ch; int body_lines; } st[%d];\n",
+        "    struct { int tw, vis; uint32_t cp, fg, icon_fg, bg, border, press_bg, hover_bg; const uint32_t *pm; int pms; const char *txt; int pad, align; int h; int ch; int body_lines; } st[%d];\n",
         n_arr);
-    fprintf(o, "    for (int __i = 0; __i < %d; __i++) { st[__i].vis = 0; st[__i].h = 0; st[__i].ch = 0; st[__i].body_lines = 1; st[__i].border = 0; st[__i].press_bg = 0; st[__i].icon_fg = 0; }\n", n_arr);
+    fprintf(o, "    for (int __i = 0; __i < %d; __i++) { st[__i].vis = 0; st[__i].h = 0; st[__i].ch = 0; st[__i].body_lines = 1; st[__i].border = 0; st[__i].press_bg = 0; st[__i].hover_bg = 0; st[__i].icon_fg = 0; }\n", n_arr);
     fputs("    (void)st;\n", o);
     fputs("    int center_total = 0;\n", o);
     /* Trailing-pad correction: every center-aligned item adds `tw + pad` to
@@ -934,9 +1044,39 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
         fprintf(o, "          fill_rect_clipped(sl->px, w->w, w->h, __cox, __coy, __cws, __chs, 0x%08xu, 0); } }\n", bg);
     }
     fputs("    /* --- draw pass --- */\n", o);
+    /* `scroll`: the start-aligned stack below the sticky prefix is shifted up by
+     * the widget's scroll offset and clipped to the content rect, so rows past
+     * either edge simply don't paint. No off-screen canvas, no timer — the offset
+     * only ever moves inside a wheel/key event, which then renders once. */
+    if (scroll_px > 0) {
+        fputs("    int __clo = __coy, __chi = __coy + __chs;\n", o);
+        fputs("    if (__yp) { if (__band0 > __clo) __clo = __band0; if (__band1 < __chi) __chi = __band1; }\n", o);
+        fputs("    render_set_clip(__clo, __chi);\n", o);
+        /* Card heights vary, so the last visible row is always cut mid-card. The
+         * shaped clip is the same content rect, so the cut follows the frame's
+         * corner curve one gap inside it instead of squaring off on the border. */
+        {
+            int ir[4] = { __sur_r_tl - vp_pad, __sur_r_tr - vp_pad,
+                          __sur_r_br - vp_pad, __sur_r_bl - vp_pad };
+            for (int k = 0; k < 4; k++) if (ir[k] < 0) ir[k] = 0;
+            fprintf(o, "    render_set_clip_shape(__cox, __coy, __cws, __chs, %d, %d, %d, %d);\n",
+                    ir[0], ir[1], ir[2], ir[3]);
+        }
+        fprintf(o, "    __%s_rown[__wi] = 0;\n", nm);
+        fprintf(o, "    __%s_rowbot[__wi] = __coy + __chs;\n", nm);
+    }
     ctx->partial_ok = partial_cap;
     ctx->surface_bg = bg;
+    ctx->scroll_rows = 0;      /* the sticky prefix is not a scrolled row */
     for (int i = 0; i < nitems; i++) {
+        if (scroll_px > 0 && i == n_sticky) {
+            fputs("    int __rowbase0 = start_pos;\n", o);
+            fprintf(o, "    __%s_rowbase[__wi] = __rowbase0;\n", nm);
+            fputs("    start_pos -= w->scroll_off;\n", o);
+            fputs("    if (__rowbase0 > __clo) __clo = __rowbase0;\n", o);
+            fputs("    render_set_clip(__clo, __chi);\n", o);
+            ctx->scroll_rows = 1;
+        }
         if (items[i].group_id >= 0) {
             if (items[i].group_first)
                 i += emit_group_draw(o, items, i, nitems, ctx, nm, vertical) - 1;
@@ -945,6 +1085,27 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
         emit_item_draw(o, &items[i], ctx, vertical, nm);
     }
     ctx->partial_ok = 0;
+    ctx->scroll_rows = scroll_px > 0;   /* the input emitters below still need it */
+    if (scroll_px > 0) {
+        if (n_sticky >= nitems) {
+            fputs("    int __rowbase0 = start_pos;\n", o);
+            fprintf(o, "    __%s_rowbase[__wi] = __rowbase0;\n", nm);
+            fputs("    start_pos -= w->scroll_off;\n", o);
+        }
+        fputs("    render_clip_reset();\n", o);
+        /* Sentinel row: the content end, so a row's height is always
+         * rowy[i+1] - rowy[i] and the last row needs no special case. */
+        fprintf(o, "    __%s_rowy[__wi][__%s_rown[__wi]] = start_pos + w->scroll_off - __rowbase0;\n", nm, nm);
+        /* Content extent is only known once the stack has been laid out, so the
+         * limit lands one frame behind a content change. ponytail: the clamp
+         * below just snaps the view back on the next wheel notch — re-rendering
+         * here to show it immediately would mean a second render per frame. */
+        /* Viewport bottom is the content rect's, not the buffer's — and not
+         * `__chi`, which a damage band may have narrowed for this frame only. */
+        fputs("    w->scroll_max = start_pos + w->scroll_off - (__coy + __chs);\n", o);
+        fputs("    if (w->scroll_max < 0) w->scroll_max = 0;\n", o);
+        fputs("    if (w->scroll_off > w->scroll_max) w->scroll_off = w->scroll_max;\n", o);
+    }
 
     /* Snapshot hits for click dispatch — into this widget's per-slot row. */
     emit_hit_snapshot(o, nm);
@@ -1022,6 +1183,9 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
         fputs("    } else {\n", o);
         fputs("        widget_attach(w, sl, 0);\n", o);
         fputs("    }\n", o);
+    } else if (scroll_px > 0) {
+        fputs("    if (__yp) widget_attach_rect(w, sl, 0, 0, __band0, w->w, __band1 - __band0);\n", o);
+        fputs("    else widget_attach(w, sl, 0);\n", o);
     } else {
         fputs("    widget_attach(w, sl, 0);\n", o);
     }
@@ -1030,5 +1194,7 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     SurGeom __g = { anchor, layer, margin, width, height, excl_zone,
                     gut_g, gutter_top, gutter_bottom, armpit, reveal_g,
                     cg_cid_tl, cg_cid_tr, cg_cid_br, cg_cid_bl };
-    return emit_surface_life(o, sur, ctx, nm, items, nitems, &__g);
+    int __rc = emit_surface_life(o, sur, ctx, nm, items, nitems, &__g);
+    ctx->scroll_rows = 0;
+    return __rc;
 }

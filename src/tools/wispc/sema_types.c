@@ -45,7 +45,7 @@ static const char *STR_FIELDS =
     " clock.value gamma_warm.value dnd.value ui_hidden.value"
     " exec_line.value inotify.value dbus_signal.value"
     " vpn.state net.ssid power_profile.profile bluez.device"
-    " mpris.title mpris.artist mpris.status mpris.player"
+    " mpris.title mpris.artist mpris.status mpris.player mpris.art"
     " toplevel.title tags.title ";
 
 static bool word_in(const char *list, const char *w, size_t n) {
@@ -235,13 +235,13 @@ static PropTy prop_expected(const char *n, size_t L) {
         " reveal_on_hover reveal_gutter reveal_anim_ms row_h max_visible size"
         " anchor_gap fillet_r fillet_offset_y armpit_inner armpit_outer"
         " armpit_tl armpit_tr armpit_bl armpit_br enter_anim exit_anim"
-        " separator_frac wrong_ms day_k night_k flat_k day_hour"
+        " separator_frac separator_h wrong_ms day_k night_k flat_k day_hour"
         " night_hour fade_min transition_ms fade_ms dither_px wipe_soft prog_h"
-        " icon_gap icon_box ";
+        " icon_gap icon_box image_size thickness segments highlight_arc delay_ms ";
     static const char *COLOR =
-        " bg fg icon_fg bg_bottom border press_bg shadow track_bg track_fg thumb_color"
+        " bg fg icon_fg bg_bottom border press_bg hover_bg shadow track_bg track_fg thumb_color"
         " thumb_border prog_fg prog_track armpit_color separator ring ring_bad"
-        " dim caps ";
+        " dim caps highlight highlight_bs ";
     if (word_in(NUM,   n, L)) return PT_NUM;
     if (word_in(COLOR, n, L)) return PT_COLOR;
     return PT_ANY;
@@ -249,7 +249,7 @@ static PropTy prop_expected(const char *n, size_t L) {
 
 /* ---------- enum props ---------- */
 enum { E_LAYER, E_ANCHOR, E_ALIGN, E_AXIS, E_THUMB, E_VALIGN,
-       E_EDGE, E_INPUT, E_TRANSITION, E_WIPEDIR, E_EASING, E_N };
+       E_EDGE, E_INPUT, E_TRANSITION, E_WIPEDIR, E_EASING, E_SCROLL, E_N };
 static const char *ENUM_SETS[E_N] = {
     [E_LAYER]      = "background bottom top overlay",
     [E_ANCHOR]     = "top bottom left right",
@@ -262,6 +262,8 @@ static const char *ENUM_SETS[E_N] = {
     [E_TRANSITION] = "fade dither wipe",
     [E_WIPEDIR]    = "right left down up down_right down_left up_right up_left",
     [E_EASING]     = "linear ease_in ease_out ease_in_out",
+    /* `scroll` is a px step OR the `rows` keyword (enum_bad_leaf lets ints through). */
+    [E_SCROLL]     = "rows",
 };
 
 static int enum_prop_set(const char *n, size_t L, int *is_flag) {
@@ -282,6 +284,7 @@ static int enum_prop_set(const char *n, size_t L, int *is_flag) {
     P("wipe_dir", E_WIPEDIR, 0);
     P("transition_easing", E_EASING, 0);
     P("reveal_easing", E_EASING, 0);
+    P("scroll", E_SCROLL, 0);
     P("enter_easing", E_EASING, 0);
     P("exit_easing", E_EASING, 0);
     #undef P
@@ -369,7 +372,7 @@ void check_source_args(const SrcDef *sd, Expr *c) {
     /* Zero-arg sources: any argument is a mistake. (cpu/mem/temp are omitted —
      * as polled status kinds they accept a probe arg and every=.) */
     static const char *ZERO =
-        " power_profile gamma_warm dnd ui_hidden mpris pipewire bluez ";
+        " power_profile gamma_warm dnd ui_hidden mpris pipewire bluez notifications ";
     if (word_in(ZERO, nm, strlen(nm))) {
         if (na != 0) diag_error(c->loc, "%s() takes no arguments", nm);
         return;

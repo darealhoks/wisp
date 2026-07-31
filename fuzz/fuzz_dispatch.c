@@ -79,6 +79,7 @@ const WispMenu *wisp_menu_find(const char *name) { (void)name; return NULL; }
 #include "dbus.c"
 #include "notify.c"
 #include "tray.c"
+#include "dbusmenu.c"
 
 /* Reset the file-static state the compiled TUs accumulate across persistent
  * runs, so one input can't smuggle state into the next. */

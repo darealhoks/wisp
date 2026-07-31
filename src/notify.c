@@ -235,6 +235,98 @@ static int parse_hint(R *r, Hints *hn) {
 }
 
 /* djb2; used to derive a stable replace_id from a synchronous hint string. */
+/* ================================================================== */
+/* Notification center history (DSL: notifications())                   */
+/* ================================================================== */
+
+/* 16 deep, ~7 KB of BSS that stays untouched (so unbacked, no RSS) until
+ * notifications actually arrive. Deliberately RAM-only: a center that
+ * survives a reboot is a database, not a widget. */
+/* NOTIF_HIST_CAP comes from the generated features.h — wispc sizes the per-cell
+ * st[]/hit/tween arrays from the same value, so the two cannot drift. */
+#define NOTIF_CAP NOTIF_HIST_CAP
+typedef struct {
+    char     app[64], summary[128], body[256];
+    uint32_t icon;
+    uint32_t id;      /* monotonic; the only stable dismiss key */
+    uint32_t rid;     /* app replaces_id / sync-hint hash, 0 = never replaces */
+    uint8_t  urgency;
+} NotifEntry;
+static NotifEntry nhist[NOTIF_CAP];
+static int        nhist_n;
+static uint32_t   nhist_serial;
+int               notif_open;
+/* Bumped on every ring mutation. `count` alone can't gate a repaint — a replace
+ * keeps the count and changes the text — so the generated change-guard compares
+ * this instead of walking the ring. */
+static int        nhist_rev;
+int         notif_revision(void)   { return nhist_rev; }
+
+extern void wispgen_wisp_state_changed(void) __attribute__((weak));
+static void notif_repaint(void) {
+    nhist_rev++;
+    if (wispgen_wisp_state_changed) wispgen_wisp_state_changed();
+}
+
+/* All readers are fed a loop index the generated code clamps to count(); bound
+ * every accessor anyway. */
+static const NotifEntry *nent(int i) {
+    return (i >= 0 && i < nhist_n) ? &nhist[i] : NULL;
+}
+int         notif_count(void)      { return nhist_n; }
+const char *notif_app(int i)       { const NotifEntry *e = nent(i); return e ? e->app : ""; }
+const char *notif_summary(int i)   { const NotifEntry *e = nent(i); return e ? e->summary : ""; }
+const char *notif_body(int i)      { const NotifEntry *e = nent(i); return e ? e->body : ""; }
+int         notif_urgent(int i)    { const NotifEntry *e = nent(i); return e && e->urgency >= 2; }
+uint32_t    notif_icon(int i)      { const NotifEntry *e = nent(i); return e ? e->icon : 0; }
+uint32_t    notif_id(int i)        { const NotifEntry *e = nent(i); return e ? e->id : 0; }
+
+/* rid = the app's replaces_id (or a hash of its synchronous hint): an app that
+ * updates one notification overwrites its row instead of flooding the ring.
+ * The row keeps its serial id so a click already in flight still hits it. */
+void notif_push(const char *app, const char *summary, const char *body,
+                uint32_t icon_cp, int urgency, uint32_t rid) {
+    int at = -1;
+    if (rid)
+        for (int i = 0; i < nhist_n; i++)
+            if (nhist[i].rid == rid) { at = i; break; }
+    uint32_t id;
+    if (at >= 0) {
+        id = nhist[at].id;
+    } else {
+        if (nhist_n < NOTIF_CAP) nhist_n++;
+        at = nhist_n - 1;
+        id = ++nhist_serial;
+    }
+    memmove(&nhist[1], &nhist[0], (size_t)at * sizeof nhist[0]);
+    NotifEntry *e = &nhist[0];
+    e->id  = id;
+    e->rid = rid;
+    snprintf(e->app,     sizeof e->app,     "%s", app     ? app     : "");
+    snprintf(e->summary, sizeof e->summary, "%s", summary ? summary : "");
+    snprintf(e->body,    sizeof e->body,    "%s", body    ? body    : "");
+    e->icon    = icon_cp;
+    e->urgency = (uint8_t)(urgency < 0 ? 0 : urgency > 255 ? 255 : urgency);
+    notif_repaint();
+}
+
+/* By id, never by index: the ring shifts under a click that is still travelling
+ * over the ctl socket, so an index would dismiss the wrong card. */
+void notif_dismiss(uint32_t id) {
+    for (int i = 0; i < nhist_n; i++) {
+        if (nhist[i].id != id) continue;
+        memmove(&nhist[i], &nhist[i + 1], (size_t)(nhist_n - i - 1) * sizeof nhist[0]);
+        nhist_n--;
+        notif_repaint();
+        return;
+    }
+}
+
+void notif_clear(void) {
+    nhist_n = 0;
+    notif_repaint();
+}
+
 static uint32_t djb2(const char *s) {
     uint32_t h = 5381;
     while (*s) h = ((h << 5) + h) + (uint8_t)*s++;
@@ -243,7 +335,7 @@ static uint32_t djb2(const char *s) {
 
 static void handle_notify(R *r, uint32_t serial, const char *sender) {
     /* signature: susssasa{sv}i */
-    const char *app_name   = rstr(r); (void)app_name;
+    const char *app_name   = rstr(r);
     uint32_t    replaces   = ru32(r);
     const char *app_icon   = rstr(r);
     const char *summary    = rstr(r);
@@ -301,6 +393,12 @@ static void handle_notify(R *r, uint32_t serial, const char *sender) {
     if (expire < 0)       timeout = -1;    /* server default */
     else if (expire == 0) timeout = 0;     /* spec: 0 = never expire (all urgencies) */
     else                  timeout = expire;
+
+    /* Into the center BEFORE the DnD gate — collecting what DnD swallowed is
+     * most of the point. Progress posts (volume/backlight gauges) are transient
+     * readouts, not messages, so they never land here. */
+    if (hn.progress < 0)
+        notif_push(app_name, summary, body, hn.icon_cp, hn.urgency, rid);
 
     uint32_t out_id;
 #ifdef WISP_HAS_OSD

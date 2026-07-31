@@ -1,8 +1,28 @@
 /* wispc codegen — expression lowerer (split from codegen.c). */
 #include "codegen_internal.h"
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* CE.pm_size / CE.pm_cp are borrowed pointers that outlive the lowering call,
+ * and two pixmap CEs can exist before either is consumed (an icon/image pair,
+ * a nested ternary) — a shared static would alias and the first one's size and
+ * fallback codepoint would become the second's. Each gets its own allocation.
+ * ponytail: never freed, wispc is one-shot and already leaks its AST. */
+static const char *pm_str(const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(NULL, 0, fmt, ap);
+    va_end(ap);
+    if (n < 0) return "0";
+    char *s = malloc((size_t)n + 1);
+    if (!s) { fprintf(stderr, "wispc: out of memory\n"); exit(1); }
+    va_start(ap, fmt);
+    vsnprintf(s, (size_t)n + 1, fmt, ap);
+    va_end(ap);
+    return s;
+}
 
 /* ============================================================ */
 /* Expression lowerer                                            */
@@ -125,6 +145,29 @@ CE lower_member(CGCtx *c, Expr *e) {
         }
         return r;
     }
+    if (L && L->kind == LB_NOTIF_IT) {
+        const char *it = L->c_expr;
+        CE r = { .type = T_UNK };
+        if (flen == 7 && memcmp(fld, "summary", 7) == 0) {
+            snprintf(r.text, sizeof r.text, "notif_summary(%s)", it); r.type = T_STR;
+        } else if (flen == 4 && memcmp(fld, "body", 4) == 0) {
+            snprintf(r.text, sizeof r.text, "notif_body(%s)", it); r.type = T_STR;
+        } else if (flen == 3 && memcmp(fld, "app", 3) == 0) {
+            snprintf(r.text, sizeof r.text, "notif_app(%s)", it); r.type = T_STR;
+        } else if (flen == 4 && memcmp(fld, "icon", 4) == 0) {
+            snprintf(r.text, sizeof r.text, "notif_icon(%s)", it); r.type = T_INT;
+        } else if (flen == 6 && memcmp(fld, "urgent", 6) == 0) {
+            snprintf(r.text, sizeof r.text, "notif_urgent(%s)", it); r.type = T_BOOL;
+        } else if (flen == 2 && memcmp(fld, "id", 2) == 0) {
+            /* The entry's serial, not its row: feeds `wispctl notif dismiss`
+               without racing the ring shifting between render and click. */
+            snprintf(r.text, sizeof r.text, "notif_id(%s)", it); r.type = T_INT;
+        } else {
+            diag_error(e->loc, "codegen: notification has no field '%.*s'", (int)flen, fld);
+            c->failed = 1;
+        }
+        return r;
+    }
     if (L && L->kind == LB_TRAY_IT) {
         const char *it = L->c_expr;
         CE r = { .type = T_UNK };
@@ -133,9 +176,7 @@ CE lower_member(CGCtx *c, Expr *e) {
             r.type = T_PIXMAP;
             /* Collapse the reserved square when the item has no pixmap — an
              * icon-less item would otherwise render as a hole in the row. */
-            static char pms[64];   /* consumed by the caller's fprintf at once */
-            snprintf(pms, sizeof pms, "(tray_icon(%s) ? TRAY_ICON_PX : 0)", it);
-            r.pm_size = pms;
+            r.pm_size = pm_str("(tray_icon(%s) ? TRAY_ICON_PX : 0)", it);
         } else if (flen == 8 && memcmp(fld, "has_icon", 8) == 0) {
             snprintf(r.text, sizeof r.text, "(tray_icon(%s) != 0)", it); r.type = T_BOOL;
         } else if (flen == 5 && memcmp(fld, "title", 5) == 0) {
@@ -146,6 +187,8 @@ CE lower_member(CGCtx *c, Expr *e) {
             snprintf(r.text, sizeof r.text, "tray_status(%s)", it); r.type = T_STR;
         } else if (flen == 5 && memcmp(fld, "index", 5) == 0) {
             snprintf(r.text, sizeof r.text, "(%s)", it); r.type = T_INT;
+        } else if (flen == 18 && memcmp(fld, "has_attention_icon", 18) == 0) {
+            snprintf(r.text, sizeof r.text, "tray_has_attention_icon(%s)", it); r.type = T_BOOL;
         } else if (flen == 9 && memcmp(fld, "menu_open", 9) == 0) {
             snprintf(r.text, sizeof r.text, "tray_menu_is_open(%s)", it); r.type = T_BOOL;
         } else {
@@ -188,12 +231,30 @@ CE lower_member(CGCtx *c, Expr *e) {
             r.type = T_PIXMAP;
             /* Reserved even when this row has no icon, so labels stay aligned. */
             r.pm_size = "(w->s.menu.icons ? w->s.menu.icon_px : 0)";
+        } else if (flen == 8 && memcmp(fld, "has_icon", 8) == 0) {
+            snprintf(r.text, sizeof r.text,
+                     "(%s->s.menu.icons && %s->s.menu.icons[%s->s.menu.filtered[%s]] != 0)",
+                     wv, wv, wv, r0);
+            r.type = T_BOOL;
         } else if (flen == 8 && memcmp(fld, "selected", 8) == 0) {
             snprintf(r.text, sizeof r.text, "(%s == %s->s.menu.sel)", r0, wv);
             r.type = T_BOOL;
         } else if (flen == 5 && memcmp(fld, "index", 5) == 0) {
             snprintf(r.text, sizeof r.text, "(%s)", r0);
             r.type = T_INT;
+        } else if ((flen == 7 && memcmp(fld, "enabled", 7) == 0) ||
+                   (flen == 9 && memcmp(fld, "separator", 9) == 0) ||
+                   (flen == 6 && memcmp(fld, "toggle", 6) == 0) ||
+                   (flen == 7 && memcmp(fld, "checked", 7) == 0)) {
+            /* row_flags is NULL unless the menu's owner set it: no flags means
+             * plain enabled rows, so `enabled` inverts DISABLED. */
+            const char *bit = flen == 7 && fld[0] == 'e' ? "MENU_ROW_DISABLED"
+                            : flen == 9 ? "MENU_ROW_SEPARATOR"
+                            : flen == 6 ? "MENU_ROW_TOGGLE" : "MENU_ROW_CHECKED";
+            snprintf(r.text, sizeof r.text,
+                     "(%s(%s->s.menu.row_flags && (%s->s.menu.row_flags[%s->s.menu.filtered[%s]] & %s)))",
+                     flen == 7 && fld[0] == 'e' ? "!" : "", wv, wv, wv, r0, bit);
+            r.type = T_BOOL;
         } else {
             diag_error(e->loc, "codegen: menu row has no field '%.*s'", (int)flen, fld);
             c->failed = 1;
@@ -216,16 +277,16 @@ CE lower_member(CGCtx *c, Expr *e) {
             snprintf(r.text, sizeof r.text, "(int)((%s)->output - outputs)", wv);
             r.type = T_INT;
         } else if (flen == 6 && memcmp(fld, "active", 6) == 0) {
-            snprintf(r.text, sizeof r.text, "(((%s)->s.bar.active_mask >> (%s)) & 1u)", wv, L->c_expr);
+            snprintf(r.text, sizeof r.text, "(((%s)->active_mask >> (%s)) & 1u)", wv, L->c_expr);
             r.type = T_BOOL;
         } else if (flen == 6 && memcmp(fld, "urgent", 6) == 0) {
-            snprintf(r.text, sizeof r.text, "(((%s)->s.bar.urgent_mask >> (%s)) & 1u)", wv, L->c_expr);
+            snprintf(r.text, sizeof r.text, "(((%s)->urgent_mask >> (%s)) & 1u)", wv, L->c_expr);
             r.type = T_BOOL;
         } else if (flen == 6 && memcmp(fld, "pinned", 6) == 0) {
             snprintf(r.text, sizeof r.text, "((TAG_PINNED >> (%s)) & 1u)", L->c_expr);
             r.type = T_BOOL;
         } else if (flen == 8 && memcmp(fld, "occupied", 8) == 0) {
-            snprintf(r.text, sizeof r.text, "(((%s)->s.bar.tag_mask >> (%s)) & 1u)", wv, L->c_expr);
+            snprintf(r.text, sizeof r.text, "(((%s)->tag_mask >> (%s)) & 1u)", wv, L->c_expr);
             r.type = T_BOOL;
         } else {
             diag_error(e->loc, "codegen: tag has no field '%.*s'", (int)flen, fld);
@@ -415,17 +476,42 @@ const char *op_C(Op o) {
     }
 }
 
-/* Bytes an interpolated %s part can really produce, when it's a multi-line
- * exec_line/inotify source — the default 288 budget would truncate it, and
- * gcc's -Wformat-truncation turns that into a build error. 0 = use default. */
+/* Bytes an interpolated %s part can really produce. Two things ride on it:
+ * gcc's -Wformat-truncation (under-budget is a build error) and the BSS the
+ * interp buffer costs, which a runtime `for` multiplies by the loop cap — so
+ * guessing 288 for a 128-byte summary is paid 16 times over. The numbers below
+ * mirror the buffers the accessors read (wisp.h / codegen_sources.c); they only
+ * ever need to be an upper bound. 0 = unknown, caller uses the default. */
 static int str_part_cap(CGCtx *c, Expr *e) {
+    const char *fld = NULL; size_t flen = 0;
     Expr *b = e;
-    if (e->kind == EX_MEMBER) b = e->member.base;
+    if (e->kind == EX_MEMBER) { b = e->member.base; fld = e->member.field; flen = e->member.flen; }
     else if (e->kind != EX_IDENT) return 0;
     if (b->kind != EX_IDENT) return 0;
+    #define FLD(s) (flen == sizeof(s) - 1 && memcmp(fld, s, flen) == 0)
+    Local *L = find_local(c, b->ident.s, b->ident.n);
+    if (L && fld) {
+        if (L->kind == LB_DBUS_HIST_IT)   /* src_<n>_hist_t in codegen_sources.c */
+            return FLD("summary") ? 128 : (FLD("body") || FLD("url")) ? 256 : 0;
+        if (L->kind == LB_NOTIF_IT)       /* Notif in notify.c */
+            return FLD("summary") ? 128 : FLD("body") ? 256 : FLD("app") ? 64 : 0;
+        if (L->kind == LB_TRAY_IT)        /* TrayItem in tray.c */
+            return (FLD("title") || FLD("id")) ? 64 : FLD("status") ? 16 : 0;
+        if (L->kind == LB_MENU_ROW)
+            return FLD("label") ? 160 : 0;   /* ITEM_MAX */
+        if (L->kind == LB_MENU_SELF)
+            return FLD("query") ? 128 : FLD("prompt") ? 48 : 0;
+        return 0;
+    }
     SrcInst *si = find_inst(c->srcs, c->nsrc, b->ident.s, b->ident.n);
-    if (!si || (si->drv->drv != DRV_EXEC && si->drv->drv != DRV_INOTIFY)) return 0;
-    return si->lines * 256;
+    if (!si) return 0;
+    if (si->drv->drv == DRV_EXEC || si->drv->drv == DRV_INOTIFY) return si->lines * 256;
+    if (si->drv->drv == DRV_CLOCK) return 64;
+    if (si->drv->drv == DRV_DBUS) return 256;
+    if (si->drv->drv == DRV_WISP && !strcmp(si->drv->name, "toplevel") && fld && FLD("title"))
+        return 512;   /* MAX_TEXT */
+    return 0;
+    #undef FLD
 }
 
 static CE lower_inner(CGCtx *c, Expr *e) {
@@ -476,9 +562,7 @@ static CE lower_inner(CGCtx *c, Expr *e) {
              * square size and a codepoint to fall back to. */
             if (l->src_name && l->src_name[0] == 'p') {
                 r.type = T_PIXMAP;
-                static char pms[128];   /* consumed by the caller's fprintf at once */
-                snprintf(pms, sizeof pms, "((%s) ? OSD_IMAGE_PX : 0)", l->c_expr);
-                r.pm_size = pms;
+                r.pm_size = pm_str("((%s) ? OSD_IMAGE_PX : 0)", l->c_expr);
                 r.pm_cp   = "w->s.osd.items[__sl].icon_cp";
                 return r;
             }
@@ -522,6 +606,26 @@ static CE lower_inner(CGCtx *c, Expr *e) {
     case EX_TERN: {
         CE cnd = lower(c, e->tern.cond);
         CE t = lower(c, e->tern.t), el = lower(c, e->tern.e);
+        /* A pixmap on one arm and a codepoint on the other is the only mixed
+         * ternary that means something: "this raster, else that glyph". The
+         * arms have different kinds (pointer vs int), so it can't lower as one
+         * C expression — it becomes a pixmap carrying the glyph as its
+         * absent-pixmap fallback, which is what the icon prop already draws. */
+        if ((t.type == T_PIXMAP) != (el.type == T_PIXMAP)) {
+            int pm_t = t.type == T_PIXMAP;
+            const CE *pm = pm_t ? &t : &el, *cp = pm_t ? &el : &t;
+            const char *nul = "(const uint32_t *)0";
+            const char *pcp = pm->pm_cp ? pm->pm_cp : "0";
+            const char *psz = pm->pm_size ? pm->pm_size : "0";
+            snprintf(r.text, sizeof r.text, "((%s) ? (%s) : (%s))",
+                     cnd.text, pm_t ? pm->text : nul, pm_t ? nul : pm->text);
+            r.type = T_PIXMAP;
+            r.pm_size = pm_str("((%s) ? (%s) : (%s))", cnd.text,
+                               pm_t ? psz : "0", pm_t ? "0" : psz);
+            r.pm_cp = pm_str("((%s) ? (%s) : (%s))", cnd.text,
+                             pm_t ? pcp : cp->text, pm_t ? cp->text : pcp);
+            return r;
+        }
         snprintf(r.text, sizeof r.text, "((%s) ? (%s) : (%s))", cnd.text, t.text, el.text);
         r.type = (t.type == el.type) ? t.type :
                  ((t.type == T_FLOAT || el.type == T_FLOAT) ? T_FLOAT : t.type);
@@ -538,7 +642,6 @@ static CE lower_inner(CGCtx *c, Expr *e) {
          * fprintf that would land inside our format string literal. */
         char fmt[1024]; size_t fn = 0;
         size_t budget = 16;
-        int big = 0;   /* extra headroom claimed by multi-line sources */
         #define FMTC(ch) do { if (fn < sizeof fmt - 1) fmt[fn++] = (ch); } while (0)
         #define FMTS(s)  do { for (const char *_p = (s); *_p; _p++) FMTC(*_p); } while (0)
         CE args[16]; int nargs = 0;
@@ -563,13 +666,13 @@ static CE lower_inner(CGCtx *c, Expr *e) {
             case T_INT: case T_BOOL: FMTS("%d");    budget += 12;  break;
             case T_FLOAT:            FMTS("%g");    budget += 24;  break;
             case T_COLOR:            FMTS("#%08x"); budget += 10;  break;
-            /* A string part is the only unbounded one — an OSD body wraps to
-             * OSD_MAX_BODY_LINES × OSD_BODY_MAX. Budget for a real one. */
+            /* A string part is the only one whose width isn't in the format —
+             * take the source buffer's real size when we know it, else assume
+             * an OSD-body-sized 288. */
             case T_STR: default: {
                 FMTS("%s");
                 int cap = str_part_cap(c, p->expr);
-                if (cap > 288) { budget += (size_t)cap; big += cap; }
-                else            budget += 288;
+                budget += (size_t)(cap > 0 ? cap : 288);
                 break;
             }
             }
@@ -582,11 +685,19 @@ static CE lower_inner(CGCtx *c, Expr *e) {
         }
         #undef FMTC
         #undef FMTS
+        /* No ceiling: budget is now the sum of real buffer sizes, and clamping
+         * it below that is exactly the truncation -Wformat-truncation rejects. */
         int bufsize = (int)budget;
         if (bufsize < 64) bufsize = 64;
-        if (bufsize > 2048 + big) bufsize = 2048 + big;
-        fprintf(c->prelude, "static char ibuf%d[%d]; ", seq, bufsize);
-        fprintf(c->prelude, "snprintf(ibuf%d, %d, \"%s\"", seq, bufsize, fmt);
+        char slot[32];
+        if (c->loop_cap > 0) {
+            fprintf(c->prelude, "static char ibuf%d[%d][%d]; ", seq, c->loop_cap, bufsize);
+            snprintf(slot, sizeof slot, "ibuf%d[it]", seq);
+        } else {
+            fprintf(c->prelude, "static char ibuf%d[%d]; ", seq, bufsize);
+            snprintf(slot, sizeof slot, "ibuf%d", seq);
+        }
+        fprintf(c->prelude, "snprintf(%s, %d, \"%s\"", slot, bufsize, fmt);
         for (int i = 0; i < nargs; i++) {
             fputs(", ", c->prelude);
             if (args[i].type == T_INT || args[i].type == T_BOOL)
@@ -599,7 +710,7 @@ static CE lower_inner(CGCtx *c, Expr *e) {
                 fprintf(c->prelude, "(%s)", args[i].text);
         }
         fputs(");", c->prelude);
-        snprintf(r.text, sizeof r.text, "ibuf%d", seq);
+        snprintf(r.text, sizeof r.text, "%s", slot);
         r.type = T_STR;
         return r;
     }

@@ -51,7 +51,9 @@ typedef struct Widget Widget;
 /* wants_hover: the decl carries `hover;`, so the pointer moves the selection
  * (tray dropdowns only — keyboard menus leave it 0 so no motion-driven repaint
  * fires, keeping idle at 0 CPU). */
-typedef struct { int width, row_h, max_vis, gap, hdr_h, pad_y, own_body, wants_hover; } WispMenuGeom;
+/* sep_h 0 = separators are full row_h rows; non-zero gives them their own
+ * (shorter) slot, so the row grid is no longer uniform — see menu.c. */
+typedef struct { int width, row_h, max_vis, gap, hdr_h, pad_y, own_body, wants_hover, sep_h; } WispMenuGeom;
 
 /* ============================================================ */
 /* Wayland I/O (wl.c)                                            */
@@ -128,7 +130,7 @@ void key_rep_cancel(void);
 /* Widget abstraction (widget.c)                                 */
 /* ============================================================ */
 
-typedef enum { W_NONE = 0, W_BAR, W_HUD, W_MENU, W_OSD, W_WALL, W_LOCK } WidgetKind;
+typedef enum { W_NONE = 0, W_BAR, W_HUD, W_MENU, W_OSD, W_WALL, W_LOCK, W_TIP } WidgetKind;
 
 typedef struct { int x, y, w, h; } Rect;
 
@@ -262,15 +264,30 @@ struct Widget {
        Used by OSD after committing a transparent buffer following last dismissal. */
     int        want_pool_free;
 
+    /* Scrollable container (`scroll = <px>` on a vertical surface): how far the
+     * item stack is shifted up, and the largest useful shift. Both are recomputed
+     * from the rendered content extent, so a config without `scroll` leaves them
+     * at 0 and nothing in the render path changes. */
+    int        scroll_off, scroll_max;
+
+    /* One-shot damage band (logical rows [dmg_y0, dmg_y1)) for the next render of
+     * a scrollable surface: the generated render copies the last frame forward,
+     * clips the whole draw to the band and commits only that rect. Consumed (and
+     * cleared) by the render, so anything that doesn't set it gets a full frame. */
+    int        dmg_y0, dmg_y1;
+
+    /* Workspace + focused-title state. NOT in the `s` union below: bar_set_tags()
+     * and bar_set_title() write these on every declared surface's widgets, and a
+     * HUD widget's union slot holds its slide state — stamping tags/title through
+     * a union member trashed cur_off/visible/region ids and made the HUD blink. */
+    uint32_t   tag_mask;             /* bit i set => tag i is occupied */
+    uint32_t   active_mask;          /* bit i set => tag i is active   */
+    uint32_t   urgent_mask;          /* bit i set => tag i is urgent   */
+    int        have_tags;
+    char       title[MAX_TEXT];
+
     /* Widget-specific state (one big union avoids per-widget allocation). */
     union {
-        struct {
-            uint32_t tag_mask;        /* bit i set => tag i is occupied */
-            uint32_t active_mask;     /* bit i set => tag i is active   */
-            uint32_t urgent_mask;     /* bit i set => tag i is urgent   */
-            char     title[MAX_TEXT];
-            int      have_tags;
-        } bar;
         struct {
             /* Slide-axis margin: cur_off interpolates toward target_off.
              * 0 = fully revealed, -slide_extent = fully hidden off-screen.
@@ -319,6 +336,9 @@ struct Widget {
              * ARGB icon_px×icon_px buffers; NULL entries ok; not owned */
             uint32_t *const *icons;
             int      icon_px;
+            /* optional per-item MENU_ROW_* bits (original item order), NULL =
+             * every row plain+enabled; not owned */
+            const unsigned char *row_flags;
             /* generated renderer: the declared default, or this menu's own
              * body if its `menu NAME {}` decl carried one */
             void   (*render)(struct Widget *);
@@ -342,6 +362,9 @@ struct Widget {
         struct {
             uint32_t slock_surf_id;  /* this lock surface's object id */
         } lock;
+        struct {
+            char text[MAX_TEXT];   /* the $text binding the renderer draws */
+        } tip;
         struct {
             int painted_w, painted_h;  /* last decoded+blitted size; 0 = never */
             /* crossfade (wispctl wall): heap frames blended per anim tick */
@@ -427,6 +450,13 @@ void    widget_set_input_region_multi(Widget *w, const Rect *rects, int n);
  * here; the buffer is widget_pw x widget_ph physical pixels. Call this once
  * per surface render, before the first primitive. */
 void render_set_scale(int scale120);   /* 120ths: 120 = 1x, 180 = 1.5x */
+/* Confine the content primitives to logical rows [y0, y1) — a scrolled
+ * container's draw pass brackets itself with these. Must be reset before the
+ * next surface renders; the clip is a global, not per-buffer state. */
+void render_set_clip(int y0, int y1);
+void render_set_clip_shape(int x, int y, int w, int h,
+                           int r_tl, int r_tr, int r_br, int r_bl);
+void render_clip_reset(void);
 
 void clear_buf(uint32_t *px, int w, int h, uint32_t c);
 void clear_band(uint32_t *px, int w, int h, int y0, int y1, uint32_t c);
@@ -470,6 +500,17 @@ void fill_inner_fillet(uint32_t *px, int sw, int sh,
                        int cx, int cy, int r, int corner_id, uint32_t color);
 /* Anti-aliased filled disc (knobs). Center may be fractional. */
 void fill_circle(uint32_t *px, int sw, int sh, double cx, double cy, double r, uint32_t c);
+/* Anti-aliased ring (annulus) of radius `r` and radial width `thickness`,
+ * optionally split into `segments` equal arcs separated by `gap` degrees. The
+ * first gap is centred at 12 o'clock and sectors run clockwise; with
+ * segments = 1 that leaves a single notch at the top. Same 1px analytic
+ * coverage as fill_circle / fill_rect_rounded. */
+void fill_ring(uint32_t *px, int sw, int sh, double cx, double cy,
+               double r, double thickness, int segments, double gap, uint32_t c);
+/* One arc of the same ring: `len` degrees clockwise from `start`, where 0 is
+ * 12 o'clock. Same coverage as fill_ring — it is the un-repeated case. */
+void fill_arc(uint32_t *px, int sw, int sh, double cx, double cy,
+              double r, double thickness, double start, double len, uint32_t c);
 /* Single-pass soft drop-shadow of a rounded rect (already offset+spread by the
  * caller). `blur` is the softness band in px; full alpha inside, smoothstep to
  * 0 over `blur` outside. Composites src-over — draw it behind the widget slab. */
@@ -625,6 +666,17 @@ void bar_input_click(Widget *w, int wx, int wy, int btn);
 void bar_input_press(Widget *w, int wx, int wy, int btn);
 void bar_input_release(Widget *w, int wx, int wy, int btn);
 void bar_input_motion(Widget *w, int wx, int wy);
+/* leave clears per-cell hover state (hover_bg); no-op for surfaces without it. */
+void bar_input_leave(Widget *w);
+/* Wheel notch (dir = ±1) on a declared surface; no-op unless it declares
+ * `scroll`. Codegen emits the dispatcher, so only scrollable surfaces cost. */
+void bar_input_scroll(Widget *w, int dir);
+void bar_input_key(Widget *w, unsigned key);   /* Esc on a surface that declared `on_escape` */
+/* Shift a scrollable container by `dpx` logical pixels, clamped to
+ * [0, w->scroll_max]. Returns the delta actually applied (0 at either end —
+ * the only case that may repaint, so a wheel at the end of the list stays
+ * free); the caller needs the clamped delta to re-aim hover by the same shift. */
+int  widget_scroll(Widget *w, int dpx);
 /* Broadcast helpers: external `wispctl bar tags`/`bar title` callers don't
  * specify an output, so we apply to every connected bar. */
 void bar_set_tags(uint32_t mask, uint32_t active, uint32_t urgent);
@@ -667,6 +719,39 @@ Widget *menu_create(const char *title, char items[][ITEM_MAX], int n,
 Widget *menu_create_action(const char *title,
                            char items[][ITEM_MAX], char actions[][ITEM_MAX],
                            int n);
+/* ---- tooltip (src/tooltip.c; surface look declared as `spawned_by = tooltip`)
+ * Geometry defaults; a declared tooltip surface overrides them via
+ * gen_overrides.h. TIP_MAX_W is a clamp — the surface auto-widths to $text. */
+#ifndef TIP_PAD_X
+#define TIP_PAD_X 10
+#endif
+#ifndef TIP_H
+#define TIP_H     26
+#endif
+#ifndef TIP_MAX_W
+#define TIP_MAX_W 320
+#endif
+#ifndef TIP_GAP
+#define TIP_GAP   4
+#endif
+/* Hover dwell before the tooltip appears (`delay_ms` on the surface). */
+#ifndef TIP_DELAY_MS
+#define TIP_DELAY_MS 500
+#endif
+/* Explicit anchor rect a popup hangs under, in the output's logical coords.
+ * Kept separate from ClickAnchor on purpose: menus consume that one
+ * destructively, and an explicit anchor must not disturb a pending click. */
+typedef struct { Output *out; int x, w, below; } TipAnchor;
+void    tooltip_show(const char *text, const TipAnchor *at);
+/* Hover path: schedule `text` (must outlive the wait — codegen passes a string
+ * literal) after TIP_DELAY_MS. Re-arming or hiding cancels a pending one. */
+void    tooltip_arm(const char *text, const TipAnchor *at);
+/* ms until the pending tooltip is due, or -1 when nothing is armed. Drives the
+ * main loop's epoll timeout — no timerfd, so idle stays at zero wakeups. */
+int     tooltip_check_deferred(int64_t now);
+void    tooltip_hide(void);
+void    tooltip_render(Widget *w);
+
 void    menu_render(Widget *w);
 void    menu_on_key(Widget *w, uint32_t key, uint32_t state);
 void    menu_on_click(Widget *w, int x, int y);
@@ -678,6 +763,13 @@ void    menu_cancel_all(void);
 int     menu_toggle(const char *tag);   /* 1 = same-tag menu was live and got closed */
 void    menu_set_ranks(Widget *w, const int *rank);
 void    menu_set_icons(Widget *w, uint32_t *const *icons, int icon_px);
+/* Per-row MENU_ROW_* bits, indexed by ORIGINAL item order; caller owns the
+ * array and must outlive the menu. Cleared by menu_update_items. */
+void    menu_set_row_flags(Widget *w, const unsigned char *flags);
+#define MENU_ROW_DISABLED  0x1
+#define MENU_ROW_SEPARATOR 0x2
+#define MENU_ROW_TOGGLE    0x4   /* row is a checkbox/radio at all */
+#define MENU_ROW_CHECKED   0x8   /* … and it is on (only with TOGGLE) */
 int     menu_icon_px(void);   /* icon size that fits a vertical row */
 /* Hook fired once per menu lifetime with the picked ORIGINAL item index
  * (-1 on cancel), then cleared. Used by apps.c to bump usage + free state. */
@@ -687,10 +779,17 @@ extern int menu_clickoff;
 /* Geometry for the NEXT menu_create only (consumed like click_anchor).
  * Zero fields fall back to the template's MENU_* values. */
 void    menu_set_geom(const WispMenuGeom *g);
+/* Explicit anchor for the NEXT menu_create (`wispctl menu --at x,w[,below]`);
+ * wins over the click stamp and leaves it untouched. */
+void    menu_set_anchor(const TipAnchor *at);
 /* Declared `menu NAME {}` by name, NULL if absent (ctl.c owns the table). */
 const WispMenu *wisp_menu_find(const char *name);
-/* Replace a live menu's item list in place (query/selection kept). */
-void    menu_update_items(Widget *w, char items[][ITEM_MAX], int n);
+/* Replace a live menu's item list, row flags and icon table in one step
+ * (query/selection kept, selection clamped). flags/icons may be NULL. */
+void    menu_update_items(Widget *w, char items[][ITEM_MAX], int n,
+                          const unsigned char *flags,
+                          uint32_t *const *icons, int icon_px);
+Widget *menu_live(void);   /* the one open menu widget, or NULL */
 void    spawn_detached(const char *shell_cmd);
 
 /* Apps launcher (apps.c) — cached XDG desktop-entry index over the menu. */
@@ -705,6 +804,25 @@ extern int dnd_on;
 /* `wispctl hide` — surfaces gate themselves via the DSL `ui_hidden()` source
  * (lives in ctl.c, unconditional: any preset may reference it). */
 extern int ui_hidden;
+
+/* Notification center (notify.c) — the history every accepted Notify lands in,
+ * plus the panel's open flag. Backs the DSL `notifications()` source: `.open`
+ * gates the panel surface's `visible`, `.count` and `.history` fill it. The
+ * ring is newest-first and compacted, so index 0 is the latest and a dismiss
+ * is a shift, neither of which a head-index ring can do. */
+extern int  notif_open;
+int         notif_count(void);
+int         notif_revision(void);
+const char *notif_app(int i);
+const char *notif_summary(int i);
+const char *notif_body(int i);
+int         notif_urgent(int i);
+uint32_t    notif_icon(int i);
+uint32_t    notif_id(int i);
+void        notif_push(const char *app, const char *summary, const char *body,
+                       uint32_t icon_cp, int urgency, uint32_t replaces_id);
+void        notif_dismiss(uint32_t id);
+void        notif_clear(void);
 
 /* OSD widget is created on demand (and re-anchored if focus moves to a
  * different output) — no startup constructor. */
@@ -778,9 +896,9 @@ const char *gamma_mode_str(void);        /* one of "auto-day", "auto-night", "da
 /* ============================================================ */
 
 /* The lock's whole layout is a DSL-declared table: wispc lowers `lock { frame
- * … text … }` to a `lock_els[]` in gen_lock.h and lock.c only walks it. Text
+ * … text … ring … }` to a `lock_els[]` in gen_lock.h and lock.c only walks it. Text
  * templates carry the LT_* bytes below where a runtime value belongs. */
-enum { LEL_FRAME = 0, LEL_TEXT };
+enum { LEL_FRAME = 0, LEL_TEXT, LEL_RING };
 enum { LT_DOTS = 1, LT_COUNT, LT_LAYOUT, LT_PROMPT, LT_TIME };
 /* `show =` conditions; LSHOW_NEG is OR'd in by a `!cond`. */
 enum { LSHOW_ALWAYS = 0, LSHOW_TYPING, LSHOW_WRONG, LSHOW_CAPS,
@@ -790,10 +908,17 @@ enum { LSHOW_ALWAYS = 0, LSHOW_TYPING, LSHOW_WRONG, LSHOW_CAPS,
 enum { LA_TOP = 1, LA_BOTTOM = 2, LA_LEFT = 4, LA_RIGHT = 8 };
 
 typedef struct {
+    /* Slots are shared across kinds: LEL_RING borrows w/h rather than adding
+     * fields. 64 bytes, and there is room for one more int16 inside it. */
     uint8_t  kind, anchor, show;
-    int16_t  x, y, w, h;                 /* x/y are insets from the anchored edge */
-    int16_t  radius, border_w, font_px;
+    int16_t  x, y, w, h;                 /* x/y are insets from the anchored edge;
+                                          * LEL_RING: w = thickness, h = segments */
+    int16_t  radius, border_w, font_px;  /* LEL_RING: radius = the ring's radius */
+    int16_t  gap, hl_arc;                /* LEL_RING: degrees blanked between segments,
+                                          * and the length of the keypress arc */
     uint32_t bg, fg, border;
+    uint32_t hl, hl_bs, sep;             /* LEL_RING: keypress arc, its backspace
+                                          * variant, and the lines at its ends */
     const char *fmt;                     /* LEL_TEXT: template with LT_* bytes */
     const char *time_fmt;                /* strftime format behind LT_TIME */
 } LockEl;
@@ -859,6 +984,7 @@ const char *mpris_title(void);
 const char *mpris_artist(void);
 const char *mpris_status(void);
 const char *mpris_player(void);
+const char *mpris_art(void);   /* local path from mpris:artUrl, "" when none/remote */
 void        mpris_control(const char *member);
 
 /* PipeWire native-protocol client (pipewire.c) — linked when a config declares
@@ -885,13 +1011,23 @@ void pw_set_mic_mute(int on);   /* -1 = toggle */
 #ifndef TRAY_ICON_PX       /* features.h may set it from tray(icon_size=N) */
 #define TRAY_ICON_PX 16    /* logical px; icons are box-scaled to this on arrival */
 #endif
+/* SNI OverlayIcon badge: half-size, composited into the bottom-right corner. */
+#define TRAY_OVERLAY_PX (TRAY_ICON_PX / 2)
 void            tray_init(void);
 int             tray_count(void);
 const char     *tray_title(int i);
 const char     *tray_id(int i);
 const char     *tray_status(int i);
 const uint32_t *tray_icon(int i);          /* TRAY_ICON_PX² premultiplied ARGB, or NULL */
+int             tray_has_attention_icon(int i);  /* app shipped an AttentionIcon */
 int             tray_menu_is_open(int i);  /* item's dbusmenu popup is on screen */
+/* dbusmenu.c <-> tray.c seam: the menu client sees items only through these. */
+const char     *tray_service(int i);
+const char     *tray_menu_path(int i);     /* Menu object path, "" if none */
+const char     *tray_icon_dir(int i);      /* IconThemePath */
+int             tray_slot_of_service(const char *service);
+int             tray_slot_is_sender(int i, const char *sender);
+void            dbusmenu_init(void);       /* subscribes the menu-changed signals */
 void            tray_click(int i, const char *member);  /* "Activate", … */
 void            tray_menu(int i);          /* dbusmenu popup, or SecondaryActivate */
 
@@ -1020,6 +1156,7 @@ uint32_t anim_start_color(uint32_t *target, uint32_t from, uint32_t to,
                           Widget *owner, AnimDone on_done, void *user,
                           int repeat, int alternate);
 void     anim_cancel_for(void *target);
+void     anim_cancel_owner(Widget *w);
 /* Attach a per-frame callback to a running tween (id from anim_start_*). For
  * ownerless tweens that drive something other than a widget's pixels. */
 void     anim_on_frame(uint32_t id, AnimDone cb, void *user);

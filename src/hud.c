@@ -129,7 +129,6 @@ static void hide(Widget *w) {
 
 void hud_on_pointer_enter(Widget *w, int x, int y) {
     (void)x; (void)y;
-    msg("wisp: hud enter w=%p edge=%d off=%d", (void*)w, w->s.hud.slide_edge, (int)w->s.hud.cur_off);
     w->s.hud.ptr_inside = 1;
     w->s.hud.hide_at_ms = 0;
     show(w);

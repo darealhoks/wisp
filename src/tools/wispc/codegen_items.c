@@ -36,6 +36,7 @@ static int collect_for_items(ForBlock *f, BarItem *out, int n, int max,
         {
             /* iter must be IDENT.list (tags) or IDENT.history (dbus_signal). */
             const char *tags_src = NULL, *dbus_src = NULL, *tray_src = NULL;
+            int notif_hist = 0;
             /* `for row in rows` — a menu's visible filtered rows. Not a
              * declared source: the rows live in the surface's own state. */
             int menu_rows = f->iter && f->iter->kind == EX_IDENT &&
@@ -60,8 +61,14 @@ static int collect_for_items(ForBlock *f, BarItem *out, int n, int max,
                          memcmp(f->iter->member.field, "items", 5) == 0 &&
                          strcmp(si->drv->name, "tray") == 0)
                     tray_src = sname(si->decl->name, si->decl->nlen);
+                /* notifications() rides DRV_WISP too — match on the driver name
+                 * for the same reason tray does. */
+                else if (si && f->iter->member.flen == 7 &&
+                         memcmp(f->iter->member.field, "history", 7) == 0 &&
+                         strcmp(si->drv->name, "notifications") == 0)
+                    notif_hist = 1;
             }
-            if (!tags_src && !dbus_src && !menu_rows && !tray_src) {
+            if (!tags_src && !dbus_src && !menu_rows && !tray_src && !notif_hist) {
                 diag_error(f->loc, "codegen: for-iter must be `rows`, <tags-src>.list, <dbus_signal-src>.history or <tray-src>.items");
                 *err = 1; return n;
             }
@@ -80,6 +87,17 @@ static int collect_for_items(ForBlock *f, BarItem *out, int n, int max,
                 out[n].runtime_for_iter = "(w->s.menu.view_top + it)";
                 out[n].runtime_for_kind = LB_MENU_ROW;
                 out[n].runtime_for_cap = MENU_ROWS_CAP;
+                out[n].for_var = f->var; out[n].for_var_n = f->vlen;
+                n++;
+            } else if (notif_hist) {
+                if (n >= max) { *err = 1; return n; }
+                out[n] = (BarItem){0}; out[n].slider_idx = -1; out[n].graph_idx = -1; out[n].group_id = -1;
+                out[n].w = f->cells[0];
+                out[n].is_runtime_for_cell = true;
+                out[n].runtime_for_count = "notif_count()";
+                out[n].runtime_for_iter = "it";
+                out[n].runtime_for_kind = LB_NOTIF_IT;
+                out[n].runtime_for_cap = NOTIF_HIST_CAP;
                 out[n].for_var = f->var; out[n].for_var_n = f->vlen;
                 n++;
             } else if (tray_src) {
@@ -237,6 +255,11 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
     }
     Expr *text  = widget_prop(wd, "text");
     Expr *icon  = widget_prop(wd, "icon");
+    Expr *imge  = widget_prop(wd, "image");
+    /* Square side for `image`; unset tracks the font so a cell stays row-tall. */
+    char img_sz[32] = "f->line_h";
+    { int n = eval_int(widget_prop(wd, "image_size"), 0);
+      if (n > 0) snprintf(img_sz, sizeof img_sz, "%d", n); }
     Expr *fge   = widget_prop(wd, "fg");
     Expr *bge   = widget_prop(wd, "bg");
     Expr *bord  = widget_prop(wd, "border");
@@ -245,6 +268,12 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
     int   padE  = eval_int(widget_prop(wd, "pad"), 0);
     Expr *bline = widget_prop(wd, "body_lines");
     int   pad_xm= eval_int(widget_prop(wd, "pad_x"), 0);
+    int   pad_ym= eval_int(widget_prop(wd, "pad_y"), 0);
+    /* On a vertical surface the main axis IS the height, so pad_y has to enter
+     * the measured extent — on a horizontal one it only nudges content inside a
+     * slab the region already sizes. Skipped when `height` is declared: that is
+     * the author's final row height, same rule as the horizontal path. */
+    int   vpad_y = (vertical && !widthe) ? pad_ym : 0;
     Align al    = eval_align(widget_prop(wd, "align"));
 
     char idx_buf[16];
@@ -265,8 +294,9 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
     }
 
     if (it->is_runtime_for_cell) {
-        fprintf(o, "    for (int it = 0; it < %s; it++) {\n",
-                it->runtime_for_count);
+        fprintf(o, "    for (int it = 0; it < %s && it < %d; it++) {\n",
+                it->runtime_for_count, it->runtime_for_cap);
+        ctx->loop_cap = it->runtime_for_cap;
     } else {
         fputs("    {\n", o);
     }
@@ -303,7 +333,19 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
 
     CE cicon = { .text = "0", .type = T_INT };
     if (icon) cicon = lower(ctx, icon);
-    if (cicon.type == T_PIXMAP) {
+    if (imge) {
+        /* `image` wins over `icon`, which stays as the fallback glyph when the
+         * path is empty or undecodable — same rule as the OSD's $image. */
+        CE ip = lower(ctx, imge);
+        if (ip.type != T_STR) ip = coerce_to_str(ctx, ip, imge->loc);
+        CE ic = (cicon.type == T_PIXMAP) ? (CE){ .text = "0", .type = T_INT }
+                                         : coerce_to_int(ctx, cicon);
+        cgctx_flush_prelude(ctx, o, indent);
+        fprintf(o, "%suint32_t cp = (uint32_t)(%s);\n", indent, ic.text);
+        fprintf(o, "%sint pms = %s;\n", indent, img_sz);
+        fprintf(o, "%sconst uint32_t *pm = image_cell(%s, pms);\n", indent, ip.text);
+        fprintf(o, "%sif (!pm) pms = 0;\n", indent);
+    } else if (cicon.type == T_PIXMAP) {
         cgctx_flush_prelude(ctx, o, indent);
         fprintf(o, "%suint32_t cp = (uint32_t)(%s);\n", indent,
                 cicon.pm_cp ? cicon.pm_cp : "0");
@@ -385,7 +427,9 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
          * stays free, so the column must lose `pad + 2*pad_x` — measuring with
          * only 2*pad_x overshoots the region and clips the last glyph. */
         if (vertical) {
-            fprintf(o, "%s    int __ww = __reg_w - %d;\n", indent, padE + 2 * pad_xm);
+            { Expr *vw = widget_prop(wd, "width");   /* same row width the draw uses */
+              if (vw) fprintf(o, "%s    int __ww = %d - %d;\n", indent, eval_int(vw, 0), padE + 2 * pad_xm);
+              else    fprintf(o, "%s    int __ww = __reg_w - %d;\n", indent, padE + 2 * pad_xm); }
         } else {
             emit_wrap_left(o, "            ", idx_expr);
             fprintf(o, "%s    int __ww = __reg_w - __wleft - %d;\n", indent, 2 * pad_xm);
@@ -416,7 +460,7 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
         cgctx_flush_prelude(ctx, o, indent);
         fprintf(o, "%sint tw = %s;\n", indent, wd_ce.text);
     } else if (vertical) {
-        fprintf(o, "%sint tw = f->line_h * __bl;\n", indent);
+        fprintf(o, "%sint tw = f->line_h * __bl + %d;\n", indent, 2 * vpad_y);
     } else {
         fprintf(o, "%sint tw = 0;\n", indent);
         fprintf(o, "%sif (cp || pms)  tw += %s;\n", indent, icw);
@@ -437,7 +481,7 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
         if (pad_xm > 0) fprintf(o, "%stw += %d;\n", indent, 2 * pad_xm);
     }
     /* h: multi-line slab height when body_lines > 1. Default 0 → use tw advance. */
-    fprintf(o, "%sint __h = __bl > 1 ? (__bl * f->line_h) : 0;\n", indent);
+    fprintf(o, "%sint __h = __bl > 1 ? (__bl * f->line_h + %d) : 0;\n", indent, 2 * vpad_y);
 
     /* press_bg: optional widget prop. Renders in place of bg while this st
      * index is the surface's __pressed_st (pointer pressed-and-still-over). */
@@ -449,6 +493,15 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
     } else {
         fprintf(o, "%suint32_t press_bg = 0u;\n", indent);
     }
+    /* hover_bg: same, for the cell the pointer is over. */
+    Expr *hbge = widget_prop(wd, "hover_bg");
+    if (hbge) {
+        CE hbg = lower(ctx, hbge);
+        cgctx_flush_prelude(ctx, o, indent);
+        fprintf(o, "%suint32_t hover_bg = (uint32_t)(%s);\n", indent, hbg.text);
+    } else {
+        fprintf(o, "%suint32_t hover_bg = 0u;\n", indent);
+    }
 
     fprintf(o, "%sst[%s].vis = vis;\n", indent, idx_expr);
     fprintf(o, "%sst[%s].txt = txt;\n", indent, idx_expr);
@@ -459,6 +512,7 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
     fprintf(o, "%sst[%s].icon_fg = icon_fg;\n", indent, idx_expr);
     fprintf(o, "%sst[%s].bg  = bg;\n", indent, idx_expr);
     fprintf(o, "%sst[%s].press_bg = press_bg;\n", indent, idx_expr);
+    fprintf(o, "%sst[%s].hover_bg = hover_bg;\n", indent, idx_expr);
     fprintf(o, "%sst[%s].border = bdr;\n", indent, idx_expr);
     /* Step 6.4: `transition_size` tweens the *input* sizes, then the normal
      * layout runs from them each tick — neighbours slide instead of snapping.
@@ -500,6 +554,7 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
     fputs("    }\n", o);
 
     if (it->is_for_cell || it->is_runtime_for_cell) pop_local(ctx);
+    ctx->loop_cap = 0;
 }
 
 /* Color CE: lower an expression (const/mut/ternary/literal) to a uint32_t-typed
@@ -684,10 +739,15 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
             }
             fprintf(o, "%sdraw_text(sl->px, w->w, w->h, __vx, __vy, f, __vb, (uint32_t)(%s));\n", indent, c_vfg.text);
         }
-        fprintf(o, "%s{ int __i = __%s_nhit++; __%s_hits_buf[__i].x = rx; __%s_hits_buf[__i].y = ry; "
+        /* 64 == the __<nm>_hits_buf[] size emitted by codegen_surface.c; a
+         * config with more clickable cells than that drops the overflow
+         * instead of writing past the array. */
+        fprintf(o, "%s{ int __i = __%s_nhit; if (__i < 64) { __%s_nhit++; __%s_hits_buf[__i].x = rx; __%s_hits_buf[__i].y = ry; "
                    "__%s_hits_buf[__i].w = rw; __%s_hits_buf[__i].h = rh; "
-                   "__%s_hits_buf[__i].kind = 0; __%s_hits_buf[__i].arg = 0; __%s_hits_buf[__i].slider_idx = %d; __%s_hits_buf[__i].st_idx = %d; }\n",
-                indent, nm, nm, nm, nm, nm, nm, nm, nm, it->slider_idx, nm, it->st_base);
+                   "__%s_hits_buf[__i].kind = 0; __%s_hits_buf[__i].arg = 0; __%s_hits_buf[__i].slider_idx = %d; __%s_hits_buf[__i].st_idx = %d; "
+                   "__%s_hits_buf[__i].tip = %s; } }\n",
+                indent, nm, nm, nm, nm, nm, nm, nm, nm, nm, it->slider_idx, nm, it->st_base,
+                nm, widget_tip_lit(it->w));
         fprintf(o, "    }\n");
         return;
     }
@@ -697,8 +757,9 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
     int kind;
     if (it->is_runtime_for_cell) {
         snprintf(idx_expr, sizeof idx_expr, "(%d + it)", it->st_base);
-        fprintf(o, "    for (int it = 0; it < %s; it++) {\n",
-                it->runtime_for_count);
+        fprintf(o, "    for (int it = 0; it < %s && it < %d; it++) {\n",
+                it->runtime_for_count, it->runtime_for_cap);
+        ctx->loop_cap = it->runtime_for_cap;
         kind = 2;
     } else {
         snprintf(idx_expr, sizeof idx_expr, "%d", it->st_base);
@@ -710,6 +771,15 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
     fprintf(o, "%s    int tw = st[%s].tw, pad = st[%s].pad;\n", indent, idx_expr, idx_expr);
     fprintf(o, "%s    int __h = st[%s].h;\n", indent, idx_expr);
     fprintf(o, "%s    int __adv = __h > 0 ? __h : tw;\n", indent);
+    /* Separator rows: menu.c gives them their own slot height, so the draw has
+     * to advance by the same amount or the hit grid and the pixels diverge. */
+    int sep = vertical && it->is_runtime_for_cell && ctx->menu_sep_h > 0
+              && (ctx->menu_sep_col & 0xff000000u);
+    if (sep) {
+        fprintf(o, "%s    int __sep = w->s.menu.row_flags && "
+                   "(w->s.menu.row_flags[w->s.menu.filtered[it]] & MENU_ROW_SEPARATOR);\n", indent);
+        fprintf(o, "%s    if (__sep) __adv = %d;\n", indent, ctx->menu_sep_h);
+    }
     fprintf(o, "%s    const char *txt = st[%s].txt; uint32_t cp = st[%s].cp; const uint32_t *pm = st[%s].pm; int pms = st[%s].pms;\n", indent, idx_expr, idx_expr, idx_expr, idx_expr);
     fprintf(o, "%s    uint32_t fg = st[%s].fg, bg = st[%s].bg, bdr = st[%s].border; (void)bdr;\n",
             indent, idx_expr, idx_expr, idx_expr);
@@ -717,9 +787,20 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
             indent, idx_expr);
     /* press_bg override: while this st-index is the surface's pressed_st, swap
      * bg for the widget's press_bg if it has one. */
+    fprintf(o, "%s    if (st[%s].hover_bg & 0xff000000u && __%s_hover_st == (%s) && __%s_hover_w == w) bg = st[%s].hover_bg;\n",
+            indent, idx_expr, nm, idx_expr, nm, idx_expr);
     fprintf(o, "%s    if (st[%s].press_bg & 0xff000000u && __%s_pressed_st == (%s) && __%s_pressed_w == w) bg = st[%s].press_bg;\n",
             indent, idx_expr, nm, idx_expr, nm, idx_expr);
     fprintf(o, "%s    int body_lines = st[%s].body_lines;\n", indent, idx_expr);
+    /* A vertical row spans the region cross-axis unless the cell declares an
+     * explicit `width` — then it is that wide and centred, so a panel's border
+     * and corner radius stay clear of it instead of being painted over. */
+    if (vertical) {
+        Expr *vw = widget_prop(wd, "width");
+        if (vw) fprintf(o, "%s    int __rw = %d, __rx = __reg_x + (__reg_w - %d) / 2;\n",
+                        indent, eval_int(vw, 0), eval_int(vw, 0));
+        else    fprintf(o, "%s    int __rw = __reg_w, __rx = __reg_x;\n", indent);
+    }
     /* Re-wrap for the draw: the measure pass's scratch has been reused by every
      * item measured after this one. body_lines is the (already body_fit-clamped)
      * ceiling, so both passes produce the same lines. */
@@ -729,8 +810,8 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
         int wrap_inset = 2 * eval_int(widget_prop(wd, "pad_x"), 0);
         if (vertical) wrap_inset += eval_int(widget_prop(wd, "pad"), 0);
         if (!vertical) emit_wrap_left(o, "            ", idx_expr);
-        fprintf(o, "%s    if (txt && txt[0]) txt = text_wrapped(f, txt, __reg_w - %s%d, body_lines, (int *)0);\n",
-                indent, vertical ? "" : "__wleft - ", wrap_inset);
+        fprintf(o, "%s    if (txt && txt[0]) txt = text_wrapped(f, txt, %s - %s%d, body_lines, (int *)0);\n",
+                indent, vertical ? "__rw" : "__reg_w", vertical ? "" : "__wleft - ", wrap_inset);
     }
     fprintf(o, "%s    int pos;\n", indent);
     fprintf(o, "%s    switch (st[%s].align) {\n", indent, idx_expr);
@@ -738,10 +819,24 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
     fprintf(o, "%s        case 1:  pos = end_pos - __adv; end_pos -= __adv + pad; break;\n", indent);
     fprintf(o, "%s        default: pos = center_pos; center_pos += __adv + pad; break;\n", indent);
     fprintf(o, "%s    }\n", indent);
+    /* Scrollable container: this is one scrolled row. Recorded in content
+     * coordinates so the wheel can snap to the next row top and the arrow keys
+     * can walk rows of unequal height. */
+    if (ctx->scroll_rows && vertical)
+        fprintf(o, "%s    if (st[%s].align == 0) __%s_rowrec(__wi, pos + w->scroll_off - __rowbase0, %s);\n",
+                indent, idx_expr, nm, idx_expr);
     /* align=end mirrors: the pad band sits BEFORE pos, so clears/hits start
      * there rather than trailing past the content. */
     fprintf(o, "%s    int __bs = st[%s].align == 1 ? pos - pad : pos;\n", indent, idx_expr);
     fprintf(o, "%s    (void)__bs;\n", indent);
+    if (sep) {
+        fprintf(o, "%s    if (__sep) {\n", indent);
+        fprintf(o, "%s        int __sw = __reg_w * %d / 100;\n", indent, ctx->menu_sep_frac);
+        fprintf(o, "%s        fill_rect(sl->px, w->w, w->h, __reg_x + (__reg_w - __sw) / 2,"
+                   " pos + (__adv - 1) / 2, __sw, 1, 0x%08xu);\n",
+                indent, ctx->menu_sep_col);
+        fprintf(o, "%s        continue;\n%s    }\n", indent, indent);
+    }
     /* Partial repaint gate: skip a cell whose sources didn't tick (its pixels
      * survive in the copied-forward buffer); overwrite a dirty cell with the
      * flat surface bg before its content redraws, and grow the damage span. The
@@ -774,29 +869,32 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
         /* Main axis is Y, so the slab already spans the region width and
          * pad_x can't grow it — it insets the content instead (both sides,
          * the elide clamp below takes the trailing one). */
-        fprintf(o, "%s    int cx = __reg_x + pad + %d;\n",
+        fprintf(o, "%s    int cx = __rx + pad + %d;\n",
                 indent, eval_int(widget_prop(wd, "pad_x"), 0));
+        /* pad_y is inside the measured row height (see vpad_y), so start/end
+         * alignment must inset by it or the text sits on the card's edge. */
+        int v_pady = eval_int(widget_prop(wd, "pad_y"), 0);
         switch (widget_text_align(wd)) {
-        case 1:  fprintf(o, "%s    int cy = pos;\n", indent); break;
-        case 2:  fprintf(o, "%s    int cy = pos + __adv - f->line_h * body_lines; if (cy < pos) cy = pos;\n", indent); break;
+        case 1:  fprintf(o, "%s    int cy = pos + %d;\n", indent, v_pady); break;
+        case 2:  fprintf(o, "%s    int cy = pos + __adv - %d - f->line_h * body_lines; if (cy < pos) cy = pos;\n", indent, v_pady); break;
         default: fprintf(o, "%s    int cy = pos + (__adv - f->line_h * body_lines) / 2; if (cy < pos) cy = pos;\n", indent); break;
         }
         if (shc & 0xff000000u)
-            fprintf(o, "%s    fill_rounded_shadow(sl->px, w->w, w->h, __reg_x + %d, pos + %d, __reg_w + %d, __adv + %d, %d, %d, 0x%08xu);\n",
+            fprintf(o, "%s    fill_rounded_shadow(sl->px, w->w, w->h, __rx + %d, pos + %d, __rw + %d, __adv + %d, %d, %d, 0x%08xu);\n",
                     indent, shx - shspread, shy - shspread, 2 * shspread, 2 * shspread,
                     maxr + shspread, shblur > 0 ? shblur : 8, shc);
         if (any_round) {
-            fprintf(o, "%s    if (bg  & 0xff000000u) fill_rect_rounded(sl->px, w->w, w->h, __reg_x, pos, __reg_w, __adv, %d, %d, %d, %d, bg);\n",
+            fprintf(o, "%s    if (bg  & 0xff000000u) fill_rect_rounded(sl->px, w->w, w->h, __rx, pos, __rw, __adv, %d, %d, %d, %d, bg);\n",
                     indent, r_tl, r_tr, r_br, r_bl);
-            fprintf(o, "%s    if (bdr & 0xff000000u) fill_rect_rounded_border(sl->px, w->w, w->h, __reg_x, pos, __reg_w, __adv, %d, %d, %d, %d, %d, 1, 1, 1, 1, 0, bdr);\n",
+            fprintf(o, "%s    if (bdr & 0xff000000u) fill_rect_rounded_border(sl->px, w->w, w->h, __rx, pos, __rw, __adv, %d, %d, %d, %d, %d, 1, 1, 1, 1, 0, bdr);\n",
                     indent, r_tl, r_tr, r_br, r_bl, vbw);
         } else {
-            fprintf(o, "%s    if (bg  & 0xff000000u) fill_rect(sl->px, w->w, w->h, __reg_x, pos, __reg_w, __adv, bg);\n", indent);
+            fprintf(o, "%s    if (bg  & 0xff000000u) fill_rect(sl->px, w->w, w->h, __rx, pos, __rw, __adv, bg);\n", indent);
             fprintf(o, "%s    if (bdr & 0xff000000u) {\n", indent);
-            fprintf(o, "%s        fill_rect(sl->px, w->w, w->h, __reg_x, pos, __reg_w, %d, bdr);\n", indent, vbw);
-            fprintf(o, "%s        fill_rect(sl->px, w->w, w->h, __reg_x, pos + __adv - %d, __reg_w, %d, bdr);\n", indent, vbw, vbw);
-            fprintf(o, "%s        fill_rect(sl->px, w->w, w->h, __reg_x, pos, %d, __adv, bdr);\n", indent, vbw);
-            fprintf(o, "%s        fill_rect(sl->px, w->w, w->h, __reg_x + __reg_w - %d, pos, %d, __adv, bdr);\n", indent, vbw, vbw);
+            fprintf(o, "%s        fill_rect(sl->px, w->w, w->h, __rx, pos, __rw, %d, bdr);\n", indent, vbw);
+            fprintf(o, "%s        fill_rect(sl->px, w->w, w->h, __rx, pos + __adv - %d, __rw, %d, bdr);\n", indent, vbw, vbw);
+            fprintf(o, "%s        fill_rect(sl->px, w->w, w->h, __rx, pos, %d, __adv, bdr);\n", indent, vbw);
+            fprintf(o, "%s        fill_rect(sl->px, w->w, w->h, __rx + __rw - %d, pos, %d, __adv, bdr);\n", indent, vbw, vbw);
             fprintf(o, "%s    }\n", indent);
         }
         int v_icb = eval_int(widget_prop(wd, "icon_box"), 0);
@@ -815,7 +913,7 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
         /* Same as the horizontal path: `elide` clamps to the room left in the
          * row and appends '…', instead of running past the slab. */
         if (widget_flag(wd, "elide"))
-            fprintf(o, "%s            draw_text_elided(sl->px, w->w, w->h, cx, cy + __ln * f->line_h, f, __tmp, __reg_x + __reg_w - cx - %d, fg);\n",
+            fprintf(o, "%s            draw_text_elided(sl->px, w->w, w->h, cx, cy + __ln * f->line_h, f, __tmp, __rx + __rw - cx - %d, fg);\n",
                     indent, eval_int(widget_prop(wd, "pad_x"), 0));
         else
             fprintf(o, "%s            draw_text(sl->px, w->w, w->h, cx, cy + __ln * f->line_h, f, __tmp, fg);\n", indent);
@@ -964,30 +1062,38 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
         fprintf(o, "%s    }\n", indent);
     }
     if (ctx->partial_ok) fprintf(o, "%s    }\n", indent);  /* close partial gate */
-    if (clk) {
+    /* A `tooltip`-only cell still needs a rect to hover-test against, but must
+     * never match a click branch — kind -1 is matched by no dispatch case. */
+    if (!clk && widget_prop(it->w, "tooltip")) kind = -1;
+    if (clk || kind == -1) {
         int arg_val = it->is_for_cell ? it->cell_idx : it->handler_idx;
         /* Hit rect in compound/surface-local coords. For vertical (main=Y) the
          * cross-axis spans the region's X extent; for horizontal it spans the
          * region's Y extent. Origin offsets come from __reg_x/__reg_y so
          * compound regions translate correctly. */
-        const char *hx = vertical ? "__reg_x" : "__bs";
+        const char *hx = vertical ? "__rx" : "__bs";
         const char *hy = vertical ? "__bs"    : "__reg_y";
-        const char *hw = vertical ? "__reg_w" : "(__adv + pad)";
+        const char *hw = vertical ? "__rw" : "(__adv + pad)";
         const char *hh = vertical ? "(__adv + pad)" : "__reg_h";
         if (it->is_runtime_for_cell) {
-            fprintf(o, "%s    { int __i = __%s_nhit++; __%s_hits_buf[__i].x = %s; __%s_hits_buf[__i].y = %s; "
+            fprintf(o, "%s    { int __i = __%s_nhit; if (__i < 64) { __%s_nhit++; __%s_hits_buf[__i].x = %s; __%s_hits_buf[__i].y = %s; "
                        "__%s_hits_buf[__i].w = %s; __%s_hits_buf[__i].h = %s; "
-                       "__%s_hits_buf[__i].kind = %d; __%s_hits_buf[__i].arg = it; __%s_hits_buf[__i].slider_idx = -1; __%s_hits_buf[__i].st_idx = (%d + it); }\n",
-                    indent, nm, nm, hx, nm, hy, nm, hw, nm, hh, nm, kind, nm, nm, nm, it->st_base);
+                       "__%s_hits_buf[__i].kind = %d; __%s_hits_buf[__i].arg = it; __%s_hits_buf[__i].slider_idx = -1; __%s_hits_buf[__i].st_idx = (%d + it); "
+                       "__%s_hits_buf[__i].tip = %s; } }\n",
+                    indent, nm, nm, nm, hx, nm, hy, nm, hw, nm, hh, nm, kind, nm, nm, nm, it->st_base,
+                    nm, widget_tip_lit(it->w));
         } else {
-            fprintf(o, "%s    { int __i = __%s_nhit++; __%s_hits_buf[__i].x = %s; __%s_hits_buf[__i].y = %s; "
+            fprintf(o, "%s    { int __i = __%s_nhit; if (__i < 64) { __%s_nhit++; __%s_hits_buf[__i].x = %s; __%s_hits_buf[__i].y = %s; "
                        "__%s_hits_buf[__i].w = %s; __%s_hits_buf[__i].h = %s; "
-                       "__%s_hits_buf[__i].kind = %d; __%s_hits_buf[__i].arg = %d; __%s_hits_buf[__i].slider_idx = -1; __%s_hits_buf[__i].st_idx = %d; }\n",
-                    indent, nm, nm, hx, nm, hy, nm, hw, nm, hh, nm, kind, nm, arg_val, nm, nm, it->st_base);
+                       "__%s_hits_buf[__i].kind = %d; __%s_hits_buf[__i].arg = %d; __%s_hits_buf[__i].slider_idx = -1; __%s_hits_buf[__i].st_idx = %d; "
+                       "__%s_hits_buf[__i].tip = %s; } }\n",
+                    indent, nm, nm, nm, hx, nm, hy, nm, hw, nm, hh, nm, kind, nm, arg_val, nm, nm, it->st_base,
+                    nm, widget_tip_lit(it->w));
         }
     }
     fprintf(o, "%s}\n", indent);
     fputs("    }\n", o);
+    ctx->loop_cap = 0;
 }
 
 /* True iff any ST_SET in the body targets the named identifier. Used to skip
@@ -1012,6 +1118,24 @@ static int stmt_sets_name(Stmt *st, const char *nm) {
  * Surface-agnostic: items come from collect_bar_items (which accepts either
  * a surface body or a compound region body), `nm` namespaces the emitted
  * symbols (__<nm>_hit_*, <nm>_slider_<idx>_set_from, etc.). */
+/* Damage band = union of the rects of the st index leaving the hover tint and of
+ * the one gaining it (`new_st`). Emitted only for scrollable surfaces, where
+ * render_<nm> honours w->dmg_y0/y1; anywhere else a hover change repaints whole.
+ * Assumes __hw (this widget's hit-table slot) is already in scope. */
+static void emit_hover_band(FILE *o, const char *nm, const char *new_st,
+                            const char *ind) {
+    fprintf(o, "%s{ int __b0 = 1 << 30, __b1 = 0;\n", ind);
+    fprintf(o, "%s  int __ob = __%s_hover_w == w ? __%s_hover_st : -1;\n", ind, nm, nm);
+    fprintf(o, "%s  if (__hw >= 0) for (int __k = 0; __k < __%s_hit_n[__hw]; __k++) {\n", ind, nm);
+    fprintf(o, "%s      int __s = __%s_hit[__hw][__k].st_idx;\n", ind, nm);
+    fprintf(o, "%s      if (__s != __ob && __s != (%s)) continue;\n", ind, new_st);
+    fprintf(o, "%s      if (__%s_hit[__hw][__k].y < __b0) __b0 = __%s_hit[__hw][__k].y;\n", ind, nm, nm);
+    fprintf(o, "%s      int __e = __%s_hit[__hw][__k].y + __%s_hit[__hw][__k].h;\n", ind, nm, nm);
+    fprintf(o, "%s      if (__e > __b1) __b1 = __e;\n", ind);
+    fprintf(o, "%s  }\n", ind);
+    fprintf(o, "%s  if (__b1 > __b0) { w->dmg_y0 = __b0; w->dmg_y1 = __b1; } }\n", ind);
+}
+
 int emit_surface_click_dispatch(FILE *o, BarItem *items, int nitems,
                                        CGCtx *ctx, SemaResult *r, const char *nm) {
     /* Press: route to slider thunk for slider hits, record pressed idx for
@@ -1055,7 +1179,56 @@ int emit_surface_click_dispatch(FILE *o, BarItem *items, int nitems,
 
     /* Motion: while a slider is pressed, recompute value from pointer. Bound to
      * the widget that received the press so a drag stays on its own surface. */
+    /* Only surfaces that actually declare hover_bg pay for hover tracking —
+     * otherwise motion over an ordinary bar must cost nothing (idle-zero). */
+    int any_hover = 0, any_tip = 0;
+    for (int it = 0; it < nitems; it++) {
+        if (widget_prop(items[it].w, "hover_bg")) any_hover = 1;
+        if (widget_prop(items[it].w, "tooltip"))  any_tip = 1;
+    }
+
+    /* Hit-test + hover state, no repaint: the wheel path needs to re-aim hover
+     * *before* the scroll's single render, or the highlight visibly retargets
+     * a frame late. Returns 1 when the hovered cell changed. */
+    fprintf(o, "int %s_hover_set(Widget *w, int wx, int wy) {\n", nm);
+    if (any_hover || any_tip) {
+        fprintf(o, "    { int __hs = -1; const char *__ht = 0; int __hx = 0, __hcw = 0;\n");
+        fprintf(o, "      int __hw = __%s_slot(w);\n", nm);
+        fprintf(o, "      if (__hw >= 0) for (int i = 0; i < __%s_hit_n[__hw]; i++) {\n", nm);
+        fprintf(o, "          if (wx < __%s_hit[__hw][i].x || wx >= __%s_hit[__hw][i].x + __%s_hit[__hw][i].w) continue;\n", nm, nm, nm);
+        fprintf(o, "          if (wy < __%s_hit[__hw][i].y || wy >= __%s_hit[__hw][i].y + __%s_hit[__hw][i].h) continue;\n", nm, nm, nm);
+        fprintf(o, "          __hs = __%s_hit[__hw][i].st_idx;\n", nm);
+        fprintf(o, "          __ht = __%s_hit[__hw][i].tip;\n", nm);
+        fprintf(o, "          __hx = __%s_hit[__hw][i].x;\n", nm);
+        fprintf(o, "          __hcw = __%s_hit[__hw][i].w;\n", nm);
+        fprintf(o, "          break;\n");
+        fprintf(o, "      }\n");
+        fprintf(o, "      (void)__ht; (void)__hx; (void)__hcw;\n");
+        fprintf(o, "      if (__hs != __%s_hover_st || (__hs >= 0 && w != __%s_hover_w)) {\n", nm, nm);
+        /* Only the row losing the tint and the row gaining it change pixels, so
+         * hand the render a damage band spanning exactly those two rects. */
+        if (ctx->scroll_rows && any_hover) emit_hover_band(o, nm, "__hs", "          ");
+        fprintf(o, "          __%s_hover_st = __hs;\n", nm);
+        fprintf(o, "          __%s_hover_w = __hs >= 0 ? w : 0;\n", nm);
+        if (any_tip) {
+            /* Anchor mirrors widget_note_click: cell rect + the bar's own top
+             * margin, so a floating bar's tooltip clears it. */
+            fprintf(o, "          if (__ht) { TipAnchor __ta = { w->output, __hx, __hcw, w->margin_top + w->h }; tooltip_arm(__ht, &__ta); }\n");
+            fprintf(o, "          else tooltip_hide();\n");
+        }
+        fprintf(o, "          return 1;\n");
+        fprintf(o, "      } }\n");
+    } else {
+        fputs("    (void)w; (void)wx; (void)wy;\n", o);
+    }
+    fputs("    return 0;\n}\n\n", o);
+
     fprintf(o, "void %s_on_motion(Widget *w, int wx, int wy) {\n", nm);
+    /* Repaint (and re-arm the dwell) only when the hovered st index (or
+     * widget) actually changes; doing it per motion event would be a frame
+     * — and a timer restart — per pointer sample. */
+    if (any_hover) fprintf(o, "    if (%s_hover_set(w, wx, wy)) render_%s(w);\n", nm, nm);
+    else           fprintf(o, "    %s_hover_set(w, wx, wy);\n", nm);
     fprintf(o, "    int sidx = __%s_pressed_slider;\n", nm);
     fprintf(o, "    if (sidx < 0 || w != __%s_pressed_w) { (void)w; (void)wx; (void)wy; return; }\n", nm);
     fprintf(o, "    int __wi = __%s_slot(w); if (__wi < 0) return;\n", nm);
@@ -1071,11 +1244,31 @@ int emit_surface_click_dispatch(FILE *o, BarItem *items, int nitems,
     }
     fputs("}\n\n", o);
 
+    /* Leave: drop the hover tint. Without this the last hovered cell stays lit
+     * after the pointer walks off the surface. */
+    fprintf(o, "void %s_on_leave(Widget *w) {\n", nm);
+    if (any_hover || any_tip) {
+        fprintf(o, "    if (__%s_hover_w != w) return;\n", nm);
+        if (ctx->scroll_rows && any_hover) {
+            fprintf(o, "    int __hw = __%s_slot(w);\n", nm);
+            emit_hover_band(o, nm, "-1", "    ");
+        }
+        fprintf(o, "    __%s_hover_st = -1; __%s_hover_w = 0;\n", nm, nm);
+        if (any_tip)   fputs("    tooltip_hide();\n", o);
+        if (any_hover) fprintf(o, "    render_%s(w);\n", nm);
+    } else {
+        fputs("    (void)w;\n", o);
+    }
+    fputs("}\n\n", o);
+
     fprintf(o, "void %s_on_click(Widget *w, int wx, int wy, int btn) {\n", nm);
-    fputs("    (void)wy; (void)btn;\n", o);
-    fprintf(o, "    int __wi = __%s_slot(w); if (__wi < 0) { (void)wx; return; }\n", nm);
+    fputs("    (void)btn;\n", o);
+    fprintf(o, "    int __wi = __%s_slot(w); if (__wi < 0) { (void)wx; (void)wy; return; }\n", nm);
     fprintf(o, "    for (int i = 0; i < __%s_hit_n[__wi]; i++) {\n", nm);
     fprintf(o, "        if (wx < __%s_hit[__wi][i].x || wx >= __%s_hit[__wi][i].x + __%s_hit[__wi][i].w) continue;\n", nm, nm, nm);
+    /* Y matters as soon as items stack (vertical surface, wrapped rows): without
+     * it every row of a column shares the X span and row 0 always wins. */
+    fprintf(o, "        if (wy < __%s_hit[__wi][i].y || wy >= __%s_hit[__wi][i].y + __%s_hit[__wi][i].h) continue;\n", nm, nm, nm);
     fprintf(o, "        if (__%s_hit[__wi][i].slider_idx >= 0) continue;  /* sliders handle press, not click */\n", nm);
     fprintf(o, "        int kind = __%s_hit[__wi][i].kind; int arg = __%s_hit[__wi][i].arg;\n", nm, nm);
     /* Remember the clicked cell so a popup this handler opens (possibly via
@@ -1196,6 +1389,8 @@ static void emit_group_member(FILE *o, BarItem *it, const char *nm, int gap) {
     fprintf(o, "            const char *txt = st[%s].txt; uint32_t cp = st[%s].cp; const uint32_t *pm = st[%s].pm; int pms = st[%s].pms;\n", sb, sb, sb, sb);
     fprintf(o, "            uint32_t fg = st[%s].fg, bg = st[%s].bg, bdr = st[%s].border; (void)bdr;\n", sb, sb, sb);
     fprintf(o, "            uint32_t ifg = st[%s].icon_fg; if (!(ifg & 0xff000000u)) ifg = fg;\n", sb);
+    fprintf(o, "            if (st[%s].hover_bg & 0xff000000u && __%s_hover_st == (%s) && __%s_hover_w == w) bg = st[%s].hover_bg;\n",
+            sb, nm, sb, nm, sb);
     fprintf(o, "            if (st[%s].press_bg & 0xff000000u && __%s_pressed_st == (%s) && __%s_pressed_w == w) bg = st[%s].press_bg;\n",
             sb, nm, sb, nm, sb);
     /* A member's declared height sizes its own bg/border; without one it fills
@@ -1221,13 +1416,15 @@ static void emit_group_member(FILE *o, BarItem *it, const char *nm, int gap) {
     fprintf(o, "            else { if (cp || pms) { int __icw = %s; draw_cp_centered(sl->px,w->w,w->h,__cx,__ty,__icw,f->line_h,f,cp,ifg,pm,pms); __cx += __icw; if (txt&&txt[0]) __cx += %d; } if (txt) draw_text(sl->px,w->w,w->h,__cx,__ty,f,txt,fg); }\n",
             m_icw, m_icg);
     fprintf(o, "            }\n");
-    if (clk) {
-        int kind = it->is_runtime_for_cell ? 2 : it->is_for_cell ? 1 : 0;
+    /* Same widened gate as the top-level path: kind -1 = hover-only rect. */
+    int has_tip = widget_prop(wd, "tooltip") != NULL;
+    if (clk || has_tip) {
+        int kind = !clk ? -1 : it->is_runtime_for_cell ? 2 : it->is_for_cell ? 1 : 0;
         char arg[16];
         if (it->is_runtime_for_cell) snprintf(arg, sizeof arg, "it");
         else snprintf(arg, sizeof arg, "%d", it->is_for_cell ? it->cell_idx : it->handler_idx);
-        fprintf(o, "            { int __i = __%s_nhit++; __%s_hits_buf[__i].x=__gx; __%s_hits_buf[__i].y=__gy; __%s_hits_buf[__i].w=__ma; __%s_hits_buf[__i].h=__gh; __%s_hits_buf[__i].kind=%d; __%s_hits_buf[__i].arg=%s; __%s_hits_buf[__i].slider_idx=-1; __%s_hits_buf[__i].st_idx=%s; }\n",
-                nm, nm, nm, nm, nm, nm, kind, nm, arg, nm, nm, sb);
+        fprintf(o, "            { int __i = __%s_nhit; if (__i < 64) { __%s_nhit++; __%s_hits_buf[__i].x=__gx; __%s_hits_buf[__i].y=__gy; __%s_hits_buf[__i].w=__ma; __%s_hits_buf[__i].h=__gh; __%s_hits_buf[__i].kind=%d; __%s_hits_buf[__i].arg=%s; __%s_hits_buf[__i].slider_idx=-1; __%s_hits_buf[__i].st_idx=%s; __%s_hits_buf[__i].tip=%s; } }\n",
+                nm, nm, nm, nm, nm, nm, nm, kind, nm, arg, nm, nm, sb, nm, widget_tip_lit(wd));
     }
     fprintf(o, "            if (__ma) __gx += __ma + %d;\n", gap);
     fputs("        }\n", o);
@@ -1284,6 +1481,10 @@ int emit_group_draw(FILE *o, BarItem *items, int first, int nitems,
     fprintf(o, "            case 1:  pos = end_pos - __adv; end_pos -= __adv + __gpad; break;\n");
     fprintf(o, "            default: pos = start_pos; start_pos += __adv + __gpad; break;\n");
     fprintf(o, "        }\n");
+    /* A start-aligned band is one scrolled row too — see emit_item_draw. */
+    if (ctx->scroll_rows && vertical && al != ALIGN_END)
+        fprintf(o, "        __%s_rowrec(__wi, pos + w->scroll_off - __rowbase0, %d);\n",
+                nm, items[first].st_base);
     if (vertical)
         fprintf(o, "        int __gy = pos, __gh = __adv, __bx = __reg_x, __bw = __reg_w; (void)__bw;\n");
     else if (ch > 0)

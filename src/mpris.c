@@ -30,6 +30,7 @@ typedef struct {
     char owner[64];     /* unique name, learned from the GetAll reply */
     char title[160];
     char artist[96];
+    char art[512];      /* mpris:artUrl, decoded to a local path; "" = none */
     char status[16];    /* "Playing" / "Paused" / "Stopped" */
 } Player;
 
@@ -60,6 +61,8 @@ const char *mpris_player(void) {
     return p ? p->name + sizeof MPRIS_PREFIX - 1 : "";
 }
 
+const char *mpris_art(void)    { Player *p = active(); return p ? p->art    : ""; }
+
 static Player *by_name(const char *name) {
     for (int i = 0; i < MPRIS_MAX; i++)
         if (!strcmp(players[i].name, name)) return &players[i];
@@ -89,13 +92,34 @@ static void read_first_str(R *r, char *out, int cap) {
     r->pos = (int)end;
 }
 
+/* mpris:artUrl → a local filesystem path. Only file:// survives: fetching an
+ * http(s) cover would mean a TLS client, and we link libc + libm only.
+ * ponytail: remote art is dropped; a helper writing the file to disk and
+ * exposing it as a file:// URL is the upgrade path, not a socket in here. */
+static void set_art(Player *p, const char *url) {
+    p->art[0] = 0;
+    if (!url || strncmp(url, "file://", 7)) return;
+    const char *s = url + 7;
+    size_t o = 0;
+    while (*s && o + 1 < sizeof p->art) {
+        if (s[0] == '%' && s[1] && s[2]) {           /* percent-decode */
+            char hex[3] = { s[1], s[2], 0 }, *end;
+            long v = strtol(hex, &end, 16);
+            if (*end == 0 && v > 0) { p->art[o++] = (char)v; s += 3; continue; }
+        }
+        p->art[o++] = *s++;
+    }
+    p->art[o] = 0;
+    if (p->art[0] != '/') p->art[0] = 0;   /* file://host/… — not ours to read */
+}
+
 static void parse_metadata(R *r, Player *p) {
     uint32_t len = ru32(r);
     if (!r->ok) return;
     ralign(r, 8);
     int64_t end = (int64_t)r->pos + (int64_t)len;
     if (end > r->len) { r->ok = 0; return; }
-    p->title[0] = p->artist[0] = 0;
+    p->title[0] = p->artist[0] = p->art[0] = 0;
     while (r->pos < end && r->ok) {
         ralign(r, 8);
         const char *key = rstr(r);
@@ -105,6 +129,8 @@ static void parse_metadata(R *r, Player *p) {
             snprintf(p->title, sizeof p->title, "%s", rstr(r));
         else if (!strcmp(key, "xesam:artist") && !strcmp(vs, "as"))
             read_first_str(r, p->artist, sizeof p->artist);
+        else if (!strcmp(key, "mpris:artUrl") && !strcmp(vs, "s"))
+            set_art(p, rstr(r));
         else { const char *s = vs; skip_val(r, &s, 0); }
     }
     if (r->ok) r->pos = (int)end;

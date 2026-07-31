@@ -384,6 +384,16 @@ void emit_item_slot_decls(FILE *o, Widget *wd, const char *nm, int idx, int slot
     if (transition_dur(wd, "size")   > 0) fprintf(o, "static SizeSlot %s_tr%d_tw[%d][%d], %s_tr%d_ch[%d][%d];\n", nm, idx, nwid, slots, nm, idx, nwid, slots);
 }
 
+/* Drop this item's tween history for one output. Paired with the decls above:
+ * `has = 0` makes the next render seed `cur` from the live target instead of
+ * animating out of a value that stopped tracking while the surface was parked. */
+void emit_item_slot_reset(FILE *o, Widget *wd, const char *nm, int idx) {
+    if (transition_dur(wd, "bg")     > 0) fprintf(o, "    memset(&%s_tr%d_bg[wi], 0, sizeof %s_tr%d_bg[wi]);\n",         nm, idx, nm, idx);
+    if (transition_dur(wd, "fg")     > 0) fprintf(o, "    memset(&%s_tr%d_fg[wi], 0, sizeof %s_tr%d_fg[wi]);\n",         nm, idx, nm, idx);
+    if (transition_dur(wd, "border") > 0) fprintf(o, "    memset(&%s_tr%d_border[wi], 0, sizeof %s_tr%d_border[wi]);\n", nm, idx, nm, idx);
+    if (transition_dur(wd, "size")   > 0) fprintf(o, "    memset(&%s_tr%d_tw[wi], 0, sizeof %s_tr%d_tw[wi]);\n    memset(&%s_tr%d_ch[wi], 0, sizeof %s_tr%d_ch[wi]);\n", nm, idx, nm, idx, nm, idx, nm, idx);
+}
+
 /* Step 6.3: enter_anim / exit_anim on a widget's `visible` expression. */
 int widget_enter_ms(Widget *wd) { return eval_int(widget_prop(wd, "enter_anim"), 0); }
 int widget_exit_ms (Widget *wd) { return eval_int(widget_prop(wd, "exit_anim"),  0); }
@@ -415,6 +425,19 @@ double eval_double(Expr *e, double dflt) {
 /* Presence / truthiness of a marker-style prop. Distinguishes a bare marker
  * (`show_value;`) and `= true` / `= 1` from absence, which plain widget_prop()
  * can't (it returns NULL for both an absent prop and a marker). */
+int group_flag(Group *g, const char *name) {
+    size_t L = strlen(name);
+    for (int i = 0; i < g->nprops; i++) {
+        Prop *p = g->props[i];
+        if (p->nlen != L || memcmp(p->name, name, L) != 0) continue;
+        if (!p->val) return 1;
+        if (p->val->kind == EX_BOOL) return p->val->b ? 1 : 0;
+        if (p->val->kind == EX_INT)  return p->val->i ? 1 : 0;
+        return 1;
+    }
+    return 0;
+}
+
 int widget_flag(Widget *w, const char *name) {
     size_t L = strlen(name);
     for (int i = 0; i < w->nitems; i++) {
@@ -473,6 +496,27 @@ void reg_collect(const char *base) {
     for (int i = 0; i < n_reg_names; i++)
         if (strcmp(reg_names[i], base) == 0) return;
     if (n_reg_names < REG_MAX) snprintf(reg_names[n_reg_names++], 160, "%s", base);
+}
+
+/* A widget's `tooltip` as a C string literal, or "0" when it has none. Only a
+ * literal qualifies (sema rejects the rest): the hit table keeps the pointer
+ * across frames, so it must point at .rodata, never a render-local buffer.
+ * Returns a shared static — consume it before the next call. */
+const char *widget_tip_lit(Widget *w) {
+    static char buf[512];
+    Expr *e = widget_prop(w, "tooltip");
+    if (!e || e->kind != EX_STRING) return "0";
+    size_t o = 0;
+    buf[o++] = '"';
+    for (size_t i = 0; i < e->str.n && o + 6 < sizeof buf; i++) {
+        unsigned char ch = (unsigned char)e->str.s[i];
+        if (ch == '\\' || ch == '"') { buf[o++] = '\\'; buf[o++] = ch; }
+        else if (ch < 32)            { o += (size_t)snprintf(buf + o, sizeof buf - o, "\\x%02x", ch); }
+        else                         { buf[o++] = ch; }
+    }
+    buf[o++] = '"';
+    buf[o] = 0;
+    return buf;
 }
 
 /* Per-widget hit-table storage. A surface with one widget per output (bar,

@@ -29,6 +29,7 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/timerfd.h>
 #include <sys/wait.h>
@@ -56,7 +57,17 @@ static struct {
     int64_t wrong_until;         /* no attempt accepted before this */
     pid_t   helper_pid;
     int     helper_fd;
+    int     hl_start;            /* keypress arc angle, 2048ths of a turn */
+    int     hl_bs;               /* last input was a backspace, not a character */
 } ls = { .helper_fd = -1 };
+
+/* swaylock's jump: a new angle at least a quarter turn from the last, so two
+ * keystrokes never look like one. Cosmetic only — it says nothing about the
+ * password, which is why plain rand() is enough. */
+static void hl_advance(int backspace) {
+    ls.hl_start = (ls.hl_start + (rand() % 1024) + 512) % 2048;
+    ls.hl_bs = backspace;
+}
 
 /* Count codepoints in `s` so the dot row mirrors typed characters, not bytes. */
 static int utf8_count(const char *s, int len) {
@@ -231,6 +242,37 @@ static void lock_draw_content(uint32_t *px, int W, int H) {
                                          e->border_w, 1, 1, 1, 1, 0, e->border);
             continue;
         }
+        if (e->kind == LEL_RING) {
+            int th = e->w > 0 ? e->w : 1;
+            int bw = (e->border & 0xff000000u) ? e->border_w : 0;
+            int box = 2 * e->radius + th + 2 * bw;
+            lock_place(e, W, H, box, box, &x, &y);
+            double cx = x + box / 2.0, cy = y + box / 2.0;
+            if (e->bg & 0xff000000u)
+                fill_circle(px, W, H, cx, cy, e->radius - th / 2.0, e->bg);
+            if (bw > 0) {
+                /* swaylock draws the separator line on both faces of the ring. */
+                fill_ring(px, W, H, cx, cy, e->radius - th / 2.0 - bw / 2.0,
+                          bw, e->h, e->gap, e->border);
+                fill_ring(px, W, H, cx, cy, e->radius + th / 2.0 + bw / 2.0,
+                          bw, e->h, e->gap, e->border);
+            }
+            fill_ring(px, W, H, cx, cy, e->radius, th, e->h, e->gap, e->fg);
+            if (e->hl & 0xff000000u) {
+                double a0 = ls.hl_start * (360.0 / 2048.0);
+                uint32_t hc = (ls.hl_bs && (e->hl_bs & 0xff000000u)) ? e->hl_bs : e->hl;
+                fill_arc(px, W, H, cx, cy, e->radius, th, a0, e->hl_arc, hc);
+                if (e->sep & 0xff000000u) {
+                    /* Both ends get a 2px-wide radial line, expressed as the
+                     * degrees that subtends at this radius. */
+                    double s = 114.591559 / (e->radius > 1 ? e->radius : 1);
+                    fill_arc(px, W, H, cx, cy, e->radius, th, a0 - s / 2, s, e->sep);
+                    fill_arc(px, W, H, cx, cy, e->radius, th,
+                             a0 + e->hl_arc - s / 2, s, e->sep);
+                }
+            }
+            continue;
+        }
         char buf[256];
         lock_expand(e, buf, sizeof buf);
         if (!buf[0]) continue;
@@ -350,6 +392,7 @@ void lock_engage(void) {
     if (!id_slock_mgr) { msg("lock: ext_session_lock_manager_v1 unavailable"); return; }
     if (!id_compositor) { msg("lock: no compositor"); return; }
     if (output_count() == 0) { msg("lock: no outputs to lock"); return; }
+    srand((unsigned)now_ms());   /* so the arc doesn't walk the same path every lock */
 
     /* lock_manager.lock(new_id) */
     id_slock = wl_new_id();
@@ -436,6 +479,7 @@ void lock_on_key(Widget *w, uint32_t key, uint32_t state, uint32_t mods) {
             explicit_bzero(ls.input + nl, ls.input_len - nl);
             ls.input_len = nl;
             ls.input[nl] = 0;
+            hl_advance(1);   /* a wipe_on_backspace wipe is still a backspace */
             lock_render_all();
         }
         return;
@@ -454,5 +498,6 @@ void lock_on_key(Widget *w, uint32_t key, uint32_t state, uint32_t mods) {
     memcpy(ls.input + ls.input_len, enc, n);
     ls.input_len += n;
     ls.input[ls.input_len] = 0;
+    hl_advance(0);
     lock_render_all();
 }

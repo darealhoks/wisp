@@ -7,7 +7,7 @@
  * updates via NewIcon/NewTitle/NewStatus; nothing here polls.
  *
  * Right-click opens the item's com.canonical.dbusmenu in the DSL's own menu
- * surface (see the dbusmenu section below); items without a Menu property
+ * surface (dbusmenu.c); items without a Menu property
  * fall back to SNI's SecondaryActivate. Left-click sends Activate, and opens
  * that same menu when the item has no Activate to send it to.
  *
@@ -41,6 +41,7 @@ typedef struct {
     uint32_t icon[TRAY_ICON_PX * TRAY_ICON_PX];
     int has_icon;
     int is_menu;        /* ItemIsMenu: left-click means "open my menu" */
+    int has_att_icon;   /* app supplied an AttentionIcon{Name,Pixmap} */
 } Item;
 
 static Item items[TRAY_MAX];
@@ -67,9 +68,25 @@ static Item *at(int i) {
 const char *tray_title(int i)  { Item *t = at(i); return t ? t->title  : ""; }
 const char *tray_id(int i)     { Item *t = at(i); return t ? t->id     : ""; }
 const char *tray_status(int i) { Item *t = at(i); return t ? t->status : ""; }
+int tray_has_attention_icon(int i) { Item *t = at(i); return t && t->has_att_icon; }
 const uint32_t *tray_icon(int i) {
     Item *t = at(i);
     return (t && t->has_icon) ? t->icon : NULL;
+}
+
+/* The seam dbusmenu.c talks to us across: it never sees an Item. */
+const char *tray_service(int i)  { Item *t = at(i); return t ? t->service  : ""; }
+const char *tray_menu_path(int i){ Item *t = at(i); return t ? t->menu     : ""; }
+const char *tray_icon_dir(int i) { Item *t = at(i); return t ? t->icon_dir : ""; }
+int tray_slot_of_service(const char *service) {
+    for (int i = 0; i < TRAY_MAX; i++)
+        if (!strcmp(items[i].service, service)) return i;
+    return -1;
+}
+/* A signal's sender may be the item's unique name or its well-known one. */
+int tray_slot_is_sender(int i, const char *sender) {
+    Item *t = at(i);
+    return t && sender && (!strcmp(t->owner, sender) || !strcmp(t->service, sender));
 }
 
 static void drop_slot(int i) {
@@ -82,11 +99,11 @@ static void drop_slot(int i) {
 /* Icon decode                                                         */
 /* ================================================================== */
 
-/* Box-average `src` down to TRAY_ICON_PX and premultiply: blit_argb wants a
+/* Box-average `src` down to a `d`-px square and premultiply: blit_argb wants a
  * premultiplied square at logical size, SNI ships loose ARGB32 at whatever
  * size the app chose. Averaging before premultiplying is slightly wrong on
  * hard alpha edges — invisible at 16 px. */
-static void icon_scale(Item *it, const uint8_t *src, int sw, int sh) {
+static void icon_scale(uint32_t *dst, int d, const uint8_t *src, int sw, int sh) {
     /* Apps bake wildly different margins into their icons, so scaling the raw
      * bitmap makes one item look half the size of the next. Scale the alpha
      * bounding box instead, squared off around its centre so nothing distorts
@@ -104,11 +121,11 @@ static void icon_scale(Item *it, const uint8_t *src, int sw, int sh) {
     int bw = bx1 - bx0 + 1, bh = by1 - by0 + 1;
     int side = bw > bh ? bw : bh;
     int ox = bx0 + (bw - side) / 2, oy = by0 + (bh - side) / 2;
-    for (int y = 0; y < TRAY_ICON_PX; y++) {
-        int y0 = oy + y * side / TRAY_ICON_PX, y1 = oy + (y + 1) * side / TRAY_ICON_PX;
+    for (int y = 0; y < d; y++) {
+        int y0 = oy + y * side / d, y1 = oy + (y + 1) * side / d;
         if (y1 <= y0) y1 = y0 + 1;
-        for (int x = 0; x < TRAY_ICON_PX; x++) {
-            int x0 = ox + x * side / TRAY_ICON_PX, x1 = ox + (x + 1) * side / TRAY_ICON_PX;
+        for (int x = 0; x < d; x++) {
+            int x0 = ox + x * side / d, x1 = ox + (x + 1) * side / d;
             if (x1 <= x0) x1 = x0 + 1;
             uint32_t a = 0, r = 0, g = 0, b = 0, n = 0;
             for (int j = y0 < 0 ? 0 : y0; j < y1 && j < sh; j++) {
@@ -118,14 +135,13 @@ static void icon_scale(Item *it, const uint8_t *src, int sw, int sh) {
                     a += p[0]; r += p[1]; g += p[2]; b += p[3]; n++;
                 }
             }
-            uint32_t *dst = &it->icon[y * TRAY_ICON_PX + x];
-            if (!n) { *dst = 0; continue; }
+            uint32_t *o = &dst[y * d + x];
+            if (!n) { *o = 0; continue; }
             a /= n; r /= n; g /= n; b /= n;
-            *dst = (a << 24) | ((r * a / 255) << 16)
-                             | ((g * a / 255) << 8) | (b * a / 255);
+            *o = (a << 24) | ((r * a / 255) << 16)
+                           | ((g * a / 255) << 8) | (b * a / 255);
         }
     }
-    it->has_icon = 1;
 }
 
 /* Prefer the smallest strike at or above our target, else the largest one. */
@@ -135,21 +151,22 @@ static int icon_better(int w, int bw) {
     return ok ? w < bw : w > bw;
 }
 
-/* IconPixmap: a(iiay), width/height/ARGB32-in-network-order. */
-static void parse_pixmap(R *r, Item *it) {
+/* Icon{,Attention,Overlay}Pixmap: a(iiay), w/h/ARGB32-in-network-order.
+ * Scales the best strike into `dst` (a `d`-px square); returns 1 if it wrote. */
+static int parse_pixmap(R *r, uint32_t *dst, int d) {
     uint32_t alen = ru32(r);
-    if (!r->ok) return;
+    if (!r->ok) return 0;
     ralign(r, 8);
     int64_t end = (int64_t)r->pos + (int64_t)alen;
-    if (end > r->len) { r->ok = 0; return; }
+    if (end > r->len) { r->ok = 0; return 0; }
     const uint8_t *best = NULL; int bw = 0, bh = 0;
     while (r->pos < end && r->ok) {
         ralign(r, 8);
         int32_t w = ri32(r), h = ri32(r);
         uint32_t blen = ru32(r);
-        if (!r->ok) return;
+        if (!r->ok) return 0;
         int64_t bend = (int64_t)r->pos + (int64_t)blen;
-        if (bend > r->len) { r->ok = 0; return; }
+        if (bend > r->len) { r->ok = 0; return 0; }
         const uint8_t *px = r->b + r->pos;
         r->pos = (int)bend;
         /* 512 px caps the scaling work a hostile (or just KDE-ish) peer can
@@ -159,8 +176,9 @@ static void parse_pixmap(R *r, Item *it) {
             (!best || icon_better(w, bw))) { best = px; bw = w; bh = h; }
     }
     r->pos = (int)end;
-    /* Drop the remembered name: a later IconName must re-decode over us. */
-    if (best) { icon_scale(it, best, bw, bh); it->icon_name[0] = 0; }
+    if (!best) return 0;
+    icon_scale(dst, d, best, bw, bh);
+    return 1;
 }
 
 /* ================================================================== */
@@ -169,31 +187,94 @@ static void parse_pixmap(R *r, Item *it) {
 
 /* IconName + IconThemePath → a themed PNG, box-scaled like a pixmap would be.
  * Most GTK/Qt items ship only a name, so without this the row is all text. */
-static void load_named_icon(Item *it, const char *name) {
+static int load_named_icon(const char *name, const char *dir, uint32_t *dst, int d) {
     char path[512];
-    /* Record the attempt even if it fails, so a miss isn't re-stat'd on every
-     * NewIcon and a stale name can never match a newly-set one. */
-    snprintf(it->icon_name, sizeof it->icon_name, "%s", name);
-    if (!image_find_icon(name, it->icon_dir, path, sizeof path)) return;
+    if (!image_find_icon(name, dir, path, sizeof path)) return 0;
     int w = 0, h = 0;
-    uint8_t *px = image_load(path, &w, &h);
-    if (!px) return;
-    /* Mirror of the pixmap cap: bounds the swizzle+scale a hostile
+    /* 512, the pixmap path's cap: bounds the swizzle+scale a hostile
      * IconThemePath can buy with a 16384² PNG. */
-    if (w > 512 || h > 512) { image_free(px); return; }
+    uint8_t *px = image_load_max(path, &w, &h, 512);
+    if (!px || w <= 0 || h <= 0) { image_free(px); return 0; }
     /* image_load gives RGBA8; icon_scale reads ARGB-in-network-order (a,r,g,b)
      * as SNI ships it, so swing the channels into that order in place. */
     for (size_t i = 0; i < (size_t)w * h; i++) {
         uint8_t *p = px + i * 4, t = p[3];
         p[3] = p[2]; p[2] = p[1]; p[1] = p[0]; p[0] = t;
     }
-    icon_scale(it, px, w, h);
+    icon_scale(dst, d, px, w, h);
     image_free(px);
+    return 1;
+}
+
+/* Scratch, not per-item: an app that declares no attention/overlay icon must
+ * not cost 2 more TRAY_ICON_PX² buffers × TRAY_MAX. One decode is live at a
+ * time (parse_item_props runs to completion inside one reply callback), so a
+ * single shared set of squares carries them from the dict pass to the
+ * resolution below. */
+static uint32_t px_base[TRAY_ICON_PX * TRAY_ICON_PX];
+static uint32_t px_att[TRAY_ICON_PX * TRAY_ICON_PX];
+static uint32_t px_ovr[TRAY_OVERLAY_PX * TRAY_OVERLAY_PX];
+
+/* Premultiplied src-over of the badge into the bottom-right of the item's
+ * square. Not blit_argb(): that one targets a screen buffer and applies the
+ * output scale factor, while both sides here are logical-size squares. */
+static void overlay_composite(uint32_t *icon) {
+    int off = TRAY_ICON_PX - TRAY_OVERLAY_PX;
+    for (int y = 0; y < TRAY_OVERLAY_PX; y++) {
+        uint32_t *drow = icon + (size_t)(off + y) * TRAY_ICON_PX + off;
+        const uint32_t *srow = px_ovr + (size_t)y * TRAY_OVERLAY_PX;
+        for (int x = 0; x < TRAY_OVERLAY_PX; x++) {
+            uint32_t sp = srow[x], a = sp >> 24;
+            if (!a) continue;
+            if (a == 255) { drow[x] = sp; continue; }
+            uint32_t inv = 255 - a, dv = drow[x];
+            drow[x] = ((dv >> 24)        * inv / 255 + a)                 << 24
+                    | ((dv >> 16 & 0xff) * inv / 255 + (sp >> 16 & 0xff)) << 16
+                    | ((dv >>  8 & 0xff) * inv / 255 + (sp >>  8 & 0xff)) << 8
+                    | ((dv       & 0xff) * inv / 255 + (sp       & 0xff));
+        }
+    }
+}
+
+/* Pick the pixels the item shows now and stamp the overlay onto them.
+ * NeedsAttention substituting the whole icon is SNI's own rule, not config
+ * policy, so it resolves here: a `.wisp` expressing it would have to repeat
+ * the same rule verbatim, and keeping both variants live would cost every
+ * item a second square. `it.has_attention_icon` is what the DSL gets — the
+ * config decides whether to add its own urgent styling on top. */
+static void resolve_icon(Item *it, int got_base, int got_att, int got_ovr,
+                         const char *name, const char *att, const char *ovr) {
+    int attn = !strcmp(it->status, "NeedsAttention") && (got_att || att[0]);
+    const uint32_t *pm = attn ? (got_att ? px_att : NULL)
+                              : (got_base ? px_base : NULL);
+    const char *nm = attn ? att : name;
+    int wrote_base = 0;          /* did this call actually (re)write it->icon? */
+    if (pm) {
+        memcpy(it->icon, pm, sizeof it->icon);
+        it->has_icon = 1;
+        it->icon_name[0] = 0;    /* a later name must re-decode over us */
+        wrote_base = 1;
+    } else if (nm[0] && (!it->has_icon || strcmp(nm, it->icon_name))) {
+        /* Record the attempt even if it fails, so a miss isn't re-stat'd on
+         * every NewIcon and a stale name can never match a newly-set one. */
+        snprintf(it->icon_name, sizeof it->icon_name, "%s", nm);
+        if (load_named_icon(nm, it->icon_dir, it->icon, TRAY_ICON_PX))
+            it->has_icon = wrote_base = 1;
+    }
+    if (!got_ovr && ovr[0])
+        got_ovr = load_named_icon(ovr, it->icon_dir, px_ovr, TRAY_OVERLAY_PX);
+    /* Composite only onto a square this call produced: the badge is burnt in,
+     * so re-badging a stale base darkens it further on every NewIcon. */
+    if (!got_ovr || !wrote_base) return;
+    overlay_composite(it->icon);
+    /* The badge is burnt into the base square, so the name dedup above must
+     * not skip the next decode — it would composite a second time. */
+    it->icon_name[0] = 0;
 }
 
 static void parse_item_props(R *r, Item *it) {
-    char name[64] = "";
-    int pixmap = 0;
+    char name[64] = "", att[64] = "", ovr[64] = "";
+    int got_base = 0, got_att = 0, got_ovr = 0;
     uint32_t len = ru32(r);
     if (!r->ok) return;
     ralign(r, 8);
@@ -212,22 +293,28 @@ static void parse_item_props(R *r, Item *it) {
             snprintf(it->status, sizeof it->status, "%s", rstr(r));
         else if (!strcmp(key, "IconName") && !strcmp(vs, "s"))
             snprintf(name, sizeof name, "%s", rstr(r));
+        else if (!strcmp(key, "AttentionIconName") && !strcmp(vs, "s"))
+            snprintf(att, sizeof att, "%s", rstr(r));
+        else if (!strcmp(key, "OverlayIconName") && !strcmp(vs, "s"))
+            snprintf(ovr, sizeof ovr, "%s", rstr(r));
         else if (!strcmp(key, "Menu") && !strcmp(vs, "o"))
             snprintf(it->menu, sizeof it->menu, "%s", rstr(r));
         else if (!strcmp(key, "ItemIsMenu") && !strcmp(vs, "b"))
             it->is_menu = ru32(r) != 0;
         else if (!strcmp(key, "IconThemePath") && !strcmp(vs, "s"))
             snprintf(it->icon_dir, sizeof it->icon_dir, "%s", rstr(r));
-        else if (!strcmp(key, "IconPixmap") && !strcmp(vs, "a(iiay)")) {
-            parse_pixmap(r, it);
-            pixmap = it->has_icon;
-        }
+        else if (!strcmp(key, "IconPixmap") && !strcmp(vs, "a(iiay)"))
+            got_base = parse_pixmap(r, px_base, TRAY_ICON_PX);
+        else if (!strcmp(key, "AttentionIconPixmap") && !strcmp(vs, "a(iiay)"))
+            got_att = parse_pixmap(r, px_att, TRAY_ICON_PX);
+        else if (!strcmp(key, "OverlayIconPixmap") && !strcmp(vs, "a(iiay)"))
+            got_ovr = parse_pixmap(r, px_ovr, TRAY_OVERLAY_PX);
         else { const char *s = vs; skip_val(r, &s, 0); }
     }
-    /* A pixmap always wins; otherwise decode the named icon at most once per
-     * distinct name (NewIcon refetches every property, not just the icon). */
-    if (!pixmap && name[0] && (!it->has_icon || strcmp(name, it->icon_name)))
-        load_named_icon(it, name);
+    /* GetAll always carries every property, so an item that dropped its
+     * attention icon clears the flag on the next refetch. */
+    it->has_att_icon = got_att || att[0] != 0;
+    resolve_icon(it, got_base, got_att, got_ovr, name, att, ovr);
     /* Apps that only set Id leave Title empty; the row would render blank. */
     /* memcpy, not snprintf: gcc's -Wrestrict can't see that two fields of the
      * same struct don't alias. Both are char[64] and id is NUL-terminated. */
@@ -473,7 +560,8 @@ static void on_name_owner_changed(const char *sender, const char *path,
     }
 }
 
-/* NewIcon / NewTitle / NewStatus carry no payload worth trusting — refetch. */
+/* NewIcon / NewTitle / NewStatus / NewAttentionIcon / NewOverlayIcon carry no
+ * payload worth trusting — refetch. */
 static void on_item_changed(const char *sender, const char *path,
                             const uint8_t *body, int body_len, const char *sig) {
     (void)body; (void)body_len; (void)sig;
@@ -501,6 +589,9 @@ void tray_init(void) {
     dbus_subscribe(SNI_IFACE, "NewIcon",   on_item_changed);
     dbus_subscribe(SNI_IFACE, "NewTitle",  on_item_changed);
     dbus_subscribe(SNI_IFACE, "NewStatus", on_item_changed);
+    dbus_subscribe(SNI_IFACE, "NewAttentionIcon", on_item_changed);
+    dbus_subscribe(SNI_IFACE, "NewOverlayIcon",   on_item_changed);
+    dbusmenu_init();
 }
 
 void tray_on_bus_up(void) {
@@ -555,225 +646,4 @@ void tray_click(int i, const char *member) {
     if (want_reply) { if (!dbus_call(&m, on_activate_reply, u)) free(u); }
     else send_msg(&m);
     free(b.b);
-}
-
-/* ================================================================== */
-/* com.canonical.dbusmenu client                                       */
-/* ================================================================== */
-
-/* One level of the item's menu at a time, flattened into the DSL's menu
- * surface — a submenu row reopens the same popup at that id rather than
- * stacking a second one. */
-
-#define DBM_IFACE "com.canonical.dbusmenu"
-#define DBM_ROWS  32
-
-typedef struct {
-    int32_t id;
-    int enabled, visible, sep, submenu;
-    char label[ITEM_MAX];
-} Row;
-
-static Row  rows[DBM_ROWS];
-static int  n_rows;
-static char open_service[64], open_path[96];   /* owner of the popup on screen */
-static ClickAnchor menu_anchor;                /* cell that asked for it */
-/* Toggle bookkeeping: open_item is the slot whose popup is live; closed_item/
- * closed_ms remember a just-dismissed popup so the click that dismissed it
- * (click-off fires before the icon's exec reaches us) doesn't reopen it. */
-static int open_item = -1, closed_item = -1;
-static uint64_t closed_ms;
-
-static void dbm_open(const char *service, const char *path, int32_t parent);
-
-/* "_Open" is a GTK mnemonic, "__" is a literal underscore. */
-static void strip_mnemonic(char *s) {
-    char *d = s;
-    for (const char *p = s; *p; p++) {
-        if (*p == '_' && p[1] == '_') p++;
-        else if (*p == '_') continue;
-        *d++ = *p;
-    }
-    *d = 0;
-}
-
-static void parse_row_props(R *r, Row *row) {
-    uint32_t len = ru32(r);
-    if (!r->ok) return;
-    ralign(r, 8);
-    int64_t end = (int64_t)r->pos + (int64_t)len;
-    if (end > r->len) { r->ok = 0; return; }
-    while (r->pos < end && r->ok) {
-        ralign(r, 8);
-        const char *key = rstr(r);
-        const char *vs  = rsig(r);
-        if (!r->ok) return;
-        if (!strcmp(key, "label") && !strcmp(vs, "s")) {
-            snprintf(row->label, sizeof row->label, "%s", rstr(r));
-            strip_mnemonic(row->label);
-        }
-        else if (!strcmp(key, "enabled") && !strcmp(vs, "b")) row->enabled = ru32(r) != 0;
-        else if (!strcmp(key, "visible") && !strcmp(vs, "b")) row->visible = ru32(r) != 0;
-        else if (!strcmp(key, "type") && !strcmp(vs, "s"))
-            row->sep = !strcmp(rstr(r), "separator");
-        else if (!strcmp(key, "children-display") && !strcmp(vs, "s"))
-            row->submenu = !strcmp(rstr(r), "submenu");
-        else { const char *s = vs; skip_val(r, &s, 0); }
-    }
-}
-
-/* (ia{sv}av): id, properties, children as variants of the same struct.
- * `collect` is only set for the root — we ask for depth 1, so the children's
- * own child arrays come back empty. */
-static void parse_layout_item(R *r, Row *row, int collect) {
-    ralign(r, 8);
-    row->id = ri32(r);
-    parse_row_props(r, row);
-    uint32_t alen = ru32(r);
-    if (!r->ok) return;
-    ralign(r, 8);
-    int64_t end = (int64_t)r->pos + (int64_t)alen;
-    if (end > r->len) { r->ok = 0; return; }
-    while (r->pos < end && r->ok) {
-        const char *sg = rsig(r);
-        if (!r->ok) return;
-        if (collect && !strcmp(sg, "(ia{sv}av)") && n_rows < DBM_ROWS) {
-            Row *ch = &rows[n_rows];
-            memset(ch, 0, sizeof *ch);
-            ch->visible = ch->enabled = 1;     /* both default true in the spec */
-            parse_layout_item(r, ch, 0);
-            /* ponytail: separators are dropped, not drawn as a rule — needs a
-             * row kind in the menu model the DSL can style. */
-            if (r->ok && ch->visible && !ch->sep && ch->label[0]) n_rows++;
-        } else { const char *s = sg; skip_val(r, &s, 0); }
-    }
-    r->pos = (int)end;
-}
-
-static void dbm_event(int32_t id) {
-    W b = {0};
-    wu32(&b, (uint32_t)id);
-    wstr(&b, "clicked");
-    wsig(&b, "s"); wstr(&b, "");         /* no data for a plain click */
-    wu32(&b, 0);                         /* timestamp; apps accept 0 */
-    Msg m = { .type = DBUS_TYPE_METHOD_CALL,
-              .flags = 1,
-              .path = open_path,
-              .interface = DBM_IFACE,
-              .member = "Event",
-              .destination = open_service,
-              .signature = "isvu",
-              .body = b.b, .body_len = b.pos };
-    send_msg(&m);
-    free(b.b);
-}
-
-/* `tray_item.menu_open` in the DSL: lets the config keep the clicked cell
- * highlighted for the popup's whole lifetime, not just the press. */
-int tray_menu_is_open(int i) {
-    return open_item >= 0 && open_item == i;
-}
-
-static void on_menu_pick(int idx) {
-    /* Arm the reopen-swallow only when the close came from the click-off
-     * press — that same click's exec is still in flight and must not reopen
-     * the popup. Esc / pick / focus-loss closes have no trailing click; arming
-     * on those eats the user's next (legitimate) click on the icon. */
-    if (menu_clickoff) { closed_item = open_item; closed_ms = now_ms(); }
-    open_item = -1;
-    changed();
-    if (idx < 0 || idx >= n_rows) return;
-    if (rows[idx].submenu) { dbm_open(open_service, open_path, rows[idx].id); return; }
-    if (rows[idx].enabled) dbm_event(rows[idx].id);
-}
-
-static void on_layout(const char *sender, R *r, const char *sig,
-                      int is_err, void *ud) {
-    (void)sender;
-    char *path = ud;
-    char *service = path + 96;
-    n_rows = 0;
-    if (!is_err && sig && !strcmp(sig, "u(ia{sv}av)")) {
-        ru32(r);                         /* layout revision */
-        Row root = { .visible = 1, .enabled = 1 };
-        parse_layout_item(r, &root, 1);
-    }
-    if (n_rows > 0) {
-        static char labels[DBM_ROWS][ITEM_MAX];
-        const char *title = "";
-        int slot = -1;
-        for (int i = 0; i < n_rows; i++)
-            memcpy(labels[i], rows[i].label, sizeof labels[i]);
-        for (int i = 0; i < TRAY_MAX; i++)
-            if (!strcmp(items[i].service, service)) { title = items[i].title; slot = i; break; }
-        /* The popup lands two round trips after the click, well past
-         * menu_create's freshness window — restamp the rect that asked. */
-        if (menu_anchor.out) { click_anchor = menu_anchor; click_anchor.ms = now_ms(); }
-        snprintf(open_path, sizeof open_path, "%s", path);
-        snprintf(open_service, sizeof open_service, "%s", service);
-        /* `menu tray {}` is a look-only decl: it owns no rows, just this
-         * popup's renderer and geometry. Absent → the launcher default. */
-        const WispMenu *style = wisp_menu_find("tray");
-        if (style) menu_set_geom(&style->geom);
-        /* menu_create cancels any live menu, which fires the old pick hook and
-         * clears open_item — so claim it only after the new popup exists. */
-        Widget *mw = menu_create(title, labels, n_rows, -1);
-        if (mw) {
-            if (style && style->render) mw->s.menu.render = style->render;
-            menu_set_pick_hook(on_menu_pick);
-            open_item = slot;
-            changed();                     /* menu_open flipped for this item */
-        }
-    }
-    free(path);
-}
-
-static void dbm_open(const char *service, const char *path, int32_t parent) {
-    /* ud carries path+service through the reply; the slot index can shift. */
-    char *ud = calloc(1, 96 + 64);
-    if (!ud) return;
-    snprintf(ud, 96, "%s", path);
-    snprintf(ud + 96, 64, "%s", service);
-
-    /* AboutToShow first: apps (Steam included) fill the menu lazily. Sent
-     * no-reply — its answer only says "layout changed", and the bus keeps
-     * our two calls in order anyway. */
-    W a = {0};
-    wu32(&a, (uint32_t)parent);
-    Msg s = { .type = DBUS_TYPE_METHOD_CALL, .flags = 1, .path = path,
-              .interface = DBM_IFACE, .member = "AboutToShow",
-              .destination = service, .signature = "i",
-              .body = a.b, .body_len = a.pos };
-    send_msg(&s);
-    free(a.b);
-
-    static const char *PROPS[] = { "label", "enabled", "visible",
-                                   "type", "children-display" };
-    W b = {0};
-    wu32(&b, (uint32_t)parent);
-    wu32(&b, 1);                         /* depth: this level only */
-    int lp = b.pos;
-    wu32(&b, 0);
-    int start = b.pos;
-    for (int i = 0; i < 5; i++) wstr(&b, PROPS[i]);
-    uint32_t alen = (uint32_t)(b.pos - start);
-    memcpy(b.b + lp, &alen, 4);
-    Msg m = { .type = DBUS_TYPE_METHOD_CALL, .path = path,
-              .interface = DBM_IFACE, .member = "GetLayout",
-              .destination = service, .signature = "iias",
-              .body = b.b, .body_len = b.pos };
-    if (!dbus_call(&m, on_layout, ud)) free(ud);
-    free(b.b);
-}
-
-void tray_menu(int i) {
-    Item *t = at(i);
-    if (!t) return;
-    if (open_item == i) { menu_cancel_all(); return; }              /* toggle */
-    if (closed_item == i && now_ms() - closed_ms < 400) {           /* toggle, click-off ran first */
-        closed_item = -1; return;
-    }
-    if (!t->menu[0]) { tray_click(i, "SecondaryActivate"); return; }
-    menu_anchor = click_anchor;
-    dbm_open(t->service, t->menu, 0);
 }

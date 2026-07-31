@@ -286,7 +286,7 @@ static Widget *apps_push(Widget *w) {
         memcpy(items[i], apps[i].name, ITEM_MAX);
         ranks[i] = apps[i].count;
     }
-    if (w) menu_update_items(w, items, n_apps);
+    if (w) menu_update_items(w, items, n_apps, NULL, NULL, 0);
     else   w = menu_create(NULL, items, n_apps, -1);
     free(items);
     if (w) {

@@ -312,15 +312,19 @@ static const char USAGE[] =
 "  menu-cancel               close any open menu\n"
 "  apps                      open the application launcher\n"
 "  menu <name>               open a menu declared in the .wisp\n"
+"  menu --at x,w[,below] ... hang the menu under an explicit rect (logical px)\n"
 "\n"
 "osd / notifications\n"
 "  osd <slot> <summary> [progress] [icon-cp] [muted]\n"
 "                            progress -1 omits the bar; icon-cp is hex; same\n"
 "                            slot replaces the previous slab\n"
+"  tooltip <x> <width> <below> <text> | tooltip hide\n"
 "  notify <urgency> <summary> [body] [icon-cp] [timeout-ms]\n"
 "                            urgency 0|1|2; timeout -1 default, 0 sticky\n"
 "  osd-clear                 dismiss everything on screen\n"
 "  dnd on|off|toggle|status  do not disturb\n"
+"  notif open|close|toggle|status    show/hide the notification center panel\n"
+"  notif dismiss <id> | notif clear  drop one history row (note.id) or all\n"
 "\n"
 "media\n"
 "  volume up|down|mute       also shows the OSD\n"
@@ -409,6 +413,9 @@ int main(int argc, char **argv) {
     }
     /* `dnd status` → exit 0 if DnD active (mirrors HUD probe contract). */
     if (argc >= 3 && !strcmp(argv[1], "dnd") && !strcmp(argv[2], "status"))
+        return strcmp(rep, "on") == 0 ? 0 : 1;
+    /* `notif status` → exit 0 if the center is open (same contract as dnd). */
+    if (argc >= 3 && !strcmp(argv[1], "notif") && !strcmp(argv[2], "status"))
         return strcmp(rep, "on") == 0 ? 0 : 1;
     /* `hide status` → exit 0 if surfaces hidden (same contract as dnd). */
     if (argc >= 3 && !strcmp(argv[1], "hide") && !strcmp(argv[2], "status"))

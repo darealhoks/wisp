@@ -6,6 +6,7 @@
  * destination is premultiplied — which holds because every overwrite path below
  * runs its raw color through premul() first. */
 #include "wisp.h"
+#include "render_px.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -13,35 +14,42 @@
 
 /* Every primitive below takes LOGICAL geometry (including sw/sh — callers pass
  * w->w/w->h) and multiplies it by the output scale on entry; the buffer itself
- * is physical. Single-threaded, so one file-static is enough. At scale 1 the
- * multiplies fold away to the previous behaviour. */
-static int cur_s120 = 120;
+ * is physical. Single-threaded, so one global is enough (render_arc.c reads
+ * it through render_px.h). At scale 1 the multiplies fold away. */
+int render_s120 = 120;
 
-void render_set_scale(int s120) { cur_s120 = s120 < 120 ? 120 : s120; }
+void render_set_scale(int s120) { render_s120 = s120 < 120 ? 120 : s120; }
 
-/* Logical -> physical. Rounded so a 1.5x edge lands on the same pixel the
- * neighbouring primitive computed for it. Must FLOOR, not truncate: C division
- * rounds toward zero, which shifts every negative coordinate a pixel down —
- * a surface sliding out past its buffer top (OSD retract) then paints one row
- * below the extent its caller computed, outside any dirty band, leaving a
- * one-pixel trail of its bottom border per frame. */
-static inline int SC(int v) {
-    int n = v * cur_s120 + 60;
-    return n >= 0 ? n / 120 : -((-n + 119) / 120);
+int render_clip_y0 = 0, render_clip_y1 = 1 << 28;
+
+/* Logical row band; callers pass the container rect they are drawing into. */
+void render_set_clip(int y0, int y1) { render_clip_y0 = SC(y0); render_clip_y1 = SC(y1); }
+
+int render_clip_shaped = 0;
+int render_clip_x0 = 0, render_clip_x1 = 1 << 28, render_clip_sy0 = 0, render_clip_sy1 = 0;
+int render_clip_rtl = 0, render_clip_rtr = 0, render_clip_rbr = 0, render_clip_rbl = 0;
+
+/* Logical rounded rect content is additionally confined to. Radii are clamped to
+ * the half-extent like every other rrect primitive, so a caller can hand over the
+ * declared radius unclamped. */
+void render_set_clip_shape(int x, int y, int w, int h,
+                           int r_tl, int r_tr, int r_br, int r_bl) {
+    if (w <= 0 || h <= 0) { render_clip_shaped = 0; return; }
+    render_clip_x0 = SC(x); render_clip_x1 = SC(x + w);
+    render_clip_sy0 = SC(y); render_clip_sy1 = SC(y + h);
+    int rm = (render_clip_x1 - render_clip_x0) / 2;
+    int rmh = (render_clip_sy1 - render_clip_sy0) / 2;
+    if (rmh < rm) rm = rmh;
+    render_clip_rtl = SC(r_tl) > rm ? rm : SC(r_tl);
+    render_clip_rtr = SC(r_tr) > rm ? rm : SC(r_tr);
+    render_clip_rbr = SC(r_br) > rm ? rm : SC(r_br);
+    render_clip_rbl = SC(r_bl) > rm ? rm : SC(r_bl);
+    render_clip_shaped = 1;
 }
 
-/* floor(x/255) for x in [0, 0xffff]; exact, branchless. */
-#define DIV255(x) (((x) + 1 + ((x) >> 8)) >> 8)
-
-/* Premultiply a straight-alpha 0xAARRGGBB color. No-op for opaque colors. */
-static inline uint32_t premul(uint32_t c) {
-    uint32_t a = c >> 24;
-    if (a == 0xff) return c;
-    if (a == 0)    return 0;
-    uint32_t r = DIV255(((c >> 16) & 0xff) * a);
-    uint32_t g = DIV255(((c >> 8)  & 0xff) * a);
-    uint32_t b = DIV255(( c        & 0xff) * a);
-    return (a << 24) | (r << 16) | (g << 8) | b;
+void render_clip_reset(void) {
+    render_clip_y0 = 0; render_clip_y1 = 1 << 28;
+    render_clip_shaped = 0;
 }
 
 void clear_buf(uint32_t *px, int w, int h, uint32_t c) {
@@ -49,10 +57,12 @@ void clear_buf(uint32_t *px, int w, int h, uint32_t c) {
     c = premul(c);
     int n = w * h, i = 0;
     /* 64-bit pair stores when aligned (shm pools are page-aligned, but a slot
-     * with odd w*h can start 4-aligned) — ~2x over the scalar u32 loop at -Os. */
+     * with odd w*h can start 4-aligned) — ~2x over the scalar u32 loop at -Os.
+     * Through memcpy, not a uint64_t lvalue: the same buffer is read as uint32_t
+     * elsewhere and -fno-strict-aliasing is not on. Same store after inlining. */
     if (((uintptr_t)px & 7) == 0) {
         uint64_t cc = ((uint64_t)c << 32) | c;
-        for (; i + 2 <= n; i += 2) *(uint64_t *)(px + i) = cc;
+        for (; i + 2 <= n; i += 2) memcpy(px + i, &cc, 8);
     }
     for (; i < n; i++) px[i] = c;
 }
@@ -65,38 +75,6 @@ void clear_band(uint32_t *px, int w, int h, int y0, int y1, uint32_t c) {
     if (y1 > h) y1 = h;
     c = premul(c);
     for (int i = y0 * w; i < y1 * w; i++) px[i] = c;
-}
-
-/* src-over compositing of a straight (non-premultiplied) color modulated by
- * coverage alpha `a` onto one destination pixel. Matches the blend used by
- * fill_rect_rounded so all the AA primitives agree on edge color. */
-static inline void blend_over(uint32_t *dst, uint8_t cr, uint8_t cg, uint8_t cb, uint8_t a) {
-    if (!a) return;
-    if (a == 255) {
-        *dst = 0xff000000u | ((uint32_t)cr << 16) | ((uint32_t)cg << 8) | cb;
-        return;
-    }
-    uint32_t d = *dst;
-    uint8_t dr = (d >> 16) & 0xff, dg = (d >> 8) & 0xff, db = d & 0xff;
-    uint8_t da = (d >> 24) & 0xff;
-    uint32_t inv = 255 - a;
-    uint8_t or_ = DIV255(cr * a + dr * inv);
-    uint8_t og  = DIV255(cg * a + dg * inv);
-    uint8_t ob  = DIV255(cb * a + db * inv);
-    uint8_t oa  = a + DIV255(da * inv);
-    *dst = ((uint32_t)oa << 24) | ((uint32_t)or_ << 16) | ((uint32_t)og << 8) | ob;
-}
-
-/* Analytic 1px-wide anti-aliasing. `sd` is the signed distance (in pixels) from
- * the pixel CENTER to the filled region's boundary: negative inside, positive
- * outside. Coverage ramps linearly across the one-pixel band straddling the
- * edge — clamp(0.5 - sd). This resolves shallow-angle arc/edge transitions (the
- * tangent points where a corner arc runs nearly parallel to a straight edge)
- * that the old 2x2 supersampler quantised into chunky, non-monotone steps. One
- * sample per pixel, so it is also cheaper than the 4-sample grid it replaced. */
-static inline double cov_from_sd(double sd) {
-    double c = 0.5 - sd;
-    return c < 0.0 ? 0.0 : (c > 1.0 ? 1.0 : c);
 }
 
 /* Signed distance from (px,py) to a rounded box centered at (cx,cy) with
@@ -113,30 +91,6 @@ static inline double sd_rbox(double px, double py, double cx, double cy,
     double mx = ax > 0.0 ? ax : 0.0, my = ay > 0.0 ? ay : 0.0;
     double inner = ax > ay ? ax : ay; if (inner > 0.0) inner = 0.0;
     return sqrt(mx * mx + my * my) + inner - r;
-}
-
-/* Anti-aliased filled disc, analytic 1px AA, src-over composited.
- * Center may be fractional (knobs track sub-pixel positions). */
-void fill_circle(uint32_t *px, int sw, int sh, double cx, double cy, double r, uint32_t c) {
-    if (r <= 0) return;
-    sw = SC(sw); sh = SC(sh);
-    cx = SC(cx); cy = SC(cy); r = SC(r);
-    uint8_t ca = (c >> 24) & 0xff;
-    if (!ca) return;
-    uint8_t cr = (c >> 16) & 0xff, cg = (c >> 8) & 0xff, cb = c & 0xff;
-    int x0 = (int)(cx - r - 1); if (x0 < 0) x0 = 0;
-    int y0 = (int)(cy - r - 1); if (y0 < 0) y0 = 0;
-    int x1 = (int)(cx + r + 2); if (x1 > sw) x1 = sw;
-    int y1 = (int)(cy + r + 2); if (y1 > sh) y1 = sh;
-    for (int j = y0; j < y1; j++) {
-        uint32_t *row = px + j * sw;
-        for (int i = x0; i < x1; i++) {
-            double dx = (i + 0.5) - cx, dy = (j + 0.5) - cy;
-            double cov = cov_from_sd(sqrt(dx * dx + dy * dy) - r);
-            if (cov <= 0.0) continue;
-            blend_over(&row[i], cr, cg, cb, (uint8_t)(ca * cov + 0.5));
-        }
-    }
 }
 
 /* Soft drop-shadow of a rounded rectangle, composed in one pass from the
@@ -289,14 +243,16 @@ void draw_slider(uint32_t *px, int sw, int sh,
 
 /* Physical-coordinate core; the public entry points scale into it. */
 static void fill_rect_px(uint32_t *px, int sw, int sh, int x, int y, int w, int h, uint32_t c) {
-    int x0 = x < 0 ? 0 : x, y0 = y < 0 ? 0 : y;
+    int x0 = x < 0 ? 0 : x, y0 = CLIP_Y0(y < 0 ? 0 : y);
     int x1 = x + w > sw ? sw : x + w;
-    int y1 = y + h > sh ? sh : y + h;
+    int y1 = CLIP_Y1(y + h > sh ? sh : y + h);
     if (x0 >= x1 || y0 >= y1) return;
     c = premul(c);   /* overwrite must store a valid premultiplied pixel */
     for (int j = y0; j < y1; j++) {
         uint32_t *row = px + j * sw;
-        for (int i = x0; i < x1; i++) row[i] = c;
+        int i0 = x0, i1 = x1;
+        render_clip_row(j, &i0, &i1);
+        for (int i = i0; i < i1; i++) row[i] = c;
     }
 }
 
@@ -309,13 +265,15 @@ void fill_rect_over(uint32_t *px, int sw, int sh, int x, int y, int w, int h, ui
     if (!a) return;
     if (a == 255) { fill_rect(px, sw, sh, x, y, w, h, c); return; }
     sw = SC(sw); sh = SC(sh); x = SC(x); y = SC(y); w = SC(w); h = SC(h);
-    int x0 = x < 0 ? 0 : x, y0 = y < 0 ? 0 : y;
-    int x1 = x + w > sw ? sw : x + w, y1 = y + h > sh ? sh : y + h;
+    int x0 = x < 0 ? 0 : x, y0 = CLIP_Y0(y < 0 ? 0 : y);
+    int x1 = x + w > sw ? sw : x + w, y1 = CLIP_Y1(y + h > sh ? sh : y + h);
     if (x0 >= x1 || y0 >= y1) return;
     uint8_t cr = (c >> 16) & 0xff, cg = (c >> 8) & 0xff, cb = c & 0xff;
     for (int j = y0; j < y1; j++) {
         uint32_t *row = px + j * sw;
-        for (int i = x0; i < x1; i++) blend_over(&row[i], cr, cg, cb, a);
+        int i0 = x0, i1 = x1;
+        render_clip_row(j, &i0, &i1);
+        for (int i = i0; i < i1; i++) blend_over(&row[i], cr, cg, cb, a);
     }
 }
 
@@ -339,15 +297,18 @@ void draw_sparkline(uint32_t *px, int sw, int sh, int x, int y, int w, int h,
 void blit_argb(uint32_t *px, int sw, int sh, int x, int y,
                const uint32_t *src, int s) {
     if (!src || s <= 0) return;
-    int W = SC(sw), H = SC(sh), x0 = SC(x), y0 = SC(y), d = SC(s);
+    int W = SC(sw), H = CLIP_Y1(SC(sh)), x0 = SC(x), y0 = SC(y), d = SC(s);
+    int lo = CLIP_Y0(0);
     for (int j = 0; j < d; j++) {
         int dy = y0 + j;
-        if (dy < 0 || dy >= H) continue;
+        if (dy < lo || dy >= H) continue;
         const uint32_t *srow = src + (j * s / d) * s;
         uint32_t *drow = px + (size_t)dy * W;
+        int xlo = 0, xhi = W;
+        render_clip_row(dy, &xlo, &xhi);
         for (int i = 0; i < d; i++) {
             int dx = x0 + i;
-            if (dx < 0 || dx >= W) continue;
+            if (dx < xlo || dx >= xhi) continue;
             uint32_t sp = srow[i * s / d], a = sp >> 24;
             if (!a) continue;
             if (a == 255) { drow[dx] = sp; continue; }
@@ -372,9 +333,9 @@ void fill_rect_rounded(uint32_t *px, int sw, int sh,
         fill_rect_px(px, sw, sh, x, y, w, h, c);
         return;
     }
-    int x0 = x < 0 ? 0 : x, y0 = y < 0 ? 0 : y;
+    int x0 = x < 0 ? 0 : x, y0 = CLIP_Y0(y < 0 ? 0 : y);
     int x1 = x + w > sw ? sw : x + w;
-    int y1 = y + h > sh ? sh : y + h;
+    int y1 = CLIP_Y1(y + h > sh ? sh : y + h);
     if (x0 >= x1 || y0 >= y1) return;
 
     /* Clamp radii to half-extent. */
@@ -387,11 +348,29 @@ void fill_rect_rounded(uint32_t *px, int sw, int sh,
 
     uint8_t cr = (c >> 16) & 0xff, cg = (c >> 8) & 0xff, cb = c & 0xff;
     uint8_t ca = (c >> 24) & 0xff;
+    int r_top = r_tl > r_tr ? r_tl : r_tr;
+    int r_bot = r_bl > r_br ? r_bl : r_br;
 
     for (int j = y0; j < y1; j++) {
         int ly = j - y;          /* local row within rect */
         uint32_t *row = px + j * sw;
-        for (int i = x0; i < x1; i++) {
+        int i0 = x0, i1 = x1;
+        render_clip_row(j, &i0, &i1);
+        /* Rows clear of every corner are fully covered — a menu/panel bg is
+         * ~98% such rows, so they take paired stores instead of the per-pixel
+         * corner-select + blend. Opaque only; translucent falls through. */
+        if (ca == 255 && ly >= r_top && ly < h - r_bot) {
+            int i = i0;
+            if (((uintptr_t)(row + i) & 7) == 0) {
+                uint64_t cc = ((uint64_t)c << 32) | c;
+                /* memcpy, not a uint64_t lvalue — the corner branches below read
+                 * this same buffer as uint32_t (strict aliasing is on). */
+                for (; i + 2 <= i1; i += 2) memcpy(row + i, &cc, 8);
+            }
+            for (; i < i1; i++) row[i] = c;
+            continue;
+        }
+        for (int i = i0; i < i1; i++) {
             int lx = i - x;      /* local col within rect */
             /* Pick the corner this pixel belongs to (if any). */
             int r = 0; double ccx = 0, ccy = 0;
@@ -477,13 +456,15 @@ void fill_rounded_clipped(uint32_t *px, int sw, int sh,
     uint8_t ca = (c >> 24) & 0xff;
     if (!ca) return;
     uint8_t cr = (c >> 16) & 0xff, cg = (c >> 8) & 0xff, cb = c & 0xff;
-    int x0 = x < 0 ? 0 : x, y0 = y < 0 ? 0 : y;
+    int x0 = x < 0 ? 0 : x, y0 = CLIP_Y0(y < 0 ? 0 : y);
     int x1 = x + w > sw ? sw : x + w;
-    int y1 = y + h > sh ? sh : y + h;
+    int y1 = CLIP_Y1(y + h > sh ? sh : y + h);
     if (x0 >= x1 || y0 >= y1) return;
     for (int j = y0; j < y1; j++) {
         uint32_t *row = px + j * sw;
-        for (int i = x0; i < x1; i++) {
+        int i0 = x0, i1 = x1;
+        render_clip_row(j, &i0, &i1);
+        for (int i = i0; i < i1; i++) {
             /* Interior fast-path: clear of both rects' corners → full coverage,
              * no SDF/sqrt work. Covers the ~95% flat body. */
             if (box_inside_rounded(i, j, x, y, w, h, r_tl, r_tr, r_br, r_bl) &&
@@ -549,18 +530,32 @@ void fill_rect_rounded_border(uint32_t *px, int sw, int sh,
     int ir_br = r_br - bw > 0 ? r_br - bw : 0;
     int ir_bl = r_bl - bw > 0 ? r_bl - bw : 0;
 
-    int x0 = x < 0 ? 0 : x, y0 = y < 0 ? 0 : y;
+    int x0 = x < 0 ? 0 : x, y0 = CLIP_Y0(y < 0 ? 0 : y);
     int x1 = x + w > sw ? sw : x + w;
-    int y1 = y + h > sh ? sh : y + h;
+    int y1 = CLIP_Y1(y + h > sh ? sh : y + h);
     if (y0 < clip_top) y0 = clip_top;
 
     uint8_t cr = (c >> 16) & 0xff, cg = (c >> 8) & 0xff, cb = c & 0xff;
     uint8_t ca = (c >> 24) & 0xff;
     if (!ca) return;
 
+    /* Every pixel deep inside the inner rrect yields cov(outer)-cov(inner)==0,
+     * but only after two sqrt-based SDF evaluations. On a full-surface border
+     * (every menu/panel) that is the whole interior paying for nothing — jump
+     * the flat middle columns of the rows clear of the inner corner squares,
+     * keeping a 1px margin for the AA band. */
+    int ir_top = ir_tl > ir_tr ? ir_tl : ir_tr;
+    int ir_bot = ir_bl > ir_br ? ir_bl : ir_br;
+    int jump0 = ix + 1, jump1 = ix + iw - 1;
+    int jumpable = iw > 2 && ih > 2 && jump1 > jump0;
+
     for (int j = y0; j < y1; j++) {
         uint32_t *row = px + j * sw;
-        for (int i = x0; i < x1; i++) {
+        int skip = jumpable && j >= iy + ir_top + 1 && j < iy + ih - ir_bot - 1;
+        int i0 = x0, i1 = x1;
+        render_clip_row(j, &i0, &i1);
+        for (int i = i0; i < i1; i++) {
+            if (skip && i >= jump0 && i < jump1) { i = jump1 - 1; continue; }
             /* The border ring is (outer rrect) \ (inner rrect). Analytic AA on
              * both arcs: ring coverage = cov(outer) - cov(inner) (the inner and
              * outer 1px bands sit bw≥1 px apart, so they never overlap). */
@@ -868,6 +863,8 @@ static void draw_glyph_px(uint32_t *px, int sw, int sh, int x, int y,
     int gx = x + g->bx * m;
     int gy = y - g->by * m;     /* y is baseline; bitmap top is baseline - by */
     const uint8_t *src = f->px + g->px_off;
+    int ylo = CLIP_Y0(0);
+    sh = CLIP_Y1(sh);
 
     if (g->color) {
         /* Premultiplied BGRA (color-bitmap emoji); drawn as-is, fg ignored.
@@ -880,10 +877,12 @@ static void draw_glyph_px(uint32_t *px, int sw, int sh, int x, int y,
             uint32_t inv = 255 - a;
             for (int by = 0; by < m; by++) {
                 int yy = gy + j * m + by;
-                if (yy < 0 || yy >= sh) continue;
+                if (yy < ylo || yy >= sh) continue;
+                int xlo = 0, xhi = sw;
+                render_clip_row(yy, &xlo, &xhi);
                 for (int bx = 0; bx < m; bx++) {
                     int xx = gx + i * m + bx;
-                    if (xx < 0 || xx >= sw) continue;
+                    if (xx < xlo || xx >= xhi) continue;
                     uint32_t d = px[yy * sw + xx];
                     uint32_t dr = (d >> 16) & 0xff, dg = (d >> 8) & 0xff, db = d & 0xff;
                     uint32_t da = (d >> 24) & 0xff;
@@ -910,10 +909,12 @@ static void draw_glyph_px(uint32_t *px, int sw, int sh, int x, int y,
         uint32_t inv = 255 - na;
         for (int by = 0; by < m; by++) {
             int yy = gy + j * m + by;
-            if (yy < 0 || yy >= sh) continue;
+            if (yy < ylo || yy >= sh) continue;
+            int xlo = 0, xhi = sw;
+            render_clip_row(yy, &xlo, &xhi);
             for (int bx = 0; bx < m; bx++) {
                 int xx = gx + i * m + bx;
-                if (xx < 0 || xx >= sw) continue;
+                if (xx < xlo || xx >= xhi) continue;
                 uint32_t d = px[yy * sw + xx];
                 uint8_t dr = (d >> 16) & 0xff, dg = (d >> 8) & 0xff, db = d & 0xff;
                 uint8_t da = (d >> 24) & 0xff;
@@ -945,7 +946,7 @@ static const Font *strike_for(const Font *f, int s120, int *m) {
 void draw_glyph(uint32_t *px, int sw, int sh, int x, int y,
                 const Font *f, const Glyph *g, uint32_t fg) {
     if (!g) return;
-    int s = cur_s120, m;
+    int s = render_s120, m;
     const Font *sf = strike_for(f, s, &m);
     if (sf != f) { const Glyph *sg = font_find(sf, g->cp); if (sg) { f = sf; g = sg; } else m = REPL(s); }
     draw_glyph_px(px, SC(sw), SC(sh), SC(x), SC(y), f, g, fg, m);
@@ -956,7 +957,7 @@ void draw_glyph(uint32_t *px, int sw, int sh, int x, int y,
  * glyph bitmap comes from the physical strike. */
 void draw_text(uint32_t *px, int sw, int sh, int x, int y,
                const Font *f, const char *s, uint32_t fg) {
-    int sc = cur_s120, m;
+    int sc = render_s120, m;
     const Font *sf = strike_for(f, sc, &m);
     sw = SC(sw); sh = SC(sh);
     int pen_x = SC(x);
@@ -979,5 +980,4 @@ void draw_text(uint32_t *px, int sw, int sh, int x, int y,
         }
     }
 }
-
 

@@ -65,6 +65,8 @@ int emit_surface_life(FILE *o, Decl *sur, CGCtx *ctx, const char *nm,
      * of the runtime (dwl-ipc tag accumulator, lock-on-output) keeps working. */
     if (strcmp(nm, "bar") == 0) fputs("    o->bar = w;\n", o);
     fprintf(o, "    __%s_widgets[__%s_nw++] = w;\n", nm, nm);
+    if (ctx->scroll_rows)
+        fprintf(o, "    __%s_selrow[__%s_nw - 1] = -1;\n", nm, nm);
     fprintf(o, "    widget_setup_surface(w, %d, \"wisp-%s\", o);\n", g->layer, nm);
     int __buf_w = 0, __buf_h = 0; /* exported to hud_register below */
     {
@@ -155,7 +157,11 @@ int emit_surface_life(FILE *o, Decl *sur, CGCtx *ctx, const char *nm,
          * surface, which may carry the previous preset's margin. */
         fprintf(o, "    widget_set_margin(w, %d, %d, %d, %d);\n", g->margin, g->margin, g->margin, g->margin);
         fprintf(o, "    widget_set_exclusive_zone(w, %d);\n", g->excl_zone);
-        fputs("    widget_set_kbd_interactive(w, 0);\n", o);
+        /* `on_escape` needs key events, and a layer surface only gets them with
+         * keyboard interactivity — exclusive, since the panel is opened
+         * deliberately and on_demand would need a click first for Esc to work. */
+        fprintf(o, "    widget_set_kbd_interactive(w, %d);\n",
+                surface_prop(sur, "on_escape") ? 1 : 0);
         Expr *inp = surface_prop(sur, "input");
         int input_none = inp && inp->kind == EX_IDENT && inp->ident.n == 4
                          && memcmp(inp->ident.s, "none", 4) == 0;
@@ -177,6 +183,84 @@ int emit_surface_life(FILE *o, Decl *sur, CGCtx *ctx, const char *nm,
     }
     fputs("}\n\n", o);
 
+    if (ctx->scroll_rows) emit_scroll_input(o, nm);
     return 0;
+}
+
+/* Wheel + arrow-key input for a scrollable container. Both walk the per-widget
+ * row table render_<nm> rebuilt, so neither assumes a uniform row height. */
+void emit_scroll_input(FILE *o, const char *nm) {
+    /* Row-snapped notch: land the next row's top on the content-area top edge,
+     * so a variable-height list never leaves a row half-cut at either end. The
+     * clamp lives in widget_scroll, which returns 0 at the ends — a notch there
+     * renders nothing. */
+    fprintf(o, "int __%s_row_step(Widget *w, int dir) {\n", nm);
+    fprintf(o, "    int wi = __%s_slot(w); if (wi < 0) return 0;\n", nm);
+    fprintf(o, "    int n = __%s_rown[wi], cur = w->scroll_off, tgt;\n", nm);
+    fputs("    if (dir > 0) {\n", o);
+    /* Snap to the next row top while one still fits; past that, one final
+     * non-snapped step to scroll_max. Clamping to `cur` instead would swallow
+     * the notch whenever the last card is taller than the viewport — the wheel
+     * reads as dead and that card's tail is unreachable. */
+    fputs("        tgt = cur;\n", o);
+    fprintf(o, "        for (int i = 0; i < n; i++) if (__%s_rowy[wi][i] > cur) { tgt = __%s_rowy[wi][i] <= w->scroll_max ? __%s_rowy[wi][i] : w->scroll_max; break; }\n", nm, nm, nm);
+    /* scroll_max lands one frame behind a content shrink, so it can read below
+     * cur — a down-notch must never scroll up. */
+    fputs("        if (tgt < cur) tgt = cur;\n", o);
+    fputs("    } else {\n", o);
+    fputs("        tgt = 0;\n", o);
+    fprintf(o, "        for (int i = n - 1; i >= 0; i--) if (__%s_rowy[wi][i] < cur) { tgt = __%s_rowy[wi][i]; break; }\n", nm, nm);
+    fputs("    }\n", o);
+    fputs("    return widget_scroll(w, tgt - cur);\n}\n\n", o);
+
+    /* Arrows move a SELECTION (the wheel moves only the viewport) — menu.c's
+     * semantics: it scrolls itself into view, clamps at both ends, and Enter
+     * activates it exactly as a click on that row would. The highlight reuses
+     * the hover tint, so a surface needs no second piece of declared styling. */
+    fprintf(o, "void %s_on_key(Widget *w, unsigned key) {\n", nm);
+    fprintf(o, "    int wi = __%s_slot(w); if (wi < 0) return;\n", nm);
+    fprintf(o, "    int n = __%s_rown[wi];\n", nm);
+    fputs("    if (n <= 0) return;\n", o);
+    fprintf(o, "    int sel = __%s_selrow[wi];\n", nm);
+    fputs("    if (sel >= n) sel = n - 1;\n", o);
+    /* One indicator, either input (menu.c semantics): if the pointer last moved
+     * the highlight, the next arrow starts from the row under it — otherwise Up
+     * from a hovered row 3 would jump to row 1 off a stale selection. */
+    fprintf(o, "    if (__%s_hover_w == w && (sel < 0 || __%s_rowst[wi][sel] != __%s_hover_st))\n", nm, nm, nm);
+    fprintf(o, "        for (int i = 0; i < n; i++) if (__%s_rowst[wi][i] == __%s_hover_st) { sel = i; break; }\n", nm, nm);
+    fputs("    if (key == 28 || key == 96) {\n", o);   /* Enter, KP-Enter */
+    fputs("        if (sel < 0) return;\n", o);
+    /* Aim at the row's own recorded hit rect: a row whose clickable area doesn't
+     * span the surface midpoint (an inset card, a trailing button) would swallow
+     * a click synthesized at w->w / 2. Fall back to the row top for a row that
+     * registered no hit at all. */
+    fprintf(o, "        int cx = (int)w->w / 2;\n");
+    fprintf(o, "        int cy = __%s_rowbase[wi] + __%s_rowy[wi][sel] - w->scroll_off + 1;\n", nm, nm);
+    fprintf(o, "        for (int i = 0; i < __%s_hit_n[wi]; i++) {\n", nm);
+    fprintf(o, "            if (__%s_hit[wi][i].st_idx != __%s_rowst[wi][sel]) continue;\n", nm, nm);
+    fprintf(o, "            cx = __%s_hit[wi][i].x + __%s_hit[wi][i].w / 2;\n", nm, nm);
+    fprintf(o, "            cy = __%s_hit[wi][i].y + __%s_hit[wi][i].h / 2;\n", nm, nm);
+    fputs("            break;\n        }\n", o);
+    fprintf(o, "        %s_on_click(w, cx, cy, 0x110);\n", nm);
+    fputs("        return;\n    }\n", o);
+    fputs("    if (key == 103)      sel = sel > 0 ? sel - 1 : 0;\n", o);          /* Up */
+    fputs("    else if (key == 108) sel = sel < 0 ? 0 : (sel < n - 1 ? sel + 1 : n - 1);\n", o);  /* Down */
+    fputs("    else return;\n", o);
+    fprintf(o, "    __%s_selrow[wi] = sel;\n", nm);
+    /* Viewport for the scrolled rows is [rowbase, rowbot) — the same content
+     * rect render_<nm> clipped to and sized scroll_max against, NOT the buffer. */
+    fprintf(o, "    int vh = __%s_rowbot[wi] - __%s_rowbase[wi];\n", nm, nm);
+    fprintf(o, "    int top = __%s_rowy[wi][sel], bot = __%s_rowy[wi][sel + 1];\n", nm, nm);
+    fputs("    if (top < w->scroll_off) widget_scroll(w, top - w->scroll_off);\n", o);
+    fputs("    else if (bot > w->scroll_off + vh) {\n", o);
+    /* Smallest row top that still shows the selection whole — bottom-aligned
+     * feel, but the offset stays a row top so nothing is cut at the top edge. */
+    fputs("        int t = top;\n", o);
+    fprintf(o, "        for (int i = 0; i <= sel; i++) if (__%s_rowy[wi][i] + vh >= bot) { t = __%s_rowy[wi][i]; break; }\n", nm, nm);
+    fputs("        widget_scroll(w, t - w->scroll_off);\n    }\n", o);
+    fprintf(o, "    __%s_hover_st = __%s_rowst[wi][sel];\n", nm, nm);
+    fprintf(o, "    __%s_hover_w = w;\n", nm);
+    fprintf(o, "    render_%s(w);\n", nm);
+    fputs("}\n\n", o);
 }
 

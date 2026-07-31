@@ -18,6 +18,10 @@ void   arena_free(Arena *a);
 /* ---------- diag ---------- */
 typedef struct { const char *file; int line, col; } Loc;
 void diag_error(Loc l, const char *fmt, ...) __attribute__((format(printf,2,3)));
+/* Notification-center ring depth: sizes the per-cell st[]/hit/tween arrays here
+ * and notify.c's history (via features.h), so the two cannot drift. */
+#define NOTIF_HIST_CAP 16
+
 void diag_note (Loc l, const char *fmt, ...) __attribute__((format(printf,2,3)));
 void diag_hint (Loc l, const char *fmt, ...) __attribute__((format(printf,2,3)));
 void diag_add_source(const char *file, const char *buf);
@@ -221,13 +225,14 @@ typedef enum {
     D_MEDIA, D_COMPOUND, D_STYLE,
 } DKind;
 
-/* One `frame NAME { … }` / `text NAME { … }` inside `lock { … }`. The lock has
- * no flex layout — every element is free-positioned — so it needs neither the
- * Widget node nor the surface body machinery. */
+/* One `frame|text|ring NAME { … }` inside `lock { … }`. The lock has no flex
+ * layout — every element is free-positioned — so it needs neither the Widget
+ * node nor the surface body machinery. */
+typedef enum { LK_FRAME, LK_TEXT, LK_RING } LockKind;
 typedef struct {
     Loc loc;
     const char *name; size_t nlen;
-    bool is_text;
+    LockKind kind;
     Prop **props; int n;
 } LockElem;
 
@@ -306,7 +311,7 @@ typedef struct SemaResult {
     const char **spawned_names;
     const char ***spawned_args;
     /* feature set */
-    bool has_dbus, has_mpris, has_tray, has_osd, has_menu, has_hud, has_bar, has_lock, has_gamma, has_wallpaper, has_media, has_anim, has_pipewire, has_toplevel;
+    bool has_dbus, has_mpris, has_tray, has_osd, has_menu, has_hud, has_bar, has_lock, has_gamma, has_wallpaper, has_media, has_anim, has_pipewire, has_toplevel, has_tooltip, has_image;
     bool has_src_cpu, has_src_mem, has_src_temp, has_src_bat, has_src_net, has_src_disk, has_src_vpn;
     bool has_src_exec, has_src_tags, has_src_backlight, has_power, has_bluez;
     bool net_rates_used;           /* a config reads net.rx_kbps/tx_kbps */

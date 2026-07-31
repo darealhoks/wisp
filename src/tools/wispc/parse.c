@@ -896,11 +896,11 @@ static Decl *parse_surface_or_compound(P *p, DKind dk, bool menu_decl) {
     return d;
 }
 
-/* `frame NAME { … }` / `text NAME { … }`; the name is optional. */
-static LockElem *parse_lock_elem(P *p, Tok kw) {
+/* `frame|text|ring NAME { … }`; the name is optional. */
+static LockElem *parse_lock_elem(P *p, Tok kw, LockKind k) {
     LockElem *e = NEW(p, LockElem);
     e->loc = kw.loc;
-    e->is_text = kw.len == 4;
+    e->kind = k;
     if (at(p, TK_IDENT)) {
         Tok n = cur(p); lex_next(&p->L);
         e->name = arena_strn(p->a, n.s, n.len); e->nlen = n.len;
@@ -933,13 +933,19 @@ static Decl *parse_block_decl(P *p, DKind dk, const char *name) {
     while (!at(p, TK_RBRACE) && !at(p, TK_EOF)) {
         if (!at(p, TK_IDENT)) { diag_error(cur(p).loc, "expected a property name"); lex_next(&p->L); continue; }
         Tok t = cur(p);
-        bool elkw = dk == D_LOCK &&
-                    ((t.len == 5 && memcmp(t.s, "frame", 5) == 0) ||
-                     (t.len == 4 && memcmp(t.s, "text",  4) == 0));
+        LockKind lk = LK_FRAME;
+        bool elkw = dk == D_LOCK;
+        if (elkw) {
+            if      (t.len == 5 && memcmp(t.s, "frame", 5) == 0) lk = LK_FRAME;
+            else if (t.len == 4 && memcmp(t.s, "text",  4) == 0) lk = LK_TEXT;
+            else if (t.len == 4 && memcmp(t.s, "ring",  4) == 0) lk = LK_RING;
+            else elkw = false;
+        }
         if (!elkw) { vl_push(&props, parse_prop(p)); continue; }
         lex_next(&p->L);
-        /* `text = …` is still a prop; only `text [NAME] {` opens an element. */
-        if (at(p, TK_IDENT) || at(p, TK_LBRACE)) vl_push(&els, parse_lock_elem(p, t));
+        /* `text = …` / `ring = …` are still props; only `KW [NAME] {` opens
+         * an element. */
+        if (at(p, TK_IDENT) || at(p, TK_LBRACE)) vl_push(&els, parse_lock_elem(p, t, lk));
         else vl_push(&props, parse_prop_named(p, t));
     }
     expect_rbrace(p, bopen);

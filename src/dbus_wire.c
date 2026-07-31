@@ -158,7 +158,10 @@ static int skip_single(R *r, char c, const char **sigp, int depth) {
     case 'y': rbyte(r); return r->ok ? 0 : -1;
     case 'b': case 'u': case 'i': ru32(r); return r->ok ? 0 : -1;
     case 'n': case 'q': ru16(r); return r->ok ? 0 : -1;
-    case 'x': case 't': case 'd': ralign(r, 8); r->pos += 8; return r->pos <= r->len ? 0 : -1;
+    /* Latch !ok on overrun: callers loop on r->ok and ignore this return, so a
+     * silent pos > len left the next reader to bounds-check a bad position. */
+    case 'x': case 't': case 'd': ralign(r, 8); if (!r->ok || r->pos + 8 > r->len) { r->ok = 0; return -1; }
+                                  r->pos += 8; return 0;
     case 'h': ru32(r); return r->ok ? 0 : -1;
     case 's': case 'o': rstr(r); return r->ok ? 0 : -1;
     case 'g': rsig(r); return r->ok ? 0 : -1;

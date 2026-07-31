@@ -178,7 +178,16 @@ static void add_props(Arena *a, Node *n, Prop **add, int nadd) {
 
 /* State pseudo-classes, applied in this order — a later one wraps the earlier
  * ternary, so `:urgent` wins over `:active` when both hold. */
-static const char *PSEUDOS[] = { "active", "urgent", "mute", "warn", "pressed" };
+static const char *PSEUDOS[] = { "active", "urgent", "mute", "warn", "hover", "pressed" };
+
+/* The two runtime-state pseudos don't lower to a compile-time ternary: the
+ * runtime tracks which cell is hovered/pressed, so they become a plain prop
+ * the draw pass swaps bg for. Returns the target prop name, or NULL. */
+static const char *state_pseudo_prop(const char *pseudo) {
+    if (!strcmp(pseudo, "pressed")) return "press_bg";
+    if (!strcmp(pseudo, "hover"))   return "hover_bg";
+    return NULL;
+}
 
 static Expr *mk_expr(Arena *a, ExKind k, Loc loc) {
     Expr *e = arena_alloc(a, sizeof *e);
@@ -212,15 +221,15 @@ static bool in_spawn_template(Node *n) {
 /* Splice one resolved pseudo prop into the node, wrapping whatever value the
  * prop already has. */
 static void apply_pseudo(Arena *a, Node *n, const char *pseudo, Prop *p) {
-    if (!strcmp(pseudo, "pressed")) {
-        /* The runtime already tracks the pressed widget, but only as a bg swap. */
+    const char *sp = state_pseudo_prop(pseudo);
+    if (sp) {
         if (strcmp(p->name, "bg")) {
-            diag_error(p->loc, "':pressed' can only set 'bg' (lowers to press_bg), not '%s'", p->name);
+            diag_error(p->loc, "':%s' can only set 'bg' (lowers to %s), not '%s'", pseudo, sp, p->name);
             return;
         }
-        if (find_prop(n, "press_bg")) return;    /* inline press_bg wins */
+        if (find_prop(n, sp)) return;            /* inline press_bg/hover_bg wins */
         Prop *np = arena_alloc(a, sizeof *np);
-        *np = *p; np->name = "press_bg"; np->nlen = 8;
+        *np = *p; np->name = sp; np->nlen = strlen(sp);
         add_props(a, n, &np, 1);
         return;
     }
@@ -303,8 +312,6 @@ void style_apply(Arena *a, Unit *u) {
             ncand = resolve(u, n, PSEUDOS[ps], &cand, &ccap);
             for (int k = 0; k < ncand; k++) apply_pseudo(a, n, PSEUDOS[ps], cand[k].p);
         }
-        if (resolve(u, n, "hover", &cand, &ccap))
-            diag_error(cand[0].rule, "':hover' is not supported — put `hover;` on the menu decl and the selection follows the pointer");
     }
 
     free(cand); free(add); free(ns.v);

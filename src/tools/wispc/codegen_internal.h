@@ -66,6 +66,7 @@ void        emit_color_slot(FILE *o, const char *ind, const char *var, const cha
 void        emit_size_slot(FILE *o, const char *ind, const char *var, const char *slot,
                            const SlotCtx *sc, int dur, int even);
 void        emit_item_slot_decls(FILE *o, Widget *wd, const char *nm, int idx, int slots, int nwid);
+void        emit_item_slot_reset(FILE *o, Widget *wd, const char *nm, int idx);
 int         widget_enter_ms(Widget *wd);
 int         widget_exit_ms (Widget *wd);
 int         widget_has_vis_anim(Widget *wd);
@@ -73,6 +74,9 @@ const char *widget_easing_id(Widget *wd, const char *prop_name);
 int         widget_is_vertical(Widget *w);
 double      eval_double(Expr *e, double dflt);
 int         widget_flag(Widget *w, const char *name);
+int         group_flag(Group *g, const char *name);
+/* Wheel row-snap + arrow-key selection for a `scroll`-able surface. */
+void        emit_scroll_input(FILE *o, const char *nm);
 int         widget_thumb_shape(Widget *w);
 int         widget_value_align(Widget *w);
 
@@ -93,6 +97,12 @@ typedef struct {
     DrvKind drv;
     struct { const char *field; const char *c_expr; int is_string; } fields[8];
 } SrcDrv;
+
+/* A DRV_WISP driver whose payload is bigger than its scalar fields (a for-only
+ * ring) can't be change-guarded on the fields alone. This returns a C int
+ * expression that moves on every payload mutation, or NULL — and NULL means the
+ * driver stays unguarded rather than risking a suppressed real change. */
+const char *drv_rev_expr(const SrcDrv *d);
 
 typedef struct {
     Decl   *decl;
@@ -159,6 +169,7 @@ typedef enum {
     LB_MENU_ROW,
     /* tray item: c_expr is the 0-based index into tray.c's compacted list */
     LB_TRAY_IT,
+    LB_NOTIF_IT,
     /* the menu itself (`menu.query` / `.prompt` / `.count`); c_expr is the
      * fallback prompt literal declared on the surface. */
     LB_MENU_SELF,
@@ -186,8 +197,22 @@ struct CGCtx {
      * cell is first overwritten with `surface_bg` before its content redraws.
      * Set only around an eligible plain bar surface's draw loop. */
     int   partial_ok;
+    /* Non-zero while emitting a `scroll`-able surface: the draw pass records each
+     * top-level start-aligned row's top into the per-widget row table (row-snap
+     * scrolling + arrow-key selection walk it), and the input dispatch emits the
+     * damage band + key handler. Cleared after the surface is done. */
+    int   scroll_rows;
+    /* Menu `separator_h`/`separator`/`separator_frac`: a flagged row gets its
+     * own slot height and a hairline instead of the cell. 0 = plain rows. */
+    int      menu_sep_h, menu_sep_frac;
+    uint32_t menu_sep_col;
     /* No widget `w` in scope (source on_change bodies) — animate() owner NULL. */
     int   no_owner;
+    /* Inside a runtime-`for` body: the loop's slot cap. Interp buffers must be
+     * one per iteration — the measure pass stores the pointer in st[] and the
+     * draw pass reads it back, so a single shared static would leave every row
+     * showing the last iteration's text. 0 = not in a loop. */
+    int   loop_cap;
     uint32_t surface_bg;
     FILE *prelude;
     char *prelude_buf; size_t prelude_sz;
@@ -261,6 +286,7 @@ int  emit_surface_click_dispatch(FILE *o, BarItem *items, int nitems,
 void reg_reset(void);
 void reg_collect(const char *base);
 void emit_reg_destroyed(FILE *o);
+const char *widget_tip_lit(Widget *w);
 void emit_hit_store(FILE *o, const char *nm, int maxw);
 void emit_hit_snapshot(FILE *o, const char *nm);
 
@@ -287,7 +313,7 @@ typedef struct {
 
 /* ---------- codegen_surface.c / _spawned.c / _compound.c ---------- */
 
-int  emit_menu_render(FILE *o, Decl *sur, Decl *tmpl, CGCtx *ctx, const char *nm);
+int  emit_menu_render(FILE *o, Decl *sur, Decl *tmpl, CGCtx *ctx, const char *nm, int tip);
 int  emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm);
 int  emit_surface_life(FILE *o, Decl *sur, CGCtx *ctx, const char *nm,
                        BarItem *items, int nitems, const SurGeom *g);

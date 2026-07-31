@@ -1,0 +1,3 @@
+tests/diag/scroll-not-vertical.wisp:4:12: error: `scroll` needs `axis = vertical;` on the same surface — a horizontal surface stacks along x, which scroll doesn't move
+    scroll = 40;
+             ^

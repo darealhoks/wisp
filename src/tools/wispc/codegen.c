@@ -250,6 +250,10 @@ static void emit_main(FILE *o, SrcInst *srcs, int nsrc, SemaResult *r) {
         fputs("        { int __t = hud_check_deferred(now_ms()); if (__t >= 0 && (__timeout < 0 || __t < __timeout)) __timeout = __t; }\n", o);
     if (r->has_osd)
         fputs("        { int __t = osd_check_expiry(now_ms()); if (__t >= 0 && (__timeout < 0 || __t < __timeout)) __timeout = __t; }\n", o);
+    /* Hover dwell. Returns -1 unless a tooltip is actually pending, so an
+     * unhovered bar still blocks in epoll_wait forever. */
+    if (r->has_tooltip)
+        fputs("        { int __t = tooltip_check_deferred(now_ms()); if (__t >= 0 && (__timeout < 0 || __t < __timeout)) __timeout = __t; }\n", o);
     fputs("        struct epoll_event evs[16];\n", o);
     fputs("        int n = epoll_wait(ep_fd, evs, 16, __timeout);\n", o);
     fputs("        if (n < 0) { if (errno == EINTR) continue; die(\"epoll_wait: %s\", strerror(errno)); }\n", o);
@@ -418,26 +422,31 @@ static int menu_hdr_h(Decl *d) {
     return h;
 }
 
-/* `{ w, row_h, max_vis, gap, hdr_h, pad_y, own_body, wants_hover }` for one menu
+/* `{ w, row_h, max_vis, gap, hdr_h, pad_y, own_body, wants_hover, sep_h }` for one menu
  * decl. 0 = inherit the template's MENU_*; menu.c resolves. */
-static void emit_menu_geom(FILE *o, Decl *d) {
-    int body = menu_has_body(d);
-    /* `hover;` is a bare marker (no value), so surface_prop() can't see it. */
-    int hover = 0;
+/* `hover;` is a bare marker (no value), so surface_prop() can't see it. */
+static int decl_has_hover(Decl *d) {
     for (int i = 0; i < d->surface.n; i++) {
         SBody *b = &d->surface.items[i];
         if (b->kind == SB_PROP && b->prop->nlen == 5 &&
-            memcmp(b->prop->name, "hover", 5) == 0) { hover = 1; break; }
+            memcmp(b->prop->name, "hover", 5) == 0) return 1;
     }
+    return 0;
+}
+
+static void emit_menu_geom(FILE *o, Decl *d) {
+    int body = menu_has_body(d);
+    int hover = decl_has_hover(d);
     int pad = eval_int(surface_prop(d, "pad"), 0);
-    fprintf(o, "{ %d, %d, %d, %d, %d, %d, %d, %d }",
+    fprintf(o, "{ %d, %d, %d, %d, %d, %d, %d, %d, %d }",
             eval_int(surface_prop(d, "width"), 0),
             eval_int(surface_prop(d, "row_h"), 0),
             eval_int(surface_prop(d, "max_visible"), 0),
             eval_int(surface_prop(d, "anchor_gap"), 0),
             body ? menu_hdr_h(d) : 0,
             body ? eval_int(surface_prop(d, "pad_y"), pad) : 0,
-            body, hover);
+            body, hover,
+            eval_int(surface_prop(d, "separator_h"), 0));
 }
 
 static void emit_menus(FILE *o, Unit *u) {
@@ -484,7 +493,7 @@ static void emit_menus(FILE *o, Unit *u) {
         emit_menu_geom(o, d);
         fputs(" },\n", o);
     }
-    fputs("    { 0, 0, 0, 0, 0, {0,0,0,0,0,0,0,0} },\n};\n\n#endif\n", o);
+    fputs("    { 0, 0, 0, 0, 0, {0,0,0,0,0,0,0,0,0} },\n};\n\n#endif\n", o);
 }
 
 /* Emit gen_overrides.h. The runtime modules (osd_rt.c today, lock/gamma/wall
@@ -736,6 +745,30 @@ static void emit_overrides(FILE *o, Unit *u, CGCtx *ctx) {
         fputs("\n", o);
     }
 
+    /* tooltip template → the geometry tooltip.c needs to size and place the
+     * surface before the generated renderer paints into it. `width` is a
+     * clamp, not a size: a tooltip auto-widths to its text and relies on the
+     * declared widget's `elide` past the clamp. */
+    Decl *tipd = find_spawn_template(u, "tooltip");
+    if (tipd) {
+        fputs("/* === tooltip surface overrides === */\n", o);
+        Expr *padp = surface_prop(tipd, "pad_x");
+        if (!padp) padp = surface_prop(tipd, "pad");
+        struct { Expr *e; const char *macro; } map[] = {
+            {padp,                             "TIP_PAD_X"},
+            {surface_prop(tipd, "height"),     "TIP_H"},
+            {surface_prop(tipd, "width"),      "TIP_MAX_W"},
+            {surface_prop(tipd, "anchor_gap"), "TIP_GAP"},
+            {surface_prop(tipd, "delay_ms"),   "TIP_DELAY_MS"},
+        };
+        for (size_t i = 0; i < sizeof(map)/sizeof(map[0]); i++) {
+            if (!map[i].e || map[i].e->kind != EX_INT) continue;
+            fprintf(o, "#undef %s\n#define %s %d\n",
+                    map[i].macro, map[i].macro, (int)map[i].e->i);
+        }
+        fputs("\n", o);
+    }
+
     /* menu template → MENU_* overrides consumed by menu.c/apps.c. Look is
      * declared (the template's body lowers to render_menu_default); what is
      * left here is surface geometry and app-launcher behaviour. */
@@ -762,6 +795,8 @@ static void emit_overrides(FILE *o, Unit *u, CGCtx *ctx) {
                 fprintf(o, "#undef %s\n#define %s %d\n",
                         map[i].macro, map[i].macro, (int)e->i);
         }
+        if (decl_has_hover(menu))
+            fputs("#undef MENU_WANTS_HOVER\n#define MENU_WANTS_HOVER 1\n", o);
         /* Rows start below whatever the template's body puts above them. */
         fprintf(o, "#undef MENU_HDR_H\n#define MENU_HDR_H %d\n", menu_hdr_h(menu));
         Expr *e = surface_prop(menu, "terminal");

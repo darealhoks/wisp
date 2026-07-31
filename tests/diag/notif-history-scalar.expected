@@ -1,0 +1,3 @@
+tests/diag/notif-history-scalar.wisp:5:21: error: 'n.history' is a list — use it only in `for x in n.history`
+    widget x { text = n.history; }
+                      ^

@@ -37,6 +37,7 @@ Four subcommands never touch the socket: `help`, `rebuild`, `update` and `lock`.
 | `volume`, `mic`, `backlight` | see below | media | `ok` |
 | `mpris` | `play-pause\|next\|prev` | mpris | `ok` |
 | `tray` | `activate\|secondary\|menu <index>` | tray | `ok` |
+| `tooltip` | `<x> <width> <below> <text>`, or `hide` | tooltip | `ok` |
 | `gamma` | `auto\|day\|night\|flat\|off\|state\|is-warm` | gamma | `ok`, the mode, or `1`/`0` |
 | `wall` | `<path.png>` | wallpaper | `ok` or an error |
 

@@ -190,9 +190,13 @@ Pseudo-classes, applied in this order so a later one wins:
 | `:urgent` | same, applied after `:active` |
 | `:mute` | OSD and pill slabs, reads `$mute` |
 | `:warn` | OSD and pill slabs, reads `$warn` |
+| `:hover` | any widget, may only set `bg`, lowers to `hover_bg` |
 | `:pressed` | any widget, may only set `bg`, lowers to `press_bg` |
 
-`:hover` is rejected with a pointer to the `hover;` marker used by menus.
+`:hover` and `:pressed` are runtime pointer state, not compile-time conditions
+like the others. Both apply on bars and HUDs only; `:pressed` wins when the
+same cell is both. On a menu row `:hover` compiles but paints nothing — menus
+move their selection with the pointer instead, via the `hover;` marker.
 
 ## Marker properties
 

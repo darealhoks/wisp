@@ -191,7 +191,7 @@ GEN_OBJS := $(sort $(GEN_OBJS) $(BUILD)/image.o)
 endif
 
 HDR := $(SRCDIR)/wisp.h $(SRCDIR)/proto.h $(SRCDIR)/config.h \
-       $(SRCDIR)/font.h $(GENDIR)/bake.h \
+       $(SRCDIR)/font.h $(SRCDIR)/render_px.h $(GENDIR)/bake.h \
        $(GENDIR)/features.h $(GENDIR)/gen_overrides.h $(GENDIR)/gen_menus.h
 
 WISPC_SRC := $(TOOLDIR)/wispc/arena.c $(TOOLDIR)/wispc/diag.c $(TOOLDIR)/wispc/lex.c \
@@ -210,13 +210,13 @@ BIN := $(BUILD)/wisp $(BUILD)/wispctl $(BUILD)/wisp-lock $(BUILD)/wisp-lock-help
 # context uses src/lock-features.h in place of the codegen-emitted features.h,
 # so only WISP_HAS_LOCK is set and every other module preprocesses out. The
 # DSL-driven `lock {}` block still flows through gen_overrides.h for styling.
-LOCK_SRC  := wl widget render xkb wisp lock lock-main image
+LOCK_SRC  := wl widget render render_arc xkb wisp lock lock-main image
 ifeq ($(FONT_BACKEND),truetype)
 LOCK_SRC  += font_cache font_tt tt/sfnt tt/raster tt/cff tt/color
 endif
 LOCK_OBJS := $(LOCK_SRC:%=$(BUILD)/lock/%.o)
 LOCK_HDR  := $(SRCDIR)/wisp.h $(SRCDIR)/proto.h $(SRCDIR)/config.h \
-             $(SRCDIR)/font.h $(GENDIR)/bake.h \
+             $(SRCDIR)/font.h $(SRCDIR)/render_px.h $(GENDIR)/bake.h \
              $(SRCDIR)/lock-features.h $(GENDIR)/gen_overrides.h $(GENDIR)/gen_lock.h
 LOCK_CFLAGS := -Os -Wall -Wextra -Werror -Wno-unused-parameter \
                -fno-asynchronous-unwind-tables -fdata-sections -ffunction-sections \

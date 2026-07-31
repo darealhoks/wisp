@@ -1,0 +1,3 @@
+tests/diag/sticky-not-leading.wisp:7:3: error: `sticky` only works on the leading rows of a scrollable surface — a pinned row below scrolling ones would be overrun by them
+    widget b { sticky; text = "b"; }
+    ^

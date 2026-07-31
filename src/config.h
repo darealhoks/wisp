@@ -52,6 +52,9 @@
 #ifndef MENU_GAP
 #define MENU_GAP        0             /* gap between the clicked bar cell and the popup */
 #endif
+#ifndef MENU_WANTS_HOVER
+#define MENU_WANTS_HOVER 0            /* `hover;` on the template: pointer moves the selection */
+#endif
 #ifndef MENU_HDR_H
 #define MENU_HDR_H      0             /* body height above the rows (query line); 0 = rows start at pad_y */
 #endif

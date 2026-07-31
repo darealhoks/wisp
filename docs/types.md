@@ -40,17 +40,17 @@ track_radius value_gap value_scale value_max shadow_x shadow_y
 shadow_blur shadow_spread body_lines reveal_on_hover reveal_gutter
 reveal_anim_ms row_h max_visible size anchor_gap fillet_r fillet_offset_y
 armpit_inner armpit_outer armpit_tl armpit_tr armpit_bl armpit_br
-enter_anim exit_anim separator_frac wrong_ms day_k night_k
+enter_anim exit_anim separator_frac separator_h wrong_ms day_k night_k
 flat_k day_hour night_hour fade_min transition_ms fade_ms dither_px
-wipe_soft prog_h icon_gap icon_box
+wipe_soft prog_h icon_gap icon_box thickness segments highlight_arc
 ```
 
 **PT_COLOR.**
 
 ```
-bg fg icon_fg bg_bottom border press_bg shadow track_bg track_fg
+bg fg icon_fg bg_bottom border press_bg hover_bg shadow track_bg track_fg
 thumb_color thumb_border prog_fg prog_track armpit_color separator
-ring ring_bad dim caps
+ring ring_bad dim caps highlight highlight_bs
 ```
 
 **PT_ANY** is everything else: `text`, `icon`, `value`, `graph`, `visible`,
