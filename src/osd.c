@@ -175,10 +175,11 @@ static void pack(Widget *w) {
 
 /* Final tx (post-icon) for body/summary text in a slab. */
 static int slab_text_x(const Osd *o) {
-    /* The declared icon column is reserved icon or not, so wrapping against the
-     * glyph's advance (or against nothing) overshoots the room the layout left
-     * and `elide` eats the tail of every wrapped line. */
-    if (OSD_ICON_W > 0) return OSD_ICON_W;
+    /* A declared icon column is reserved whole, so wrapping against the glyph's
+     * advance overshoots the room the layout left and `elide` eats the tail of
+     * every wrapped line — but an icon-less slab collapses the column (the
+     * widget hides itself on $has_icon), so the text starts at the pad. */
+    if (OSD_ICON_W > 0) return (o->icon_cp || o->image) ? OSD_ICON_W : OSD_PAD_X;
     int tx = OSD_PAD_X;
     if (o->icon_cp) {
         const Glyph *g = font_find(&font_large, o->icon_cp);

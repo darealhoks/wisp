@@ -507,6 +507,7 @@ surface osd {
 		align = left;
 		width = 58;
 		icon = $image;
+		visible = $has_icon;   // collapse the column, don't indent past an empty box
 	}
 
 	widget title {
@@ -515,6 +516,7 @@ surface osd {
 		body_lines = 1 + $nbody;
 		elide;
 		pad = 12;
+		x_offset = $has_icon ? 0 : 14;  // no icon column → keep the pad_x inset
 		y_offset = $progress >= 0 ? -9 : 0;
 	}
 

@@ -964,7 +964,7 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
         /* Lowers as an expression: an OSD slab's text block shifts by whether
          * that slab has a progress band, which no constant can express. */
         Expr *yoffe = widget_prop(wd, "y_offset");
-        int x_off = eval_int(widget_prop(wd, "x_offset"), 0);
+        Expr *xoffe = widget_prop(wd, "x_offset");
         int pad_x = eval_int(widget_prop(wd, "pad_x"), 0);
         int pad_y = eval_int(widget_prop(wd, "pad_y"), 0);
         uint32_t shc = eval_color_ctx(ctx, widget_prop(wd, "shadow"), 0);
@@ -972,7 +972,12 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
         int shy = eval_int(widget_prop(wd, "shadow_y"), 2);
         int shblur = eval_int(widget_prop(wd, "shadow_blur"), 0);
         int shspread = eval_int(widget_prop(wd, "shadow_spread"), 0);
-        fprintf(o, "%s    int x = pos + %d;\n", indent, x_off);
+        /* Expression, like y_offset: an OSD slab's text slides left by whether
+         * that slab has an icon column, which no constant can express. */
+        if (xoffe) { CE cx0 = lower(ctx, xoffe); cx0 = coerce_to_int(ctx, cx0);
+                     cgctx_flush_prelude(ctx, o, indent);
+                     fprintf(o, "%s    int x = pos + (%s);\n", indent, cx0.text); }
+        else fprintf(o, "%s    int x = pos;\n", indent);
         if (yoffe) { CE cy = lower(ctx, yoffe); cy = coerce_to_int(ctx, cy);
                      cgctx_flush_prelude(ctx, o, indent);
                      fprintf(o, "%s    int __yoff = %s;\n", indent, cy.text); }

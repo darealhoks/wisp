@@ -168,6 +168,10 @@ int emit_spawned_osd_skeleton(FILE *o, Decl *sur, CGCtx *ctx, const char *nm, in
      * notification carried no image (or `image` is off — then always). */
     push_local(ctx, "image", 5, LB_DOLLAR_BIND,
                "osd_slab_image(__sl)", "pm");
+    /* So an icon widget can hide itself — a reserved-width icon column would
+     * otherwise indent an icon-less slab's text by an empty box. */
+    push_local(ctx, "has_icon", 8, LB_DOLLAR_BIND,
+               "(w->s.osd.items[__sl].image != 0 || w->s.osd.items[__sl].icon_cp != 0)", "int");
     push_local(ctx, "pct", 3, LB_DOLLAR_BIND,
                "__pct_buf", "str");
     push_local(ctx, "muted", 5, LB_DOLLAR_BIND,
@@ -183,6 +187,10 @@ int emit_spawned_osd_skeleton(FILE *o, Decl *sur, CGCtx *ctx, const char *nm, in
                "(w->s.osd.items[__sl].muted == 1)", "int");
     push_local(ctx, "warn", 4, LB_DOLLAR_BIND,
                "(w->s.osd.items[__sl].muted == 2)", "int");
+    /* Same for `:urgent` — urgency>=2 (critical), matching notif_urgent() so a
+     * slab and its notification-centre row agree on what "urgent" means. */
+    push_local(ctx, "urgent", 6, LB_DOLLAR_BIND,
+               "(w->s.osd.items[__sl].urgency >= 2)", "int");
 
     /* Slab body, drawn before the widgets that sit on it. Colors lower as
      * expressions, not constants — a `:warn` pseudo makes them per-slab. */
