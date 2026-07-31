@@ -97,7 +97,7 @@ static int collect_for_items(ForBlock *f, BarItem *out, int n, int max,
                 out[n].runtime_for_count = "notif_count()";
                 out[n].runtime_for_iter = "it";
                 out[n].runtime_for_kind = LB_NOTIF_IT;
-                out[n].runtime_for_cap = NOTIF_HIST_CAP;
+                out[n].runtime_for_cap = notif_hist_cap;
                 out[n].for_var = f->var; out[n].for_var_n = f->vlen;
                 n++;
             } else if (tray_src) {
@@ -382,6 +382,15 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
     cgctx_flush_prelude(ctx, o, indent);
     fprintf(o, "%suint32_t icon_fg = (uint32_t)(%s);\n", indent, ifg.text);
 
+    /* body_fg: same absent-means-fg contract as icon_fg, applied to the text
+     * lines AFTER the first — a notification card dims its body without
+     * needing a second widget (a `for` block only ever holds one cell). */
+    Expr *bfge = widget_prop(wd, "body_fg");
+    CE bfg = { .text = "0u", .type = T_COLOR };
+    if (bfge) bfg = lower(ctx, bfge);
+    cgctx_flush_prelude(ctx, o, indent);
+    fprintf(o, "%suint32_t body_fg = (uint32_t)(%s);\n", indent, bfg.text);
+
     CE bg = { .text = "0u", .type = T_COLOR };
     if (bge) bg = lower(ctx, bge);
     cgctx_flush_prelude(ctx, o, indent);
@@ -403,6 +412,8 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
         fprintf(o, "%s  fg  = (fg  & 0x00ffffffu) | (__af << 24);\n", indent);
         fprintf(o, "%s  uint32_t __ai = (uint32_t)(((icon_fg >> 24) & 0xffu) * __r);\n", indent);
         fprintf(o, "%s  icon_fg = (icon_fg & 0x00ffffffu) | (__ai << 24);\n", indent);
+        fprintf(o, "%s  uint32_t __ay = (uint32_t)(((body_fg >> 24) & 0xffu) * __r);\n", indent);
+        fprintf(o, "%s  body_fg = (body_fg & 0x00ffffffu) | (__ay << 24);\n", indent);
         fprintf(o, "%s  bdr = (bdr & 0x00ffffffu) | (__ad << 24); }\n", indent);
         fprintf(o, "%s#endif\n", indent);
     }
@@ -510,6 +521,7 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
     fprintf(o, "%sst[%s].pms = pms;\n", indent, idx_expr);
     fprintf(o, "%sst[%s].fg  = fg;\n", indent, idx_expr);
     fprintf(o, "%sst[%s].icon_fg = icon_fg;\n", indent, idx_expr);
+    fprintf(o, "%sst[%s].body_fg = body_fg;\n", indent, idx_expr);
     fprintf(o, "%sst[%s].bg  = bg;\n", indent, idx_expr);
     fprintf(o, "%sst[%s].press_bg = press_bg;\n", indent, idx_expr);
     fprintf(o, "%sst[%s].hover_bg = hover_bg;\n", indent, idx_expr);
@@ -785,6 +797,8 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
             indent, idx_expr, idx_expr, idx_expr);
     fprintf(o, "%s    uint32_t ifg = st[%s].icon_fg; if (!(ifg & 0xff000000u)) ifg = fg; (void)ifg;\n",
             indent, idx_expr);
+    fprintf(o, "%s    uint32_t bfg = st[%s].body_fg; if (!(bfg & 0xff000000u)) bfg = fg; (void)bfg;\n",
+            indent, idx_expr);
     /* press_bg override: while this st-index is the surface's pressed_st, swap
      * bg for the widget's press_bg if it has one. */
     fprintf(o, "%s    if (st[%s].hover_bg & 0xff000000u && __%s_hover_st == (%s) && __%s_hover_w == w) bg = st[%s].hover_bg;\n",
@@ -902,6 +916,20 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
         char v_icw[40];
         if (v_icb > 0) snprintf(v_icw, sizeof v_icw, "%d", v_icb);
         else snprintf(v_icw, sizeof v_icw, "cp_width(f, cp, pm, pms)");
+        /* Cross-axis centering, same rule as the horizontal path: a cell that
+         * declares its own `width` centers icon+text inside it (measured on the
+         * first line) instead of hugging the left inset. A row without `width`
+         * spans the region and stays start-aligned — that is what a wrapped
+         * notification card wants. */
+        if (widget_prop(wd, "width")) {
+            int v_padx = eval_int(widget_prop(wd, "pad_x"), 0);
+            fprintf(o, "%s    { int __cw = 0;\n", indent);
+            fprintf(o, "%s      if (cp || pms) __cw += %s;\n", indent, v_icw);
+            fprintf(o, "%s      if ((cp || pms) && txt && txt[0]) __cw += %d;\n", indent, v_icg);
+            fprintf(o, "%s      if (txt) { const char *__q = txt; while (*__q && *__q != '\\n') __q++; char __t3[256]; int __L3 = (int)(__q - txt); if (__L3 > 255) __L3 = 255; memcpy(__t3, txt, __L3); __t3[__L3] = 0; __cw += text_width(f, __t3); }\n", indent);
+            fprintf(o, "%s      int __av = __rw - pad - %d;\n", indent, 2 * v_padx);
+            fprintf(o, "%s      if (__cw < __av) cx += (__av - __cw) / 2; }\n", indent);
+        }
         fprintf(o, "%s    if (cp || pms) { int __icw = %s; draw_cp_centered(sl->px, w->w, w->h, cx, cy, __icw, f->line_h, f, cp, ifg, pm, pms); cx += __icw; if (txt && txt[0]) cx += %d; }\n",
                 indent, v_icw, v_icg);
         fprintf(o, "%s    if (txt) {\n", indent);
@@ -913,10 +941,10 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
         /* Same as the horizontal path: `elide` clamps to the room left in the
          * row and appends '…', instead of running past the slab. */
         if (widget_flag(wd, "elide"))
-            fprintf(o, "%s            draw_text_elided(sl->px, w->w, w->h, cx, cy + __ln * f->line_h, f, __tmp, __rx + __rw - cx - %d, fg);\n",
+            fprintf(o, "%s            draw_text_elided(sl->px, w->w, w->h, cx, cy + __ln * f->line_h, f, __tmp, __rx + __rw - cx - %d, __ln ? bfg : fg);\n",
                     indent, eval_int(widget_prop(wd, "pad_x"), 0));
         else
-            fprintf(o, "%s            draw_text(sl->px, w->w, w->h, cx, cy + __ln * f->line_h, f, __tmp, fg);\n", indent);
+            fprintf(o, "%s            draw_text(sl->px, w->w, w->h, cx, cy + __ln * f->line_h, f, __tmp, __ln ? bfg : fg);\n", indent);
         fprintf(o, "%s            __ln++;\n%s            if (!*__nl) break;\n%s            __p = __nl + 1;\n", indent, indent, indent);
         fprintf(o, "%s        }\n", indent);
         fprintf(o, "%s    }\n", indent);
@@ -1052,11 +1080,11 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
             fprintf(o, "%s            for (int __k = 0; __k < (int)(sizeof st / sizeof st[0]); __k++)\n", indent);
             fprintf(o, "%s                if (st[__k].vis && st[__k].align == 1 && __k != (%s)) __rsv += st[__k].tw + st[__k].pad;\n",
                     indent, idx_expr);
-            fprintf(o, "%s            draw_text_elided(sl->px, w->w, w->h, x, __ty + __ln * f->line_h, f, __tmp, __reg_x + __reg_w - __rsv - x - %d, fg);\n",
+            fprintf(o, "%s            draw_text_elided(sl->px, w->w, w->h, x, __ty + __ln * f->line_h, f, __tmp, __reg_x + __reg_w - __rsv - x - %d, __ln ? bfg : fg);\n",
                     indent, pad_x > 0 ? pad_x : 0);
         }
         else
-            fprintf(o, "%s            draw_text(sl->px, w->w, w->h, x, __ty + __ln * f->line_h, f, __tmp, fg);\n", indent);
+            fprintf(o, "%s            draw_text(sl->px, w->w, w->h, x, __ty + __ln * f->line_h, f, __tmp, __ln ? bfg : fg);\n", indent);
         fprintf(o, "%s            __ln++;\n%s            if (!*__nl) break;\n%s            __p = __nl + 1;\n", indent, indent, indent);
         fprintf(o, "%s        }\n", indent);
         fprintf(o, "%s    }\n", indent);

@@ -31,6 +31,8 @@ uint32_t    eval_color_ctx(CGCtx *ctx, Expr *e, uint32_t dflt);
 Align       eval_align(Expr *e);
 int         surface_is_vertical(Decl *sur);
 Expr       *surface_prop(Decl *sur, const char *name);
+const char *surface_kbd_mode(Decl *sur);
+int         surface_marker(Decl *sur, const char *name);
 Expr       *widget_prop(Widget *w, const char *name);
 WBody      *widget_onclick(Widget *w);
 WBody      *widget_handler(Widget *w, WBKind k);

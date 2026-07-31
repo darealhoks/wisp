@@ -294,8 +294,8 @@ int emit_generated_compound(FILE *o, Decl *cmp, CGCtx *ctx, const char *nm) {
         fputs("    (void)__reg_x; (void)__reg_y; (void)__reg_w; (void)__reg_h;\n", o);
         if (vertical) fputs("    int y = __reg_y; (void)y;\n", o);
         else          fputs("    int y = __reg_y + (__reg_h - f->line_h) / 2;\n", o);
-        fprintf(o, "    struct { int tw, vis; uint32_t cp, fg, icon_fg, bg, border, press_bg, hover_bg; const uint32_t *pm; int pms; const char *txt; int pad, align; int h; int ch; int body_lines; } st[%d];\n", arr);
-        fprintf(o, "    for (int __i = 0; __i < %d; __i++) { st[__i].vis = 0; st[__i].h = 0; st[__i].ch = 0; st[__i].body_lines = 1; st[__i].border = 0; st[__i].press_bg = 0; st[__i].hover_bg = 0; st[__i].icon_fg = 0; }\n", arr);
+        fprintf(o, "    struct { int tw, vis; uint32_t cp, fg, icon_fg, body_fg, bg, border, press_bg, hover_bg; const uint32_t *pm; int pms; const char *txt; int pad, align; int h; int ch; int body_lines; } st[%d];\n", arr);
+        fprintf(o, "    for (int __i = 0; __i < %d; __i++) { st[__i].vis = 0; st[__i].h = 0; st[__i].ch = 0; st[__i].body_lines = 1; st[__i].border = 0; st[__i].press_bg = 0; st[__i].hover_bg = 0; st[__i].icon_fg = 0; st[__i].body_fg = 0; }\n", arr);
         fputs("    (void)st;\n", o);
         fputs("    int center_total = 0;\n", o);
         fprintf(o, "    int end_extent = %s;\n", vertical ? "__reg_h" : "__reg_w");
@@ -594,6 +594,7 @@ int emit_surfaces(FILE *o, Unit *u, CGCtx *ctx) {
     const char *surf_names[16]; int surf_scroll[16] = {0}; int nsurf = 0;
     int surf_snap[16] = {0};   /* `scroll = rows` — a notch is one row, not N px */
     const char *surf_esc[16] = {0};   /* `on_escape` command string, NULL = none */
+    int surf_unf[16] = {0};           /* `dismiss_on_unfocus;` — run surf_esc on kbd leave */
     /* Menus join the render/input/redraw dispatchers but not the tags or
      * title fanouts — they have no bar state and no visibility lifecycle. */
     const char *menu_names[8]; int nmenu = 0;
@@ -684,6 +685,7 @@ int emit_surfaces(FILE *o, Unit *u, CGCtx *ctx) {
                 q[k] = 0;
                 surf_esc[nsurf] = q;
             }
+            surf_unf[nsurf] = surface_marker(d, "dismiss_on_unfocus");
         }
         surf_names[nsurf++] = nm_dup;
         if (d->kind == D_COMPOUND) {
@@ -776,6 +778,21 @@ int emit_surfaces(FILE *o, Unit *u, CGCtx *ctx) {
         fputs("        return; }\n", o);
     }
     fputs("    (void)w; (void)key;\n}\n\n", o);
+
+    /* Keyboard focus left this surface (clicked another window/the desktop).
+     * `dismiss_on_unfocus;` reuses the surface's `on_escape` command — closing
+     * on click-away and closing on Esc are the same intent, so they are not two
+     * separate props. The pointer guard mirrors menu.c: a focus-follows-pointer
+     * compositor bounces focus on every press over an on_demand layer, and
+     * closing there would eat the click. */
+    fputs("void bar_input_unfocus(Widget *w) {\n", o);
+    for (int i = 0; i < nsurf; i++) {
+        if (!surf_unf[i] || !surf_esc[i]) continue;
+        fprintf(o, "    if (w->surface != ptr_focus)\n");
+        fprintf(o, "        for (int i = 0; i < __%s_nw; i++) if (__%s_widgets[i] == w) { exec_cmd(\"%s\"); return; }\n",
+                surf_names[i], surf_names[i], surf_esc[i]);
+    }
+    fputs("    (void)w;\n}\n\n", o);
 
     fputs("void bar_redraw_all(void) {\n", o);
     for (int i = 0; i < ndisp; i++)

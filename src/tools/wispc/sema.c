@@ -66,7 +66,7 @@ typedef struct { const char *kind; const char *human; const char *props; } PropS
 
 static const PropSchema SCHEMAS[] = {
     { "widget", "widget",
-      " align bg body_fit body_lines border border_bottom border_left border_right"
+      " align bg body_fg body_fit body_lines border border_bottom border_left border_right"
       " border_top border_width elide enter_anim enter_easing exit_anim"
       " exit_easing fg graph graph_fg graph_max graph_samples height hover_bg icon icon_box icon_fg icon_gap"
       " image image_size"
@@ -90,7 +90,7 @@ static const PropSchema SCHEMAS[] = {
       " layer margin max max_visible pad pad_x pad_y prog_fg prog_h prog_track"
       " prompt radius radius_bl radius_br radius_inner radius_outer radius_tl"
       " radius_tr reveal_anim_ms reveal_easing reveal_gutter reveal_on_hover"
-      " delay_ms on_escape row_h scroll separator separator_frac separator_h size slide_ms sort spawned_by terminal"
+      " delay_ms dismiss_on_unfocus keyboard on_escape row_h scroll separator separator_frac separator_h size slide_ms sort spawned_by terminal"
       " timeout timeout_low timeout_normal visible width " },
     { "group", "group",
       " align bg border border_width gap height pad pad_x radius sticky " },
@@ -252,6 +252,23 @@ static void read_tray_icon_size(SemaResult *r, Expr *c) {
         long v = (long)c->call.args[i]->i;
         if (v < 8 || v > 64) { diag_error(c->loc, "tray icon_size must be 8..64"); return; }
         r->tray_icon_px = (int)v;
+    }
+}
+
+/* `notifications(history=N)` — ring depth. Each entry is ~460 B of BSS that
+ * stays unbacked until notifications arrive, and it also sizes the per-cell
+ * st[]/hit arrays in every generated surface, so it stays compile-time. */
+int notif_hist_cap = NOTIF_HIST_CAP;
+static void read_notif_history(Expr *c) {
+    for (int i = 0; i < c->call.nargs; i++) {
+        const char *kn = c->call.argnames ? c->call.argnames[i] : NULL;
+        if (!kn || c->call.anlen[i] != 7 || memcmp(kn, "history", 7)) continue;
+        if (c->call.args[i]->kind != EX_INT) {
+            diag_error(c->loc, "notifications history takes an integer"); return;
+        }
+        long v = (long)c->call.args[i]->i;
+        if (v < 1 || v > 128) { diag_error(c->loc, "notifications history must be 1..128"); return; }
+        notif_hist_cap = (int)v;
     }
 }
 
@@ -567,15 +584,23 @@ static int group_prop_flag(Group *g, const char *name) {
  * a codegen backstop nobody runs. */
 static void validate_scroll(Decl *d) {
     Prop *sc = NULL; int vertical = 0;
+    Prop *unf = NULL; int has_esc = 0;
     for (int i = 0; i < d->surface.n; i++) {
         SBody *b = &d->surface.items[i];
         if (b->kind != SB_PROP) continue;
+        if (strcmp(b->prop->name, "dismiss_on_unfocus") == 0) unf = b->prop;
+        else if (strcmp(b->prop->name, "on_escape") == 0) has_esc = 1;
         if (strcmp(b->prop->name, "scroll") == 0) sc = b->prop;
         else if (strcmp(b->prop->name, "axis") == 0)
             vertical = b->prop->val && b->prop->val->kind == EX_IDENT
                     && b->prop->val->ident.n == 8
                     && memcmp(b->prop->val->ident.s, "vertical", 8) == 0;
     }
+    /* Both mean "close me"; unfocus reuses the on_escape command rather than
+     * duplicating it, so it needs one to run. */
+    if (unf && !has_esc)
+        diag_error(d->loc, "`dismiss_on_unfocus` needs `on_escape = \"<cmd>\"` — "
+                           "it runs that same command when the surface loses focus");
     if (sc && !vertical)
         diag_error(sc->val ? sc->val->loc : d->loc,
                    "`scroll` needs `axis = vertical;` on the same surface — "
@@ -776,6 +801,7 @@ SemaResult *sema_check(Arena *a, Unit *u) {
                     set_flag(s.r, sd->flag);
                     check_source_args(sd, d->source.call);
                     if (sd->flag == F_TRAY) read_tray_icon_size(s.r, d->source.call);
+                    if (!strcmp(sd->name, "notifications")) read_notif_history(d->source.call);
                 }
             }
             break;

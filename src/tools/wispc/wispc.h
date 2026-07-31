@@ -19,8 +19,10 @@ void   arena_free(Arena *a);
 typedef struct { const char *file; int line, col; } Loc;
 void diag_error(Loc l, const char *fmt, ...) __attribute__((format(printf,2,3)));
 /* Notification-center ring depth: sizes the per-cell st[]/hit/tween arrays here
- * and notify.c's history (via features.h), so the two cannot drift. */
+ * and notify.c's history (via features.h), so the two cannot drift. Default;
+ * `notifications(history=N)` overrides it into `notif_hist_cap` (sema.c). */
 #define NOTIF_HIST_CAP 16
+extern int notif_hist_cap;
 
 void diag_note (Loc l, const char *fmt, ...) __attribute__((format(printf,2,3)));
 void diag_hint (Loc l, const char *fmt, ...) __attribute__((format(printf,2,3)));

@@ -201,6 +201,34 @@ Expr *surface_prop(Decl *sur, const char *name) {
     }
     return NULL;
 }
+/* Bare marker prop (`dismiss_on_unfocus;`) — no value, so surface_prop() can't
+ * see it. */
+int surface_marker(Decl *sur, const char *name) {
+    size_t L = strlen(name);
+    for (int i = 0; i < sur->surface.n; i++) {
+        SBody *b = &sur->surface.items[i];
+        if (b->kind == SB_PROP && b->prop->nlen == L &&
+            memcmp(b->prop->name, name, L) == 0) return 1;
+    }
+    return 0;
+}
+
+/* `keyboard = none|on_demand|exclusive` as a C expression. Default: a surface
+ * that declares `on_escape` takes keys on_demand (it needs focus to see Esc but
+ * must not hold the session's keyboard), everything else takes none. on_demand
+ * is layer-shell v4, so fall back to exclusive on older compositors — same
+ * guard menu.c uses. */
+const char *surface_kbd_mode(Decl *sur) {
+    Expr *k = surface_prop(sur, "keyboard");
+    const char *id = NULL; size_t n = 0;
+    if (k && k->kind == EX_IDENT) { id = k->ident.s; n = k->ident.n; }
+    if (id && n == 4 && memcmp(id, "none", 4) == 0)           return "0";
+    if (id && n == 9 && memcmp(id, "exclusive", 9) == 0)      return "1";
+    if ((id && n == 9 && memcmp(id, "on_demand", 9) == 0) || (!id && surface_prop(sur, "on_escape")))
+        return "layer_shell_ver >= 4 ? 2 : 1";
+    return "0";
+}
+
 Expr *widget_prop(Widget *w, const char *name) {
     for (int i = 0; i < w->nitems; i++) {
         if (w->items[i].kind == WB_PROP) {

@@ -277,6 +277,14 @@ void on_keyboard_event(uint16_t op, uint8_t *body, uint32_t bodylen) {
                 menu_reply_and_close(lw, -1);
         }
 #endif
+#ifdef WISP_HAS_BAR
+        /* Same deal for a declared panel that asked for `dismiss_on_unfocus`
+         * (the generated dispatcher is a stub otherwise). */
+        if (bodylen >= 8) {
+            Widget *lw = widget_by_surface(*(uint32_t *)(body + 4));
+            if (lw && lw->kind == W_BAR) bar_input_unfocus(lw);
+        }
+#endif
         kbd_focus = 0; key_rep_cancel(); break;
     }
     case 3: {

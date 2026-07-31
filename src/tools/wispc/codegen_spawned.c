@@ -233,8 +233,8 @@ int emit_spawned_osd_skeleton(FILE *o, Decl *sur, CGCtx *ctx, const char *nm, in
 
     /* Measure + draw passes — same scaffolding as a real surface, just inside
      * the slab loop. center_pos math uses __reg_w as the extent. */
-    fprintf(o, "        struct { int tw, vis; uint32_t cp, fg, icon_fg, bg, border, press_bg, hover_bg; const uint32_t *pm; int pms; const char *txt; int pad, align; int h; int ch; int body_lines; } st[%d];\n", n_arr);
-    fprintf(o, "        for (int __i = 0; __i < %d; __i++) { st[__i].vis = 0; st[__i].h = 0; st[__i].ch = 0; st[__i].body_lines = 1; st[__i].border = 0; st[__i].press_bg = 0; st[__i].hover_bg = 0; st[__i].icon_fg = 0; }\n", n_arr);
+    fprintf(o, "        struct { int tw, vis; uint32_t cp, fg, icon_fg, body_fg, bg, border, press_bg, hover_bg; const uint32_t *pm; int pms; const char *txt; int pad, align; int h; int ch; int body_lines; } st[%d];\n", n_arr);
+    fprintf(o, "        for (int __i = 0; __i < %d; __i++) { st[__i].vis = 0; st[__i].h = 0; st[__i].ch = 0; st[__i].body_lines = 1; st[__i].border = 0; st[__i].press_bg = 0; st[__i].hover_bg = 0; st[__i].icon_fg = 0; st[__i].body_fg = 0; }\n", n_arr);
     fputs("        (void)st;\n", o);
     fputs("        int center_total = 0;\n", o);
     fputs("        int __center_trail_pad = 0; (void)__center_trail_pad;\n", o);
@@ -460,9 +460,9 @@ int emit_menu_render(FILE *o, Decl *sur, Decl *tmpl, CGCtx *ctx, const char *nm,
     else /* text baseline cursor for horizontally-laid items */
         fputs("    int y = (__chs - f->line_h) / 2 + __coy; (void)y;\n", o);
     fprintf(o,
-        "    struct { int tw, vis; uint32_t cp, fg, icon_fg, bg, border, press_bg, hover_bg; const uint32_t *pm; int pms; const char *txt; int pad, align; int h; int ch; int body_lines; } st[%d];\n",
+        "    struct { int tw, vis; uint32_t cp, fg, icon_fg, body_fg, bg, border, press_bg, hover_bg; const uint32_t *pm; int pms; const char *txt; int pad, align; int h; int ch; int body_lines; } st[%d];\n",
         n_arr);
-    fprintf(o, "    for (int __i = 0; __i < %d; __i++) { st[__i].vis = 0; st[__i].h = 0; st[__i].ch = 0; st[__i].body_lines = 1; st[__i].border = 0; st[__i].press_bg = 0; st[__i].hover_bg = 0; st[__i].icon_fg = 0; }\n", n_arr);
+    fprintf(o, "    for (int __i = 0; __i < %d; __i++) { st[__i].vis = 0; st[__i].h = 0; st[__i].ch = 0; st[__i].body_lines = 1; st[__i].border = 0; st[__i].press_bg = 0; st[__i].hover_bg = 0; st[__i].icon_fg = 0; st[__i].body_fg = 0; }\n", n_arr);
     fputs("    (void)st;\n", o);
     fputs("    int center_total = 0;\n", o);
     fputs("    int __center_trail_pad = 0; (void)__center_trail_pad;\n", o);

@@ -17,7 +17,7 @@ source tray_s = tray(icon_size=20);
 source vol_s  = pipewire();
 
 source hid    = ui_hidden();
-source notif_s = notifications();
+source notif_s = notifications(history=64);
 
 const TEXT   = #ffdbe2ee;
 const SUBTXT = #ffa5adbb;
@@ -130,6 +130,18 @@ surface bar {
 			fg = !vol_s.ok     ? RED
 				: vol_s.mute     ? ORANGE : TVIOLET;
 			on_click() = exec("foot -T ws-hud-vol --app-id=ws-hud-vol -e wiremix");
+		}
+		widget sep_conn2.sep {
+			text = "/";
+		}
+		// the panel is anchored top|right, so the bell belongs on the right
+		// edge of the bar — in the HUD it opened a surface nowhere near itself
+		widget notif {
+			icon = 0xf0f3;
+			text = notif_s.count > 0 ? "{notif_s.count}" : "";
+			fg = notif_s.open ? WSACT
+				: notif_s.count > 0 ? TERT : TEXT;
+			on_click() = exec("wispctl notif toggle");
 		}
 	}
 
@@ -273,7 +285,7 @@ source mirror_on  = toplevel(app_id="at.yrlf.wl_mirror");
 surface hud {
 	layer = overlay;
 	anchor = top;
-	width  = 294;          // 6 × 32px button + 5 × 8px separator, each +6 gap
+	width  = 244;          // 5 × 32px button + 4 × 8px separator, each +6 gap
 	height = 40;
 	font_size = 14;
 	reveal_on_hover = 20;
@@ -296,15 +308,6 @@ surface hud {
 		on_click() = exec("wispctl dnd toggle");
 	}
 	widget sep2.sep {
-		text = "/";
-	}
-	widget notif_btn.btn {
-		icon = 0xf0f3;
-		fg = notif_s.open ? WSACT
-			: notif_s.count > 0 ? TERT : TEXT;
-		on_click() = exec("wispctl notif toggle");
-	}
-	widget sep2b.sep {
 		text = "/";
 	}
 	widget vol_btn.btn {
@@ -342,7 +345,7 @@ surface hud {
 	radius = 8;
 }
 
-#gamma_btn, #dnd_btn, #mirror_btn, #notif_btn {
+#gamma_btn, #dnd_btn, #mirror_btn, #notif {
 	transition_fg = 180ms;
 }
 .btn:pressed {
@@ -367,29 +370,48 @@ surface notifs {
 	scroll  = rows;        // one wheel notch = exactly one card, whatever its height
 	font_size = 14;
 	visible = notif_s.open;
+	pad_x   = 10;          // one inset for the whole panel; rows fill what's left
+	pad_y   = 8;
 	on_escape = "wispctl notif close";
+	dismiss_on_unfocus;    // clicking anywhere else closes it, like a dropdown
+	                       // (kbd is on_demand, so an open panel never eats typing)
 
 	bg = #ee0e131c;
 	radius = 8;
 	border = BORD;
 	border_width = 2;
 
+	// bell / title / trash: the two 26px squares balance, so the title is
+	// actually centered instead of merely left of the button
 	group nhead {
 		sticky;                // stays pinned; the cards scroll beneath it
 		height = 30;
+		widget nbell.dim {
+			width = 26;
+			icon  = 0xf0f3;
+		}
 		widget nhead_t.dim {
-			width = 250;
-			text = "notifications";
+			width = 304;    // 356 content width − the two 26px squares
+			text  = "notifications";
 		}
 		widget nclear {
-			text = "clear all";
-			fg   = SUBTXT;
+			width = 26;
+			icon  = 0xf1f8;
+			fg    = notif_s.count > 0 ? SUBTXT : WSBORD;
 			on_click() = exec("wispctl notif clear");
 		}
 	}
-	widget nempty.dim {
-		height  = 30;
-		text    = "nothing yet";
+	widget nrule {
+		sticky;
+		height = 1;
+		bg     = BORD;
+		pad    = 8;
+	}
+	widget nempty {
+		width   = 356;         // declared width → the text centers across it too
+		height  = 330;         // fills the card area, so the text centers in it
+		text    = "nothing yet…";
+		fg      = #ff5c6678;
 		visible = notif_s.count == 0;
 	}
 	for note in notif_s.history {
@@ -400,7 +422,10 @@ surface notifs {
 			body_fit;
 			wrap;
 			text_align = start;
-			fg = note.urgent ? RED : TEXT;
+			fg      = TEXT;
+			body_fg = SUBTXT;   // summary reads first, body recedes
+			icon_fg = note.urgent ? RED : TERT;
+			border  = note.urgent ? RED : #00000000;
 			// click a card to dismiss it
 			on_click() = exec("wispctl notif dismiss {note.id}");
 		}
@@ -408,28 +433,29 @@ surface notifs {
 }
 
 #nhead {
-	pad_x = 10;
+	pad_x = 0;
 	gap   = 0;
 	bg    = #00000000;
 	border = #00000000;    // don't inherit the panel frame around the header
 }
 #nclear {
-	height = 22;           // else the press fill spans the whole header band
+	height = 26;           // else the press fill spans the whole header band
 	radius = 6;
 }
-#nclear:pressed {
+#nclear:hover {
 	bg = REST;
 }
-#nempty {
-	pad_x = 12;
+#nclear:pressed {
+	bg = WSBORD;
 }
 .note {
 	bg     = REST;
-	radius = 6;
-	pad_x  = 10;
-	pad_y  = 6;
-	pad    = 6;
-	width  = 356;
+	radius = 8;
+	pad_x  = 12;
+	pad_y  = 10;
+	pad    = 8;
+	border_width = 1;
+	icon_gap = 8;
 }
 .note:hover {
 	bg = #ff1b2233;

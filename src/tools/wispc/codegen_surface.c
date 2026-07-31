@@ -990,9 +990,14 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
      * over-long card was cut flush against the rounded frame. */
     if (scroll_px > 0) {
         int bw = has_bord ? sur_bord_w : 0;
-        vp_pad = bw + 2;
-        fprintf(o, "    __cox += %d; __coy += %d;\n", vp_pad, vp_pad);
-        fprintf(o, "    __cws -= %d; __chs -= %d;\n", 2 * vp_pad, 2 * vp_pad);
+        /* The surface's own `pad_x`/`pad_y` (default 2) is the gap between the
+         * frame and the rows, so a card no longer hand-computes its width from
+         * the panel width minus the border ring. */
+        int px = bw + eval_int(surface_prop(sur, "pad_x"), 2);
+        int py = bw + eval_int(surface_prop(sur, "pad_y"), 2);
+        vp_pad = px < py ? px : py;   /* shaped-clip radius: the conservative one */
+        fprintf(o, "    __cox += %d; __coy += %d;\n", px, py);
+        fprintf(o, "    __cws -= %d; __chs -= %d;\n", 2 * px, 2 * py);
         fputs("    __reg_x = __cox; __reg_y = __coy;\n", o);
         fputs("    __reg_w = __cws; __reg_h = __chs;\n", o);
     }
@@ -1003,9 +1008,9 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     else
         fputs("    int y = (__chs - f->line_h) / 2 + __coy; (void)y;\n", o);
     fprintf(o,
-        "    struct { int tw, vis; uint32_t cp, fg, icon_fg, bg, border, press_bg, hover_bg; const uint32_t *pm; int pms; const char *txt; int pad, align; int h; int ch; int body_lines; } st[%d];\n",
+        "    struct { int tw, vis; uint32_t cp, fg, icon_fg, body_fg, bg, border, press_bg, hover_bg; const uint32_t *pm; int pms; const char *txt; int pad, align; int h; int ch; int body_lines; } st[%d];\n",
         n_arr);
-    fprintf(o, "    for (int __i = 0; __i < %d; __i++) { st[__i].vis = 0; st[__i].h = 0; st[__i].ch = 0; st[__i].body_lines = 1; st[__i].border = 0; st[__i].press_bg = 0; st[__i].hover_bg = 0; st[__i].icon_fg = 0; }\n", n_arr);
+    fprintf(o, "    for (int __i = 0; __i < %d; __i++) { st[__i].vis = 0; st[__i].h = 0; st[__i].ch = 0; st[__i].body_lines = 1; st[__i].border = 0; st[__i].press_bg = 0; st[__i].hover_bg = 0; st[__i].icon_fg = 0; st[__i].body_fg = 0; }\n", n_arr);
     fputs("    (void)st;\n", o);
     fputs("    int center_total = 0;\n", o);
     /* Trailing-pad correction: every center-aligned item adds `tw + pad` to

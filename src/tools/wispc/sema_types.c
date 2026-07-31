@@ -239,7 +239,7 @@ static PropTy prop_expected(const char *n, size_t L) {
         " night_hour fade_min transition_ms fade_ms dither_px wipe_soft prog_h"
         " icon_gap icon_box image_size thickness segments highlight_arc delay_ms ";
     static const char *COLOR =
-        " bg fg icon_fg bg_bottom border press_bg hover_bg shadow track_bg track_fg thumb_color"
+        " bg fg icon_fg body_fg bg_bottom border press_bg hover_bg shadow track_bg track_fg thumb_color"
         " thumb_border prog_fg prog_track armpit_color separator ring ring_bad"
         " dim caps highlight highlight_bs ";
     if (word_in(NUM,   n, L)) return PT_NUM;
@@ -249,7 +249,7 @@ static PropTy prop_expected(const char *n, size_t L) {
 
 /* ---------- enum props ---------- */
 enum { E_LAYER, E_ANCHOR, E_ALIGN, E_AXIS, E_THUMB, E_VALIGN,
-       E_EDGE, E_INPUT, E_TRANSITION, E_WIPEDIR, E_EASING, E_SCROLL, E_N };
+       E_EDGE, E_INPUT, E_TRANSITION, E_WIPEDIR, E_EASING, E_SCROLL, E_KBD, E_N };
 static const char *ENUM_SETS[E_N] = {
     [E_LAYER]      = "background bottom top overlay",
     [E_ANCHOR]     = "top bottom left right",
@@ -264,6 +264,7 @@ static const char *ENUM_SETS[E_N] = {
     [E_EASING]     = "linear ease_in ease_out ease_in_out",
     /* `scroll` is a px step OR the `rows` keyword (enum_bad_leaf lets ints through). */
     [E_SCROLL]     = "rows",
+    [E_KBD]        = "none on_demand exclusive",
 };
 
 static int enum_prop_set(const char *n, size_t L, int *is_flag) {
@@ -285,6 +286,7 @@ static int enum_prop_set(const char *n, size_t L, int *is_flag) {
     P("transition_easing", E_EASING, 0);
     P("reveal_easing", E_EASING, 0);
     P("scroll", E_SCROLL, 0);
+    P("keyboard", E_KBD, 0);
     P("enter_easing", E_EASING, 0);
     P("exit_easing", E_EASING, 0);
     #undef P
@@ -372,7 +374,7 @@ void check_source_args(const SrcDef *sd, Expr *c) {
     /* Zero-arg sources: any argument is a mistake. (cpu/mem/temp are omitted —
      * as polled status kinds they accept a probe arg and every=.) */
     static const char *ZERO =
-        " power_profile gamma_warm dnd ui_hidden mpris pipewire bluez notifications ";
+        " power_profile gamma_warm dnd ui_hidden mpris pipewire bluez ";
     if (word_in(ZERO, nm, strlen(nm))) {
         if (na != 0) diag_error(c->loc, "%s() takes no arguments", nm);
         return;
@@ -396,6 +398,12 @@ void check_source_args(const SrcDef *sd, Expr *c) {
     } else if (!strcmp(nm, "toplevel")) {
         if (!call_has_kw(c, "app_id", 6))
             diag_error(c->loc, "toplevel() requires app_id=\"…\"");
+    } else if (!strcmp(nm, "notifications")) {
+        for (int i = 0; i < na; i++) {
+            const char *kn = c->call.argnames ? c->call.argnames[i] : NULL;
+            if (!kn || c->call.anlen[i] != 7 || memcmp(kn, "history", 7) != 0)
+                diag_error(c->loc, "notifications() takes only history=N");
+        }
     }
     /* temp/bat/net/disk/vpn/backlight (probe arg + every=), tags, tray: shapes
      * are permissive; codegen's collect_srcs remains the backstop for those. */

@@ -158,10 +158,11 @@ int emit_surface_life(FILE *o, Decl *sur, CGCtx *ctx, const char *nm,
         fprintf(o, "    widget_set_margin(w, %d, %d, %d, %d);\n", g->margin, g->margin, g->margin, g->margin);
         fprintf(o, "    widget_set_exclusive_zone(w, %d);\n", g->excl_zone);
         /* `on_escape` needs key events, and a layer surface only gets them with
-         * keyboard interactivity — exclusive, since the panel is opened
-         * deliberately and on_demand would need a click first for Esc to work. */
-        fprintf(o, "    widget_set_kbd_interactive(w, %d);\n",
-                surface_prop(sur, "on_escape") ? 1 : 0);
+         * keyboard interactivity. Default `on_demand`: an exclusive panel eats
+         * every keystroke in the session while it is open, which for a bar
+         * dropdown is never what you want — pair it with `dismiss_on_unfocus`
+         * and clicking away closes it instead of leaving a keyboard trap. */
+        fprintf(o, "    widget_set_kbd_interactive(w, %s);\n", surface_kbd_mode(sur));
         Expr *inp = surface_prop(sur, "input");
         int input_none = inp && inp->kind == EX_IDENT && inp->ident.n == 4
                          && memcmp(inp->ident.s, "none", 4) == 0;

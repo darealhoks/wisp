@@ -61,7 +61,7 @@ static void emit_features(FILE *o, SemaResult *r) {
     P(has_pipewire, "PIPEWIRE");
     P(has_toplevel, "TOPLEVEL");
     P(has_tooltip, "TOOLTIP");
-    fprintf(o, "#define NOTIF_HIST_CAP %d\n", NOTIF_HIST_CAP);
+    fprintf(o, "#define NOTIF_HIST_CAP %d\n", notif_hist_cap);
     #undef P
     fputs("\n#endif\n", o);
 }
