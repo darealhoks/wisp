@@ -371,6 +371,7 @@ surface notifs {
 	scroll  = rows;        // one wheel notch = exactly one card, whatever its height
 	font_size = 14;
 	visible = notif_s.open;
+	output  = active;      // one copy, on the monitor whose bell was clicked
 	pad_x   = 10;          // one inset for the whole panel; rows fill what's left
 	pad_y   = 8;
 	on_escape = "wispctl notif close";

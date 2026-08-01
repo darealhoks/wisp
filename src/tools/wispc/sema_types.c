@@ -249,7 +249,7 @@ static PropTy prop_expected(const char *n, size_t L) {
 
 /* ---------- enum props ---------- */
 enum { E_LAYER, E_ANCHOR, E_ALIGN, E_AXIS, E_THUMB, E_VALIGN,
-       E_EDGE, E_INPUT, E_TRANSITION, E_WIPEDIR, E_EASING, E_SCROLL, E_KBD, E_N };
+       E_EDGE, E_INPUT, E_OUTPUT, E_TRANSITION, E_WIPEDIR, E_EASING, E_SCROLL, E_KBD, E_N };
 static const char *ENUM_SETS[E_N] = {
     [E_LAYER]      = "background bottom top overlay",
     [E_ANCHOR]     = "top bottom left right",
@@ -259,6 +259,7 @@ static const char *ENUM_SETS[E_N] = {
     [E_VALIGN]     = "start center end top bottom left right",
     [E_EDGE]       = "top bottom left right",
     [E_INPUT]      = "none",
+    [E_OUTPUT]     = "active",
     [E_TRANSITION] = "fade dither wipe",
     [E_WIPEDIR]    = "right left down up down_right down_left up_right up_left",
     [E_EASING]     = "linear ease_in ease_out ease_in_out",
@@ -281,6 +282,7 @@ static int enum_prop_set(const char *n, size_t L, int *is_flag) {
     P("text_align", E_VALIGN, 0);
     P("edge", E_EDGE, 0);
     P("input", E_INPUT, 0);
+    P("output", E_OUTPUT, 0);
     P("transition", E_TRANSITION, 0);
     P("wipe_dir", E_WIPEDIR, 0);
     P("transition_easing", E_EASING, 0);

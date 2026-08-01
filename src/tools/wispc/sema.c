@@ -87,7 +87,7 @@ static const PropSchema SCHEMAS[] = {
       " fillet_inner_top fillet_offset_y fillet_outer_bottom fillet_outer_left"
       " fillet_outer_right fillet_outer_top fillet_r fillet_tl fillet_tr"
       " focus_follow font_size gap height hover icon_gap icons image input"
-      " layer margin margin_x max max_visible pad pad_x pad_y prog_fg prog_h prog_track"
+      " layer margin margin_x max max_visible output pad pad_x pad_y prog_fg prog_h prog_track"
       " prompt radius radius_bl radius_br radius_inner radius_outer radius_tl"
       " radius_tr reveal_anim_ms reveal_easing reveal_gutter reveal_on_hover"
       " delay_ms dismiss_on_unfocus keyboard on_escape row_h scroll separator separator_frac separator_h size slide_ms sort spawned_by terminal"
@@ -335,6 +335,7 @@ static void walk_expr(S *s, Expr *e) {
             "vertical","horizontal",
             "start","end",                         /* alignment aliases */
             "bar","pill","circle","disc","knob",   /* slider thumb_shape */
+            "active",                              /* surface `output = active` */
             NULL
         };
         /* `for row in rows` — a menu's visible filtered rows; the row source
@@ -588,6 +589,14 @@ static void validate_scroll(Decl *d) {
     for (int i = 0; i < d->surface.n; i++) {
         SBody *b = &d->surface.items[i];
         if (b->kind != SB_PROP) continue;
+        if (strcmp(b->prop->name, "output") == 0) {
+            Expr *v = b->prop->val;
+            if (!(v && v->kind == EX_IDENT && v->ident.n == 6
+                  && memcmp(v->ident.s, "active", 6) == 0))
+                diag_error(b->prop->val ? b->prop->val->loc : d->loc,
+                           "`output` takes only `active` (the monitor whose click "
+                           "opened the surface); omit it for one copy per output");
+        }
         if (strcmp(b->prop->name, "dismiss_on_unfocus") == 0) unf = b->prop;
         else if (strcmp(b->prop->name, "on_escape") == 0) has_esc = 1;
         if (strcmp(b->prop->name, "scroll") == 0) sc = b->prop;

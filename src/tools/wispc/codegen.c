@@ -51,6 +51,9 @@ static int emit_outputs(FILE *o, Unit *u, SemaResult *r) {
         if (d->kind == D_SURFACE && surface_prop(d, "spawned_by")) continue;
         /* menu.c owns a menu's lifecycle: no auto-create on output add. */
         if (d->is_menu) continue;
+        /* `output = active;` lives on one monitor: a hotplug must not add a
+         * second copy to a surface that is already up. */
+        if (surface_prop(d, "output")) continue;
         if (surface_prop(d, "visible"))
             fprintf(o, "    if (%.*s_is_visible()) %.*s_create_on(o);\n",
                     (int)d->nlen, d->name, (int)d->nlen, d->name);

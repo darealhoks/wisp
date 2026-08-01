@@ -428,6 +428,7 @@ int     cutout_apply(const char *self,   Output *self_out, uint32_t *px, int sw,
 typedef struct { Output *out; int x, w, below; int64_t ms; } ClickAnchor;
 extern ClickAnchor click_anchor;
 void    widget_note_click(Widget *w, int x, int cw);
+Output *output_active(void);             /* monitor an `output = active;` surface opens on */
 
 void    widget_set_anchor(Widget *w, uint32_t anchor_bits);
 void    widget_set_size(Widget *w, int width, int height);

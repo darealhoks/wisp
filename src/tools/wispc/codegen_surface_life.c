@@ -39,8 +39,13 @@ int emit_surface_life(FILE *o, Decl *sur, CGCtx *ctx, const char *nm,
         fprintf(o, "    int want = %s_is_visible();\n", nm);
         fprintf(o, "    int have = __%s_nw > 0;\n", nm);
         fputs("    if (want && !have) {\n", o);
-        fputs("        for (int i = 0; i < MAX_OUTPUTS; i++)\n", o);
-        fprintf(o, "            if (outputs[i].active) %s_create_on(&outputs[i]);\n", nm);
+        if (surface_prop(sur, "output")) {
+            /* `output = active;` — one copy, on the monitor that opened it. */
+            fprintf(o, "        %s_create_on(output_active());\n", nm);
+        } else {
+            fputs("        for (int i = 0; i < MAX_OUTPUTS; i++)\n", o);
+            fprintf(o, "            if (outputs[i].active) %s_create_on(&outputs[i]);\n", nm);
+        }
         fputs("    } else if (!want && have) {\n", o);
         /* Destroy from the tail: widget_destroy() swap-removes each widget from
          * __<nm>_widgets via wispgen_widget_destroyed(), so always destroy the

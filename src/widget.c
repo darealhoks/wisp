@@ -195,6 +195,19 @@ void widget_note_click(Widget *w, int x, int cw) {
     click_anchor.ms    = now_ms();
 }
 
+/* Monitor an `output = active;` surface belongs on: the one whose bar cell was
+ * just clicked (the panel hangs under the thing that opened it), else whatever
+ * the pointer is over, else the first active output. The 1 s box mirrors
+ * menu_create's — an open triggered by a keybind minutes later must not land on
+ * the monitor of some ancient click. */
+Output *output_active(void) {
+    if (click_anchor.out && now_ms() - click_anchor.ms < 1000) return click_anchor.out;
+    Widget *pw = widget_by_surface(ptr_focus);
+    if (pw && pw->output) return pw->output;
+    for (int i = 0; i < MAX_OUTPUTS; i++) if (outputs[i].active) return &outputs[i];
+    return NULL;
+}
+
 void widget_set_size(Widget *w, int width, int height) {
     uint32_t a[2] = { (uint32_t)width, (uint32_t)height };
     wl_req(w->layer_surface, LS_REQ_SET_SIZE, a, 2, -1);
