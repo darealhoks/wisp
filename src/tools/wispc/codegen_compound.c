@@ -784,13 +784,19 @@ int emit_surfaces(FILE *o, Unit *u, CGCtx *ctx) {
      * on click-away and closing on Esc are the same intent, so they are not two
      * separate props. The pointer guard mirrors menu.c: a focus-follows-pointer
      * compositor bounces focus on every press over an on_demand layer, and
-     * closing there would eat the click. */
+     * closing there would eat the click. Called after the event batch is
+     * drained, so kbd_focus already names the new focus: a multi-output panel
+     * exists once per output and the compositor walks focus across the copies
+     * as they map — focus landing on a sibling copy is not a click-away. */
     fputs("void bar_input_unfocus(Widget *w) {\n", o);
     for (int i = 0; i < nsurf; i++) {
         if (!surf_unf[i] || !surf_esc[i]) continue;
         fprintf(o, "    if (w->surface != ptr_focus)\n");
-        fprintf(o, "        for (int i = 0; i < __%s_nw; i++) if (__%s_widgets[i] == w) { exec_cmd(\"%s\"); return; }\n",
-                surf_names[i], surf_names[i], surf_esc[i]);
+        fprintf(o, "        for (int i = 0; i < __%s_nw; i++) if (__%s_widgets[i] == w) {\n",
+                surf_names[i], surf_names[i]);
+        fprintf(o, "            for (int j = 0; j < __%s_nw; j++) if (__%s_widgets[j]->surface == kbd_focus) return;\n",
+                surf_names[i], surf_names[i]);
+        fprintf(o, "            exec_cmd(\"%s\");\n            return;\n        }\n", surf_esc[i]);
     }
     fputs("    (void)w;\n}\n\n", o);
 

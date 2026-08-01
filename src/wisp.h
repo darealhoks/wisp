@@ -673,6 +673,7 @@ void bar_input_leave(Widget *w);
 void bar_input_scroll(Widget *w, int dir);
 void bar_input_key(Widget *w, unsigned key);   /* Esc on a surface that declared `on_escape` */
 void bar_input_unfocus(Widget *w);             /* kbd leave on a `dismiss_on_unfocus` surface */
+void input_flush_unfocus(void);                /* judge a pending kbd leave once the batch is drained */
 /* Shift a scrollable container by `dpx` logical pixels, clamped to
  * [0, w->scroll_max]. Returns the delta actually applied (0 at either end —
  * the only case that may repaint, so a wheel at the end of the list stays

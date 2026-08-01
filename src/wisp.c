@@ -242,6 +242,21 @@ void on_pointer_event(uint16_t op, uint8_t *body, uint32_t bodylen) {
     }
 }
 
+#ifdef WISP_HAS_BAR
+/* Surface of a `dismiss_on_unfocus` panel that just lost kbd focus, judged
+ * once the batch is drained and kbd_focus names where focus actually went. */
+static uint32_t unfocus_pending;
+
+void input_flush_unfocus(void) {
+    if (!unfocus_pending) return;
+    Widget *w = widget_by_surface(unfocus_pending);
+    unfocus_pending = 0;
+    if (w && w->kind == W_BAR) bar_input_unfocus(w);
+}
+#else
+void input_flush_unfocus(void) {}
+#endif
+
 void on_keyboard_event(uint16_t op, uint8_t *body, uint32_t bodylen) {
     switch (op) {
     case 0: {  /* keymap: format(4) fd(via cmsg) size(4) */
@@ -278,12 +293,13 @@ void on_keyboard_event(uint16_t op, uint8_t *body, uint32_t bodylen) {
         }
 #endif
 #ifdef WISP_HAS_BAR
-        /* Same deal for a declared panel that asked for `dismiss_on_unfocus`
-         * (the generated dispatcher is a stub otherwise). */
-        if (bodylen >= 8) {
-            Widget *lw = widget_by_surface(*(uint32_t *)(body + 4));
-            if (lw && lw->kind == W_BAR) bar_input_unfocus(lw);
-        }
+        /* Same deal for a declared panel that asked for `dismiss_on_unfocus`,
+         * but deferred to the end of the event batch (input_flush_unfocus):
+         * a panel exists once per output, and the compositor hands focus from
+         * one copy to the next as they map — the leave alone can't tell that
+         * apart from a real click-away, but the enter that follows it in the
+         * same batch can. */
+        if (bodylen >= 8) unfocus_pending = *(uint32_t *)(body + 4);
 #endif
         kbd_focus = 0; key_rep_cancel(); break;
     }

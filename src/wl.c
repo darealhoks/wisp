@@ -786,4 +786,5 @@ void wl_dispatch(void) {
      * message kept across reads (split delivery of e.g. wl_keyboard.keymap)
      * still owns its fd; closing it here would drop or misattribute it. */
     if (wl_rlen == 0) wl_close_pending_fds();
+    input_flush_unfocus();
 }
