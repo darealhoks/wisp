@@ -34,6 +34,7 @@ plain panel with identical behaviour otherwise.
 | `height` | `24` | body height |
 | `width` | `0` (stretch) | if set and `exclusive_zone` is not, the zone is forced to 0 |
 | `margin` | `0` | uniform layer-shell margin, all four sides |
+| `margin_x` | `= margin` | left/right override, so a panel can clear the bar vertically and keep the bar's side inset |
 | `exclusive_zone` | `= height` | positive reserves space, `-1` overlays and flips on the menu feature |
 | `bg` | `#ff000000` | body clear colour |
 | `bg_bottom` | off | vertical gradient toward it; disables partial repaint |
@@ -41,6 +42,13 @@ plain panel with identical behaviour otherwise.
 | `axis` | `horizontal` | `vertical` stacks along Y |
 | `input` | full region | only `none`, which makes the surface click-through |
 | `visible` | true | expression, gates create and destroy per output |
+| `output` | all | only `active`: one copy, on the monitor whose bar cell was just clicked |
+| `scroll` | `0` (off) | wheel-scrollable stack, `N` px per notch or the keyword `rows`; needs `axis = vertical` |
+| `pad_x` / `pad_y` | `2` | scrollable surfaces only: gap between the frame and the rows |
+| `on_escape` | - | shell command run when Escape is pressed here; declaring it turns on keyboard interactivity |
+| `keyboard` | `on_demand` with `on_escape`, else `none` | `none`, `on_demand`, `exclusive` |
+| `dismiss_on_unfocus` | marker | run the `on_escape` command when keyboard focus goes elsewhere |
+| `dismiss_on_click` | false | any click closes the surface |
 | `radius` | `0` | uniform corner radius |
 | `radius_inner` / `radius_outer` | `= radius` | desktop-facing and anchored-edge pair |
 | `radius_tl/tr/bl/br` | derived | absolute, wins over the pair |
@@ -60,11 +68,12 @@ plain panel with identical behaviour otherwise.
 | `cutout_x/y/width/height` | centre / own extent | the punched rect |
 
 **Inert here** (accepted, never read): `spawned_by`, `reveal_*`,
-`max`, `gap`, `pad`, `pad_x`, `pad_y`, `icon_gap`, `image`, `prog_h`, `prog_fg`,
+`max`, `gap`, `pad`, `icon_gap`, `image`, `prog_h`, `prog_fg`,
 `prog_track`, `body_lines`, `body_max`, `timeout*`, `slide_ms`, `fillet_r`,
 `separator`, `separator_frac`, `focus_follow`, `dbus_close`,
-`dismiss_on_click`, `prompt`, `row_h`, `max_visible`, `anchor_gap`, `sort`,
-`terminal`, `icons`, `hover`, `edge`, `size`, `fg`.
+`prompt`, `row_h`, `max_visible`, `anchor_gap`, `sort`,
+`terminal`, `icons`, `hover`, `edge`, `size`, `fg`. `pad_x` and `pad_y` are
+inert too unless the surface scrolls.
 
 **Lifecycle.** Created once per active output at startup and on output-add. With
 `visible = <expr>`, a false-to-true edge creates on every active output and the
@@ -76,6 +85,43 @@ cutout or slider takes the **partial repaint** path, where only the cells whose
 source ticked are redrawn. Any one of those features turns it off.
 
 Skeleton: [[templates#generic-bar]].
+
+### Scrollable panel
+
+A panel with `scroll` and `axis = vertical` is a wheel-scrollable container: a
+notch shifts the stack by `scroll` px, or by exactly one row with
+`scroll = rows`, which is what variable-height rows (wrapped text, `body_fit`)
+want. Content past the body rect is clipped, never drawn off-screen. The offset
+is discrete and unanimated, and a wheel at either end repaints nothing.
+
+Up and Down move a selection through the rows and Enter activates it exactly as
+a click would, on any scrollable surface, with no declaration. There is one
+indicator for both inputs: an arrow press starts from the row under the pointer,
+and pointer motion takes the selection back.
+
+A leading `sticky;` on a widget or group pins it above the scrolled region — a
+header. Only the leading run may be sticky; a `sticky` below a scrolling row is
+an error. The scrolled stack starts where that run ends.
+
+Panels are usually keyboard-dismissable and per-monitor:
+
+- `on_escape = "…"` runs a shell command on Escape and gives the surface
+  keyboard interactivity. `keyboard = exclusive` holds the whole session's
+  keyboard while mapped, which is right for a modal and wrong for a panel; the
+  default `on_demand` is what you want.
+- `dismiss_on_unfocus;` reuses that same command when keyboard focus goes
+  elsewhere, so clicking away closes the panel. It needs `on_escape`. A click
+  landing on the panel itself does not dismiss it, and the verdict is taken at
+  the end of the Wayland event batch, so focus moving between this surface's own
+  per-output copies is not a click-away either.
+- `output = active;` creates exactly one copy, on the monitor whose bar cell was
+  just clicked (the same one-second click anchor menus use, and reading it
+  spends it). Without it a panel opens on every monitor at once. A monitor
+  hotplugged afterwards gets no copy.
+
+The notification centre is this panel plus a `notifications()` source: gate
+`visible` on `<src>.open`, loop `for note in <src>.history`, and drive it with
+`wispctl notif open|close|toggle|clear|dismiss <id>`.
 
 ## HUD
 
@@ -149,7 +195,9 @@ the slab layout.
 | `anchor` | `top` | only top-centre and bottom-right are wired |
 
 A widget named `icon` contributes its `width` as the reserved left column, so
-text lines up even on icon-less slabs.
+text lines up across slabs. Put `visible = $has_icon` on it and the column
+collapses on a slab that carried neither cover art nor an icon, instead of
+indenting its text past an empty box; the body wraps against the same rule.
 
 **Template arguments**, readable as `$name` in the body:
 
@@ -162,6 +210,7 @@ text lines up even on icon-less slabs.
 | `$image` | pixmap, falls back to the `$icon` glyph; needs `image = N` |
 | `$pct` | display string |
 | `$progress` | 0..100 int, what a slider `value` wants |
+| `$has_icon` | bool, true when the post carried an image or an icon |
 | `$muted`, `$urgency` | int |
 | `$mute`, `$warn` | derived, read by the `:mute` and `:warn` pseudos |
 
@@ -520,6 +569,7 @@ The contents of every surface kind.
 | `icon_gap` | 2 | gap between icon column and text |
 | `fg` | `0xffffffff` | text and icon |
 | `icon_fg` | 0 = absent | icon only; alpha 0 falls back to `fg`; no transition slot |
+| `body_fg` | 0 = absent | text lines after the first; line 1 stays `fg`. Dims a `for` cell's body against its summary, which a second widget cannot do — a `for` block holds exactly one cell |
 | `bg` | 0 = off | slab |
 | `border` | 0 = off | |
 | `border_width` | 1 | |
@@ -534,6 +584,7 @@ The contents of every surface kind.
 | `elide` | marker | clamp each line and append an ellipsis |
 | `wrap` | marker | word-wrap before measuring; not available in groups |
 | `visible` | true | layout skip, or plays `exit_anim` |
+| `sticky` | marker | on a scrollable surface, pin this leading row above the scrolled stack |
 | `shadow` | 0 = off | drop shadow colour |
 | `shadow_x` / `shadow_y` | 0 / 2 | |
 | `shadow_blur` | **0** | |
@@ -600,18 +651,23 @@ all invisible collapses entirely. Groups are not wired for compound regions.
 
 ### for blocks
 
-Four iterables, each needing **exactly one** `cell { … }`. They live at surface,
+Five iterables, each needing **exactly one** `cell { … }`. They live at surface,
 widget or group scope.
 
 | head | cap | cell fields |
 |---|---|---|
 | `for t in <tags-src>.list` | 9 | `label` `index` `active` `urgent` `occupied` `pinned` `output` |
 | `for n in <dbus_signal-src>.history` | 8 | `summary` `body` `url` `urgent` |
-| `for i in <tray-src>.items` | 8 | `icon` `has_icon` `title` `id` `status` `index` `menu_open` |
-| `for r in rows` | 32 | `label` `icon` `selected` `index` |
+| `for n in <notifications-src>.history` | `history=` (16) | `summary` `body` `app` `icon` `image` `urgent` `id` |
+| `for i in <tray-src>.items` | 8 | `icon` `has_icon` `title` `id` `status` `index` `has_attention_icon` `menu_open` |
+| `for r in rows` | 32 | `label` `icon` `has_icon` `selected` `index` `enabled` `separator` `toggle` `checked` |
 
-Anything else is an error naming those four forms. `tags.list` is unrolled at
+Anything else is an error naming those forms. `tags.list` is unrolled at
 compile time; the others are runtime loops.
+
+A notification entry has **no `index`**: the ring can shift while a click is
+still travelling over the socket, so `note.id` (a monotonic serial) is the only
+stable dismiss key — `exec("wispctl notif dismiss {note.id}")`.
 
 ## Workspaces per compositor
 
@@ -638,6 +694,10 @@ What differs in practice:
 - Renaming the `osd`, `pill` or `menu` surface silently drops that engine; the name is load-bearing, not just `spawned_by`.
 - The surface property schema is one union, so OSD properties on a bar and menu properties on an OSD pass `--check` and do nothing.
 - `margin` is inert on a HUD, the slide is a render offset.
+- `scroll` needs `axis = vertical`, and `sticky` only works on the leading rows.
+- `dismiss_on_unfocus` without `on_escape` is an error; it has no command of its own.
+- `keyboard = exclusive` on a panel eats every keystroke in the session until it is dismissed.
+- A notification cell has `note.id`, not `note.index`.
 - A compound without `width` and `height`, a region without `edge`, or a region without an integer literal `size` is a hard error.
 - A `graph` inside a `group` is a hard error; a slider inside a group compiles fine despite older docs.
 - Anything above the rows in a menu template must declare a `height`, or the header height is measured as zero.

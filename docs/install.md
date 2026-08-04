@@ -48,8 +48,15 @@ unlinked inode.
 | `uninstall` | removes the binaries and the share dir |
 
 Each config caches into its own `build/<name>/`, and `make install` warms every
-config it can find (repo `configs/*.wisp` plus `~/.config/wisp/*.wisp`), so a
-later `wispctl rebuild <other>` is a cache hit rather than a compile.
+config it can find (repo `configs/*.wisp` plus `~/.config/wisp` searched
+recursively, the same lookup `wispctl rebuild` uses), so a later
+`wispctl rebuild <other>` is a cache hit rather than a compile.
+
+A file that is only ever `include`d is not a config. `configs/theme.wisp` is the
+default palette every shipped config includes, and it is skipped by both the
+warm sweep and `make check`. Theme switching is symlinking that name at another
+palette file; the build compares the resolved include list by content, so a
+symlink repointed at an older file still counts as a change.
 
 ## Build knobs
 
@@ -116,5 +123,5 @@ codegen; the full list of check-passes-emit-fails cases is in [[gotchas]].
 - `make` alone is not enough after an edit, use `make install`, because `wispctl reload` re-execs the installed binary.
 - `FRACTIONAL=1` with `FONT_BACKEND=bitmap` is a hard Makefile error; bitmap fonts can only pixel-double.
 - `FONT_BACKEND=baked` and `=freetype` were retired and now error out.
-- Only two configs ship: `reverie` and `anemoia`.
+- Only two configs ship: `reverie` and `anemoia`. `configs/theme.wisp` is a palette fragment they include, not a config.
 - `wispctl rebuild` needs the share dir (or `$WISP_SRC`) present, it shells out to `make -C` there.

@@ -1,6 +1,6 @@
 # Built-in sources
 
-A `source` is the only thing in wisp that changes on its own. There are 22 of
+A `source` is the only thing in wisp that changes on its own. There are 23 of
 them and you cannot add more; declaring one links its driver into the binary,
 not declaring one leaves that code out entirely.
 
@@ -34,7 +34,8 @@ Using the bare name reads the **primary** field: `text = bat_s;` is
 | `exec_line(cmd, …)` | `value` | none | timerfd plus pipe |
 | `inotify(path=, …)` | `value` | none | own inotify fd |
 | `dbus_signal(iface, member)` | `value` | `history` (for only) | session bus |
-| `mpris()` | `title` | `artist` `status` `player` | session bus |
+| `notifications([history=][, image=])` | `count` | `open`, `history` (for only) | in process, no fd |
+| `mpris()` | `title` | `artist` `status` `player` `art` | session bus |
 | `tray([icon_size=])` | `count` | `items` (for only) | session bus |
 | `pipewire()` | `vol` | `mute` `mic_vol` `mic_mute` `ok` | native PipeWire protocol |
 | `toplevel(app_id=)` | `exists` | `count` `title` | rides the wl_display fd, max 16 |
@@ -104,7 +105,42 @@ the daemon.
 
 **`toplevel(app_id=)`** requires `app_id=`. Max 16 of them.
 
-**`mpris()`** gives `title` `artist` `status` `player` off the session bus.
+**`mpris()`** gives `title` `artist` `status` `player` `art` off the session bus.
+`art` is the cover art decoded to a local path (`file://` only, an http cover
+gives `""`); feed it to a widget's `image`.
+
+**`notifications([history=N][, image=N])`** is the notification centre feed: the
+daemon's own history of accepted notifications, newest first, one entry per post
+that carried no progress hint. Entries are pushed before the DnD gate, so DnD
+collects instead of dropping.
+
+| field | meaning |
+|---|---|
+| `count` | number of entries held |
+| `open` | the panel flag `wispctl notif open\|close\|toggle` drives |
+| `history` | for-only ring; fields `summary` `body` `app` `icon` `image` `urgent` `id` |
+
+```wisp
+source notif_s = notifications(history=64, image=22);
+
+widget bell {
+	icon = 0xf0f3;
+	text = notif_s.count > 0 ? "{notif_s.count}" : "";
+	on_click() = exec("wispctl notif toggle");
+}
+```
+
+`history=` is an int literal from 1 to 128, default 16, and is compile-time: it
+also sizes the per-cell arrays of every surface that loops over the ring.
+`image=` is 0 to 128 px, default 0 meaning off, and keeps a downscaled copy of
+each entry's pixmap; it rides the OSD decode, so it only produces anything when
+the `osd` surface also declares `image = N`. Nothing is persisted to disk.
+
+`note.id` is the entry's serial and the only safe dismiss key — there is no
+`note.index`, because the ring shifts while a click is still travelling over the
+control socket. `note.image` is a pixmap for a widget's `icon`, with `note.icon`
+as its fallback glyph; when the entry has neither, the icon column collapses to
+zero width instead of indenting the text.
 
 **`tray(icon_size=N)`** exposes `count` plus the `items` iterable. `icon_size`
 is an int literal from 8 to 64, default 16, and bakes `TRAY_ICON_PX`.
@@ -158,4 +194,7 @@ the global path.
 - `every=` below 250 ms is an `--emit` error.
 - More than 32 sources, or more than 16 `toplevel()` sources, is a hard codegen error.
 - `lines=` must be an integer literal in 1..256 and `tray(icon_size=)` an integer literal in 8..64.
+- `notifications(history=)` is 1..128 and `image=` 0..128, both integer literals; `history=` changes the BSS of every surface looping over the ring.
+- `notifications(image=N)` alone decodes nothing: the `osd` surface has to declare `image = N` too.
+- A notification row keyed on an index instead of `note.id` dismisses the wrong entry when the ring moves under the click.
 - Reading `net().rx_kbps` silently converts an event-driven source into a polling one.

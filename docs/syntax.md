@@ -232,7 +232,7 @@ move their selection with the pointer instead, via the `hover;` marker.
 ## Marker properties
 
 A bare identifier with no `=` is a marker: `slider;` `elide;` `wrap;`
-`body_fit;` `show_value;` `hover;`.
+`body_fit;` `show_value;` `hover;` `sticky;` `dismiss_on_unfocus;`.
 
 ## Gotchas
 

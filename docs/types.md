@@ -12,7 +12,7 @@ source fields and property schemas.
 | bool | `true`, `false` | interconverts with int |
 | string | `"…"`, interpolated | double quotes only, no `+`, use interpolation |
 | color | `#rrggbb`, `#aarrggbb` | ARGB u32 |
-| pixmap | `row.icon`, `it.icon`, `$image` | decoded PNG, not constructible |
+| pixmap | `row.icon`, `it.icon`, `note.image`, `$image` | decoded PNG, not constructible |
 | enum | bare idents in enum slots | see below |
 | unknown | `for` cell fields, `$args`, calls | matches everything, never errors |
 
@@ -33,7 +33,7 @@ appears on.
 
 ```
 width height pad pad_x pad_y x_offset y_offset border_width
-border_top border_bottom border_left border_right margin exclusive_zone
+border_top border_bottom border_left border_right margin margin_x exclusive_zone
 font_size clip_top gap radius radius_tl radius_tr radius_bl radius_br
 radius_inner radius_outer thumb_size thumb_radius thumb_border_width
 track_radius value_gap value_scale value_max shadow_x shadow_y
@@ -42,13 +42,14 @@ reveal_anim_ms row_h max_visible size anchor_gap fillet_r fillet_offset_y
 armpit_inner armpit_outer armpit_tl armpit_tr armpit_bl armpit_br
 enter_anim exit_anim separator_frac separator_h wrong_ms day_k night_k
 flat_k day_hour night_hour fade_min transition_ms fade_ms dither_px
-wipe_soft prog_h icon_gap icon_box thickness segments highlight_arc
+wipe_soft prog_h icon_gap icon_box image_size thickness segments highlight_arc
+delay_ms
 ```
 
 **PT_COLOR.**
 
 ```
-bg fg icon_fg bg_bottom border press_bg hover_bg shadow track_bg track_fg
+bg fg icon_fg body_fg bg_bottom border press_bg hover_bg shadow track_bg track_fg
 thumb_color thumb_border prog_fg prog_track armpit_color separator
 ring ring_bad dim caps highlight highlight_bs
 ```
@@ -71,6 +72,9 @@ identifier in a numeric or colour slot is rejected.
 | `text_align`, `value_align` | `start` `center` `end` `top` `bottom` `left` `right` |
 | `thumb_shape` | `bar` `pill` `circle` `disc` `knob` `none` |
 | `input` | `none` only |
+| `output` | `active` only |
+| `keyboard` | `none` `on_demand` `exclusive` |
+| `scroll` | `rows`, or a pixel step as an integer |
 | `transition` | `fade` `dither` `wipe` |
 | `wipe_dir` | `right` `left` `down` `up` `down_right` `down_left` `up_right` `up_left` |
 

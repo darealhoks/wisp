@@ -48,6 +48,7 @@ fail to link.
 | string `mut` | 128 B | snprintf-bounded |
 | baked font sizes | 64 distinct, 4..256 | extras ignored |
 | dbus history ring | 8 entries | oldest lost |
+| notification history ring | `history=`, 16 default, 128 max | oldest lost |
 | tags unrolled | 9 cells | rest never drawn |
 
 ## Naming traps
@@ -78,6 +79,9 @@ fail to link.
 - A group's container colours must be static; a ternary there is an error. Only member properties may be dynamic.
 - The group schema has exactly nine properties, no `pad_y` and no per-side borders.
 - Any one of radius, border, fillet, armpit, gradient, clip, cutout or a slider turns off a bar's partial repaint path.
+- `scroll` needs `axis = vertical` on the same surface, and `sticky` only holds on the leading run of rows. Both are hard errors.
+- `pad_x` and `pad_y` on a surface are read only when it scrolls; elsewhere they are among the silently unread union properties.
+- `margin_x` overrides `margin` on the left and right only, which is how a panel clears the bar vertically and still lines up with its side inset.
 
 ## Language traps
 
@@ -102,6 +106,11 @@ fail to link.
 - Under `ext-workspace-v1` there is no client count, so `tag.occupied` means "exists and is not hidden".
 - `make` alone is not enough. `wispctl reload` re-execs the installed binary, so use `make install`.
 - The daemon must start before your tray apps do; wisp owns the StatusNotifier watcher name.
+- `dismiss_on_unfocus` is an error without `on_escape`: it reuses that command rather than taking one of its own.
+- `keyboard = exclusive` holds the session's keyboard for as long as the surface is mapped, so a panel that declares it eats every keystroke until dismissed. Panels want the default `on_demand`.
+- Without `output = active` a panel opens on every monitor at once, and a monitor plugged in later never gets a copy of one that has it.
+- Dismiss a notification by `note.id`, never by a row index; the history ring can shift while the click is still travelling over the socket.
+- `notifications(image=N)` thumbnails only decode when the OSD surface also declares `image = N`; they ride that decode.
 - Icon names resolve as PNGs only, under an app-supplied dir, the XDG hicolor `apps/` sizes, loose `<data>/icons/NAME.png`, then `/usr/share/pixmaps`. No theme index, no SVG.
 
 ## Lock traps

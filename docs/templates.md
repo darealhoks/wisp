@@ -134,6 +134,7 @@ surface osd {
 		align = left;
 		width = 58;
 		icon = $image;
+		visible = $has_icon;
 	}
 	widget title {
 		align = left;
@@ -164,6 +165,7 @@ surface osd {
 - `$image` needs `image = N` on the surface to decode cover art at all; it falls back to the `$icon` glyph.
 - `body_lines` and `body_max` have no compiled-in default, set them.
 - A widget named `icon` donates its `width` as the reserved text column, so icon-less slabs stay aligned.
+- `$has_icon` is false when the post carried neither cover art nor an icon; put it on the icon widget's `visible` or a slab with no icon starts one empty column in.
 - Layer, exclusive zone, visibility and input are all inert; `osd.c` creates and sizes the surface itself.
 
 ## Tooltip
@@ -232,6 +234,112 @@ surface pill {
 - `width` defaults to 0, which means the pill is not compiled in at all.
 - A negative `margin` rests the pill that many pixels inside the bar row and rounds all four corners; 0 or less sits it flush with fillet claws.
 - No `pad_x` on a slab, so the leading gap is the first widget's own `width`. No cover art, `$image` is not wired here.
+
+## Notification centre
+
+```wisp
+source notif_s = notifications(history=64, image=22);
+
+surface bar {
+	anchor = top | left | right;
+	height = 34;
+	margin = 6;
+	exclusive_zone = 40;
+	bg = #ff0e131c;
+
+	widget bell {
+		align = right;
+		icon = 0xf0f3;
+		text = notif_s.count > 0 ? "{notif_s.count}" : "";
+		fg = notif_s.open ? #ff64799c : #ffdbe2ee;
+		on_click() = exec("wispctl notif toggle");
+	}
+}
+
+surface notifs {
+	layer = overlay;
+	anchor = top | right;
+	margin = 46;            // bar height 34 + bar margin 6
+	margin_x = 6;           // but only the bar's side inset
+	width = 380;
+	height = 420;
+	exclusive_zone = -1;
+	axis = vertical;
+	scroll = rows;
+	pad_x = 10;
+	pad_y = 8;
+
+	visible = notif_s.open;
+	output = active;
+	on_escape = "wispctl notif close";
+	dismiss_on_unfocus;
+
+	bg = #ff0e131c;
+	border = #ff2e3a4e;
+	border_width = 2;
+	radius = 8;
+
+	group nhead {
+		sticky;
+		height = 30;
+		pad_x = 0;
+		gap = 0;
+		bg = #00000000;
+		border = #00000000;
+		widget nbell   { width = 26; icon = 0xf0f3; fg = #ffa5adbb; }
+		widget nhead_t { width = 304; text = "notifications"; fg = #ffa5adbb; }
+		widget nclear {
+			width = 26;
+			height = 26;
+			icon = 0xf1f8;
+			fg = notif_s.count > 0 ? #ffa5adbb : #ff2e3a4e;
+			on_click() = exec("wispctl notif clear");
+		}
+	}
+	widget nempty {
+		width = 356;
+		height = 330;
+		text = "nothing yet…";
+		fg = #ff2e3a4e;
+		visible = notif_s.count == 0;
+	}
+	for note in notif_s.history {
+		cell.note {
+			icon = note.image;
+			text = "{note.summary}\n{note.body}";
+			body_lines = 4;
+			body_fit;
+			wrap;
+			text_align = start;
+			fg = #ffdbe2ee;
+			body_fg = #ffa5adbb;
+			icon_fg = note.urgent ? #ffe0603f : #ff64799c;
+			on_click() = exec("wispctl notif dismiss {note.id}");
+		}
+	}
+}
+
+.note {
+	bg = #ff141a26;
+	radius = 8;
+	pad_x = 12;
+	pad_y = 10;
+	pad = 8;
+	icon_box = 22;
+	icon_gap = 8;
+}
+.note:hover { bg = #ff1b2333; }
+```
+
+- `visible = notif_s.open` is the whole lifecycle: `wispctl notif toggle` flips the flag and the surface is created and destroyed with it.
+- `margin` is the vertical clearance under the bar, `margin_x` the side inset the bar itself uses; a uniform `margin` cannot give both.
+- `output = active` makes exactly one copy, on the monitor whose bar cell was clicked, instead of one per output.
+- `on_escape` is a shell command, not a handler body, and declaring it gives the surface `keyboard = on_demand`. Declare `keyboard = exclusive` only for a modal; a panel would then eat every keystroke until it closes.
+- `dismiss_on_unfocus` reuses that same command when focus goes elsewhere, and errors at compile time without an `on_escape`.
+- `scroll = rows` needs `axis = vertical`; the leading `sticky` rows stay pinned above the scrolled stack, and Up/Down plus Enter work with no declaration.
+- Dismiss on `note.id`, never on a row index: the ring can shift while the click is in flight.
+- `note.image` needs both `notifications(image=N)` and `image = N` on the `osd` surface; `note.icon` is the fallback glyph and `icon_box` should match the thumbnail size so both align.
+- `body_fg` colours the lines after the first. A `for` block holds exactly one cell, so it is the only way to dim a body against its summary.
 
 ## Generic vertical menu
 

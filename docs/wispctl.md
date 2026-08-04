@@ -33,6 +33,7 @@ Four subcommands never touch the socket: `help`, `rebuild`, `update` and `lock`.
 | `osd` | `<slot> <summary> [progress] [icon-hex] [muted]` | osd | `ok` |
 | `notify` | `[-t] <urgency> <summary> [body] [icon-hex] [timeout-ms]` | osd | `ok` — `-t` = transient, skipped by the notification center |
 | `osd-clear` | - | osd | `ok` |
+| `notif` | `open\|close\|toggle\|status\|clear\|dismiss <id>` | osd | `ok`, or `on`/`off` for `status` |
 | `dnd` | `on\|off\|toggle\|status` | osd | `ok`, or `on`/`off` |
 | `volume`, `mic`, `backlight` | see below | media | `ok` |
 | `mpris` | `play-pause\|next\|prev` | mpris | `ok` |
@@ -51,6 +52,14 @@ err: unknown command: gamma (not in this build/preset?)
 
 The socket also accepts a `lock` command, but the daemon is deliberately built
 without that feature defined, so it never resolves. Use `wispctl lock`.
+
+## Notification centre
+
+`notif open|close|toggle` flips the flag a panel surface gates on
+(`visible = <notifications-src>.open`), so the surface is created and destroyed
+with it. `dismiss` takes the entry serial a cell hands back as `note.id`, never
+a row index — the ring can shift while the click is in flight. See
+[[modules#scrollable-panel]].
 
 ## Screen power
 
@@ -99,7 +108,7 @@ the locker is a separate binary that links PAM, and the daemon does not.
 |---|---|
 | reply is `ok` or `pong` | 0 |
 | `menu` / `menu-cancel` | 0 if the reply index is 0 or more, 1 if negative |
-| `dnd status`, `hide status` | 0 when the reply is `on` |
+| `dnd status`, `hide status`, `notif status` | 0 when the reply is `on` |
 | `gamma is-warm` | 0 when the reply is `1` |
 | any error reply, connect failure, or empty reply | 1 |
 | no arguments (usage) | 2 |
