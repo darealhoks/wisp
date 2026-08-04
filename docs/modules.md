@@ -442,7 +442,7 @@ rejected file falls back to a solid `bg`.
 
 | property | default | note |
 |---|---|---|
-| `path` | `"~/.local/share/dwl/wallpaper.png"` | PNG only |
+| `path` | *(required)* | PNG only |
 | `bg` | `0xff0f1219` | fallback fill |
 | `fade_ms` | 300 | nonzero also enables the animation subsystem |
 | `transition` | `fade` | `fade`, `dither` or `wipe` |
@@ -588,7 +588,7 @@ What differs in practice:
 
 - **Occupancy.** mango, hyprland and river report real occupancy. ext-workspace has no client count, so `tag.occupied` degrades to "the workspace exists and is not hidden". On niri that means the bar mirrors niri's live list including its trailing empty workspace.
 - **Numbering** under ext-workspace: the workspace name is parsed as 1..32 first, then the compositor's first coordinate plus 1, then arrival order. Anything outside 1..32 is dropped.
-- **Multi-monitor clicks.** Always pass `tag.output`: `exec("wispctl tag {tag.index} {tag.output}")`. Without it a click switches the keyboard-focused monitor instead of the clicked one. riverie passes it, anemoia does not.
+- **Multi-monitor clicks.** Always pass `tag.output`: `exec("wispctl tag {tag.index} {tag.output}")`. Without it a click switches the keyboard-focused monitor instead of the clicked one. reverie passes it, anemoia does not.
 - **`tag.pinned`** reads a compile-time mask, not compositor state, and is identical on every backend.
 - **Poll cost.** mango and hyprland add a real fd to epoll; river and ext-workspace add none.
 

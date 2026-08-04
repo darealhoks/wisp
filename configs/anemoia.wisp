@@ -1,6 +1,4 @@
-// ==================================
-//               BAR
-// ==================================
+// bar
 
 source time   = clock("%H:%M");
 source date_s = clock("%b %d");
@@ -113,11 +111,10 @@ surface bar {
 	}
 }
 
-// 22px module rhythm; edge insets and labels override inline
 widget {
 	fg = FG;
 	pad = 22;
-	icon_gap = 8; // icon column → label gap (was a hand-tuned leading space in text)
+	icon_gap = 8;
 }
 .dim        {
 	fg = DIM;
@@ -139,12 +136,8 @@ widget {
 	bg = URG;
 }
 
-// ==================================
-//          SCREEN CORNERS
-// ==================================
+// corners
 
-// click-through strip that rounds the bottom two screen corners to match the
-// bar feet up top; armpit_outer rounds in place, input=none passes clicks through
 surface screen_corners {
 	layer  = top;
 	anchor = bottom | left | right;
@@ -152,15 +145,12 @@ surface screen_corners {
 	exclusive_zone = 0;
 	bg = #00000000;
 	armpit_outer = 10;
-	armpit_color = #ff0f1219; // must match bar bg
+	armpit_color = #ff0f1219; // must match surface bar bg
 	input = none;
 }
 
-// ==================================
-//               HUD
-// ==================================
+// hud
 
-// native event-driven sources: flip on the real state change, no polling
 source gamma_warm = gamma_warm();
 source dnd_on     = dnd();
 
@@ -170,8 +160,8 @@ const SAGE    = #ff8fb3a3;
 const TEAL    = #ff7fb0bb;
 const DARK    = #ff1a2530;
 
-// width 244 = 4·48 buttons + 3·12 gaps + 2·8 pad. buttons straddle the bar
-// bottom edge (y_offset=-14) and clip_top=28 hides their pixels above the bar
+// width 244 = 4×48 buttons + 3×12 gaps + 2×8 pad
+// buttons straddle the bar edge (.btn y_offset -14), clip_top 28 hides the overhang
 surface hud {
 	layer = overlay;
 	anchor = top;
@@ -186,8 +176,7 @@ surface hud {
 	border_width    = 0;
 	radius_bl       = 14;
 	radius_br       = 14;
-	// lo..hi animated fillet; outward top fillets flare into the bar so the
-	// panel reads as pulled out of it, not a detached pill
+	// lo..hi is an animated fillet range
 	fillet_tl       = 0..18;
 	fillet_tr       = 0..18;
 	fillet_offset_y = 0;
@@ -206,7 +195,7 @@ surface hud {
 	}
 	widget vol_btn.btn.pop {
 		icon = 0xf028;
-		on_click() = exec("foot -T ws-hud-vol --app-id=ws-hud-vol -e pulsemixer");
+		on_click() = exec("foot -T ws-hud-vol --app-id=ws-hud-vol -e wiremix");
 	}
 	widget wifi_btn.btn.pop {
 		icon = 0xf1eb;
@@ -214,7 +203,6 @@ surface hud {
 	}
 }
 
-// .toggle recolors on state, .pop flashes on press
 #hud widget  {
 	align = center;
 }
@@ -236,9 +224,7 @@ surface hud {
 	bg = TEAL;
 }
 
-// ==================================
-//           OSD (notifs)
-// ==================================
+// osd
 
 surface osd {
 	spawned_by = osd;
@@ -263,8 +249,6 @@ surface osd {
 	border = #00000000;
 	prog_fg = #ff84a7b3;
 	prog_track = #ff1c2733;
-	// margin 0 → flush under the bar; only bottom corners round, fillets claw
-	// up into the bar row at the junction
 	radius = 10;
 	fillet_r = 14;
 	separator = #ff1c2733;
@@ -312,7 +296,6 @@ surface osd {
 	pad = 0;
 }
 
-// :warn / :mute pseudos read the derived per-slab $warn / $mute bindings
 #osd widget:warn {
 	fg = #ffffaa20;
 }
@@ -323,8 +306,7 @@ surface osd {
 	track_fg = WARN;
 }
 
-// pct posts (volume/brightness) render as this pill instead of joining the
-// stack; negative margin rests it inside the bar row so all four corners round
+// pct posts render as this pill instead of joining the osd stack
 surface pill {
 	spawned_by = osd_pill;
 	layer = overlay;
@@ -365,31 +347,26 @@ surface pill {
 	fg = #ffffaa20;
 }
 
-// ==================================
-//            Subsystems
-// ==================================
+// subsystems
 
 lock {
-	bg       = #ff000000; // fallback fill when the wallpaper is missing
+	bg       = #ff000000; // only shows when the wallpaper is missing
 	ring     = #ff5f8a93;
 	ring_bad = #ffd06878;
 	fg       = #ffa8d5cc;
-	dim      = #59000000;   // scrim over the lock background
+	dim      = #59000000;
 	caps     = #ffe0c060;
 	prompt   = "Password";
 	pam      = "system-auth";
 	font_size = 16;
 
-	// Free-positioned elements; x/y are insets from the anchored edges.
+	// x/y are insets from the anchored edges, not absolute coords
 	text clock { anchor = top; y = 120; text = "{time}"; format = "%H:%M";
 	             fg = #ffa8d5cc; font_size = 64; }
 	text date  { anchor = top; y = 210; text = "{time}"; format = "%A %e %B";
 	             fg = #ff7a808b; font_size = 16; }
 
-	// Unsegmented, and no fg → picks up the block's `ring` / `ring_bad`.
-	// The caps-lock highlight colour is a second ring on `show = caps`, not a
-	// property: `show` holds one condition, so the caps pair splits on caps and
-	// the wrong ring simply paints over both.
+	// show holds one condition only, hence the split caps/non-caps ring pair
 	ring dial      { anchor = bottom | right; x = 160; y = 48; radius = 44;
 	                 thickness = 10; bg = #cc101418; border = #ff101418;
 	                 highlight = #ffa8d5cc; highlight_bs = #ff7a808b;
@@ -422,8 +399,8 @@ gamma {
 	flat_k    = 2400;
 	day_hour  = 7;
 	night_hour = 20;
-	fade_min   = 30; // schedule crossfade width, 0 = hard step
-	transition_ms = 300; // tween manual/wispctl switches
+	fade_min   = 30; // 0 = hard step
+	transition_ms = 300;
 }
 
 wallpaper {
@@ -438,11 +415,8 @@ wallpaper {
 media {
 }
 
-// ==================================
-//              Menus
-// ==================================
+// menus
 
-// dmenu strip: full-width top band, prompt + query then items left→right
 surface menu {
 	spawned_by = menu;
 	layer = overlay;

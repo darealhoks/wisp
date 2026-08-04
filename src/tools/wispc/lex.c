@@ -33,6 +33,7 @@ static const struct { const char *kw; TokKind k; } KWS[] = {
     {"emit",     TK_KW_EMIT},
     {"set",      TK_KW_SET},
     {"animate",  TK_KW_ANIMATE},
+    {"include",  TK_KW_INCLUDE},
 };
 
 static void advance(Lexer *L, int n) {

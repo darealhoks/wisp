@@ -11,6 +11,8 @@
 #include "wisp.h"
 
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/timerfd.h>
 #include <time.h>
@@ -19,6 +21,34 @@
 int64_t now_ms(void) {
     struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
     return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+/* Every `exec("wispctl …")` in a .wisp runs under /bin/sh with the PATH wisp
+ * itself inherited — and a compositor started from a display manager hands its
+ * children a bare login PATH with no ~/.local/bin. wispctl ships next to wisp,
+ * so put that directory on PATH here rather than have every click silently
+ * exit 127. Prepending is idempotent across `wispctl reload`'s re-exec. */
+void path_add_self_dir(void) {
+    char exe[512];
+    ssize_t n = readlink("/proc/self/exe", exe, sizeof exe - 1);
+    if (n <= 0) return;
+    exe[n] = 0;
+    char *slash = strrchr(exe, '/');
+    if (!slash || slash == exe) return;
+    *slash = 0;
+
+    const char *path = getenv("PATH");
+    if (!path || !*path) { setenv("PATH", exe, 1); return; }
+
+    /* Already first? Nothing to do — matching only the head keeps this a plain
+     * prefix compare instead of a colon-split scan. */
+    size_t dl = strlen(exe);
+    if (!strncmp(path, exe, dl) && (path[dl] == ':' || path[dl] == 0)) return;
+
+    char buf[4096];
+    if (dl + 1 + strlen(path) >= sizeof buf) return;
+    snprintf(buf, sizeof buf, "%s:%s", exe, path);
+    setenv("PATH", buf, 1);
 }
 
 /* ============================================================ */
@@ -81,6 +111,11 @@ static void axis_dispatch(Widget *w, int steps) {
 #endif
     }
 }
+
+#ifdef WISP_HAS_BAR
+/* Surface pressed in the batch being drained — see input_flush_unfocus(). */
+static uint32_t press_surface;
+#endif
 
 void on_pointer_event(uint16_t op, uint8_t *body, uint32_t bodylen) {
     switch (op) {
@@ -151,6 +186,9 @@ void on_pointer_event(uint16_t op, uint8_t *body, uint32_t bodylen) {
         Widget *w = widget_by_surface(ptr_focus);
         if (!w) return;
         (void)button; (void)state;
+#ifdef WISP_HAS_BAR
+        if (state == 1) press_surface = ptr_focus;
+#endif
 #ifdef WISP_HAS_MENU
         /* Click-off: a press on any non-menu surface dismisses an open menu. */
         if (state == 1 && w->kind != W_MENU) {
@@ -248,9 +286,18 @@ void on_pointer_event(uint16_t op, uint8_t *body, uint32_t bodylen) {
 static uint32_t unfocus_pending;
 
 void input_flush_unfocus(void) {
-    if (!unfocus_pending) return;
-    Widget *w = widget_by_surface(unfocus_pending);
-    unfocus_pending = 0;
+    uint32_t s = unfocus_pending, pressed = press_surface;
+    unfocus_pending = 0; press_surface = 0;
+    if (!s) return;
+    /* A press over an on_demand layer bounces kbd focus off and back on a
+     * focus-follows-pointer compositor, and dismissing there would eat the
+     * click — but only a press explains that. A leave with none is a real
+     * focus move (another window, a tag switch) even with the pointer parked
+     * on the panel, and suppressing it stranded the panel open with no way
+     * left to close it: no focus means no Esc, and no focus to lose means no
+     * second leave when the pointer finally wanders off. */
+    if (s == ptr_focus && s == pressed) return;
+    Widget *w = widget_by_surface(s);
     if (w && w->kind == W_BAR) bar_input_unfocus(w);
 }
 #else

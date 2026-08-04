@@ -385,6 +385,28 @@ const uint32_t *image_cell(const char *spec, int px) {
     return pm;
 }
 
+uint32_t *image_scale_pm(const uint32_t *pm, int spx, int dpx) {
+    if (!pm || spx <= 0 || dpx <= 0 || dpx > spx) return NULL;
+    uint32_t *out = malloc((size_t)dpx * dpx * 4);
+    if (!out) return NULL;
+    for (int j = 0; j < dpx; j++) {
+        int y0 = j * spx / dpx, y1 = (j + 1) * spx / dpx; if (y1 <= y0) y1 = y0 + 1;
+        for (int i = 0; i < dpx; i++) {
+            int x0 = i * spx / dpx, x1 = (i + 1) * spx / dpx; if (x1 <= x0) x1 = x0 + 1;
+            uint32_t a = 0, r = 0, g = 0, b = 0, cnt = (uint32_t)((x1 - x0) * (y1 - y0));
+            for (int y = y0; y < y1; y++)
+                for (int x = x0; x < x1; x++) {
+                    uint32_t px = pm[(size_t)y * spx + x];
+                    a += px >> 24; r += (px >> 16) & 0xff;
+                    g += (px >> 8) & 0xff; b += px & 0xff;
+                }
+            out[j * dpx + i] = (a / cnt) << 24 | (r / cnt) << 16
+                             | (g / cnt) << 8 | (b / cnt);
+        }
+    }
+    return out;
+}
+
 uint32_t *image_scale_square(const uint8_t *rgba, int sw, int sh, int ds) {
     if (!rgba || sw <= 0 || sh <= 0 || ds <= 0) return NULL;
     uint32_t *out = malloc((size_t)ds * ds * 4);

@@ -7,6 +7,9 @@
  *     stdin:  <password>\n          (no embedded newlines)
  *     stdout: ok\n    or   fail\n
  *
+ * lock.c's forked child writes `exec\n` itself when it cannot exec this
+ * binary at all — a third reply this program never produces.
+ *
  * Exit status mirrors stdout for the caller's convenience but the daemon
  * uses the line. */
 #define _GNU_SOURCE

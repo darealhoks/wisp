@@ -28,6 +28,7 @@ int         eval_int(Expr *e, int dflt);
 int         eval_int_range(Expr *e, int *lo, int *hi, int dflt);
 uint32_t    eval_color(Expr *e, uint32_t dflt);
 uint32_t    eval_color_ctx(CGCtx *ctx, Expr *e, uint32_t dflt);
+Expr       *eval_string_ctx(CGCtx *ctx, Expr *e);
 Align       eval_align(Expr *e);
 int         surface_is_vertical(Decl *sur);
 Expr       *surface_prop(Decl *sur, const char *name);

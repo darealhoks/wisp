@@ -185,13 +185,26 @@ void widget_setup_surface(Widget *w, uint32_t layer, const char *ns, Output *o) 
 
 ClickAnchor click_anchor;
 
+/* Margins count from the anchored edge, so a bottom-anchored bar's rect lives
+ * at the far end of the output — deriving it from margin_top would put its
+ * popups at the top of the screen. */
+void widget_screen_span(const Widget *w, int *top, int *below) {
+    int t = w->margin_top;
+    if ((w->anchor_bits & LS_ANCHOR_BOTTOM) && !(w->anchor_bits & LS_ANCHOR_TOP)) {
+        const Output *o = w->output;
+        int oh = o ? (o->scale120 > 0 ? o->mode_h * 120 / o->scale120 : o->mode_h) : 0;
+        t = oh - w->margin_bot - w->h;
+        if (t < 0) t = 0;
+    }
+    *top   = t;
+    *below = t + w->h;
+}
+
 void widget_note_click(Widget *w, int x, int cw) {
     click_anchor.out   = w->output;
     click_anchor.x     = x;
     click_anchor.w     = cw;
-    /* Bar's bottom edge in screen coords — the bar's own top margin counts,
-     * otherwise a floating bar (margin > 0) has its popup overlap it. */
-    click_anchor.below = w->margin_top + w->h;
+    widget_screen_span(w, &click_anchor.top, &click_anchor.below);
     click_anchor.ms    = now_ms();
 }
 
@@ -200,8 +213,19 @@ void widget_note_click(Widget *w, int x, int cw) {
  * the pointer is over, else the first active output. The 1 s box mirrors
  * menu_create's — an open triggered by a keybind minutes later must not land on
  * the monitor of some ancient click. */
+/* The click that TOGGLED a panel shut has spent itself too — left live, the
+ * next menu inside the 500 ms box anchors under that cell and lands where the
+ * panel just was. The open path spends it via output_active(). */
+void click_anchor_spend(void) { click_anchor.ms = 0; }
+
 Output *output_active(void) {
-    if (click_anchor.out && now_ms() - click_anchor.ms < 1000) return click_anchor.out;
+    if (click_anchor.out && now_ms() - click_anchor.ms < 1000) {
+        /* Spend the stamp: this panel is what that click opened. Left live, the
+         * next keybind-launched menu would anchor under the same cell and land
+         * on top of the panel instead of centered. */
+        click_anchor.ms = 0;
+        return click_anchor.out;
+    }
     Widget *pw = widget_by_surface(ptr_focus);
     if (pw && pw->output) return pw->output;
     for (int i = 0; i < MAX_OUTPUTS; i++) if (outputs[i].active) return &outputs[i];
@@ -222,6 +246,7 @@ int widget_scroll(Widget *w, int dpx) {
 }
 
 void widget_set_anchor(Widget *w, uint32_t bits) {
+    w->anchor_bits = bits;
     wl_req(w->layer_surface, LS_REQ_SET_ANCHOR, &bits, 1, -1);
 }
 void widget_set_exclusive_zone(Widget *w, int zone) {
@@ -230,6 +255,7 @@ void widget_set_exclusive_zone(Widget *w, int zone) {
 void widget_set_margin(Widget *w, int top, int right, int bot, int left) {
     uint32_t a[4] = { (uint32_t)top, (uint32_t)right, (uint32_t)bot, (uint32_t)left };
     w->margin_top = top;
+    w->margin_bot = bot;
     wl_req(w->layer_surface, LS_REQ_SET_MARGIN, a, 4, -1);
 }
 void widget_set_kbd_interactive(Widget *w, int on) {

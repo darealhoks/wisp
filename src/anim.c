@@ -92,7 +92,16 @@ uint32_t anim_start_num(void *target, AnimType type, double from, double to,
                         int repeat, int alternate) {
     anim_cancel_for(target);
     int i = alloc_slot();
-    if (i < 0) return 0;
+    if (i < 0) {
+        /* table full: land the target and fire on_done as a 0-length tween
+         * would — a dropped tween must degrade to a jump, never a freeze.
+         * Codegen commits its state edge (VisSlot prev, SizeSlot last) without
+         * checking the id, so a silently unmoved target sticks forever. */
+        if (type == ANIM_T_INT) *(int *)target = (int)(to + (to >= 0 ? 0.5 : -0.5));
+        else *(double *)target = to;
+        if (on_done) on_done(user);
+        return 0;
+    }
     Anim *a = &anims[i];
     memset(a, 0, sizeof *a);
     a->active = 1;
@@ -120,7 +129,11 @@ uint32_t anim_start_color(uint32_t *target, uint32_t from, uint32_t to,
                           int repeat, int alternate) {
     anim_cancel_for(target);
     int i = alloc_slot();
-    if (i < 0) return 0;
+    if (i < 0) {  /* same snap-don't-freeze contract as anim_start_num */
+        *target = to;
+        if (on_done) on_done(user);
+        return 0;
+    }
     Anim *a = &anims[i];
     memset(a, 0, sizeof *a);
     a->active = 1;

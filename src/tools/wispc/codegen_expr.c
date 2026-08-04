@@ -156,6 +156,13 @@ CE lower_member(CGCtx *c, Expr *e) {
             snprintf(r.text, sizeof r.text, "notif_app(%s)", it); r.type = T_STR;
         } else if (flen == 4 && memcmp(fld, "icon", 4) == 0) {
             snprintf(r.text, sizeof r.text, "notif_icon(%s)", it); r.type = T_INT;
+        } else if (flen == 5 && memcmp(fld, "image", 5) == 0) {
+            snprintf(r.text, sizeof r.text, "notif_image(%s)", it);
+            r.type = T_PIXMAP;
+            /* Collapse to zero width when the entry has neither pixmap nor
+             * fallback glyph, so icon-less cards keep their text flush left. */
+            r.pm_size = pm_str("(notif_image(%s) ? NOTIF_IMAGE_PX : 0)", it);
+            r.pm_cp   = pm_str("notif_icon(%s)", it);
         } else if (flen == 6 && memcmp(fld, "urgent", 6) == 0) {
             snprintf(r.text, sizeof r.text, "notif_urgent(%s)", it); r.type = T_BOOL;
         } else if (flen == 2 && memcmp(fld, "id", 2) == 0) {

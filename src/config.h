@@ -101,7 +101,8 @@
  * PNG decoded once at first configure. If the file is missing or the decoder
  * rejects it, the background falls back to WALL_BG (solid). */
 #ifndef WALL_PATH
-#define WALL_PATH "~/.local/share/dwl/wallpaper.png"
+/* No default image: a config without a `wallpaper { path }` gets WALL_BG. */
+#define WALL_PATH ""
 #endif
 #ifndef WALL_BG
 #define WALL_BG   0xff0f1219u
@@ -175,6 +176,11 @@
  * 0 = feature off, no decode path compiled in. Set by `image = N` on the OSD. */
 #define OSD_IMAGE_PX         0
 #endif
+#ifndef NOTIF_IMAGE_PX
+/* Center-history thumbnail square (px), scaled down from the OSD pixmap; 0 =
+ * off. Set by `notifications(image=N)`; needs OSD_IMAGE_PX > 0 for the decode. */
+#define NOTIF_IMAGE_PX       0
+#endif
 #ifndef OSD_ICON_W
 /* 0 = no fixed icon column declared; fall back to measuring the icon glyph. */
 #define OSD_ICON_W           0
@@ -205,6 +211,13 @@
 #endif
 #ifndef OSD_TIMEOUT_OSD
 #define OSD_TIMEOUT_OSD       1200
+#endif
+
+/* `sound = "<cmd>"` on the osd surface: shell command spawned once per
+ * displayed app notification. wisp decodes no audio — the command is the
+ * player (paplay/pw-play/ffplay). NULL = silent. */
+#ifndef OSD_SOUND
+#define OSD_SOUND NULL
 #endif
 
 /* ---------- Gamma / night mode (wlsunset replacement) ----------
@@ -242,6 +255,9 @@
 #ifndef LOCK_PAM_SERVICE
 #define LOCK_PAM_SERVICE "system-auth"
 #endif
+/* Bare name: resolved next to /proc/self/exe first (the compositor session has
+ * no ~/.local/bin on PATH), PATH only as fallback. A value with a '/' is used
+ * verbatim. */
 #ifndef LOCK_HELPER_BIN
 #define LOCK_HELPER_BIN  "wisp-lock-helper"
 #endif

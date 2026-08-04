@@ -7,7 +7,7 @@ The control client. It joins `argv[1..]` with tabs, sends one line over
 wispctl ping
 wispctl apps
 wispctl notify 1 "hello" "body text"
-wispctl rebuild riverie
+wispctl rebuild reverie
 ```
 
 Four subcommands never touch the socket: `help`, `rebuild`, `update` and `lock`.
@@ -31,7 +31,7 @@ Four subcommands never touch the socket: `help`, `rebuild`, `update` and `lock`.
 | `hud` | anything | hud | `ok`, kept as a no-op for compatibility |
 | `hud-cancel` | - | menu | `ok` |
 | `osd` | `<slot> <summary> [progress] [icon-hex] [muted]` | osd | `ok` |
-| `notify` | `<urgency> <summary> [body] [icon-hex] [timeout-ms]` | osd | `ok` |
+| `notify` | `[-t] <urgency> <summary> [body] [icon-hex] [timeout-ms]` | osd | `ok` — `-t` = transient, skipped by the notification center |
 | `osd-clear` | - | osd | `ok` |
 | `dnd` | `on\|off\|toggle\|status` | osd | `ok`, or `on`/`off` |
 | `volume`, `mic`, `backlight` | see below | media | `ok` |
@@ -59,9 +59,13 @@ exit 2; asked for explicitly, it goes to stdout with exit 0.
 **`rebuild [config]`** resolves the name in this order:
 
 1. a literal path, if it exists
-2. `$XDG_CONFIG_HOME/wisp/<name>.wisp`
-3. `$XDG_CONFIG_HOME/wisp/<name>`
-4. `$WISP_SRC` or the install datadir, `configs/<name>.wisp`
+2. a recursive search of `$XDG_CONFIG_HOME/wisp` (default `~/.config/wisp`) for
+   `<name>.wisp` or a regular file `<name>` — so
+   `~/.config/wisp/themes/night/bar.wisp` resolves for `rebuild bar`. The
+   shallowest match wins; dot-directories and symlinked directories are skipped
+   and the walk stops at 8 levels. Two matches at the same depth is an error
+   listing every one of them, not a silent pick.
+3. `$WISP_SRC` or the install datadir, `configs/<name>.wisp`
 
 Then it remembers the choice in `<confdir>/current`, runs
 `make -s -C <src> install WISP=<path>`, sends a `wall` command with the new path
@@ -111,6 +115,7 @@ The compiler is `wispc [MODE] FILE`. Modes are last-wins and default to
 | `--features` | the `features.h` it would emit |
 | `--deps` | `surface NAME: dep dep …`, one line per surface |
 | `--font-sizes` | unique font sizes ascending, then the codepoints that must be baked |
+| `--includes` | resolved path of every `include`d file, one per line (build staleness) |
 | `--no-line-map` | drop `#line` mapping back to the `.wisp` |
 | `--watch [--reload]` | rebuild on every write to the file's directory, optionally reloading |
 

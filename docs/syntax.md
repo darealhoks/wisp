@@ -9,7 +9,38 @@ const NAME = expr;      mut NAME = expr;
 surface NAME { … }      compound NAME { … }      menu NAME { … }
 lock { … }   gamma { … }   wallpaper { … }   media { … }
 SELECTOR[, SELECTOR]* { prop = value; … }
+include "path.wisp";
 ```
+
+## Includes
+
+`include "path.wisp";` at top level pastes another file's top-level
+declarations into this one, as if you had typed them here. The path is relative
+to the **directory of the file doing the including** (absolute paths work too),
+and it is resolved fresh on every compile.
+
+```
+include "theme.wisp";
+include "widgets/net.wisp";
+```
+
+- An included file may declare anything legal at top level — consts, sources,
+  surfaces, `menu`, `lock`, `gamma`. There is no separate "fragment" kind.
+- Every `.wisp` is compilable on its own. A file holding only consts compiles
+  to a config that does nothing; that is fine.
+- Errors are reported against the file they are in, with its own line numbers.
+- Each file is included **once** per build, like C's `#pragma once`. If two
+  files you include both include `palette.wisp`, it is parsed once — no
+  duplicate-declaration error. An include cycle is harmless for the same
+  reason: the second time round it is simply skipped.
+- Duplicate names you actually wrote twice are still the usual
+  duplicate-declaration error.
+- Includes may nest 8 deep.
+
+The point is theme switching: symlink `theme.wisp` at one of several palette
+files (colors plus a `WALL_PATH` const), `include "theme.wisp";` from your main
+config, and `wispctl rebuild` swaps the look. Because nothing is cached across
+builds, re-pointing the symlink is enough.
 
 ## Comments
 
@@ -42,7 +73,7 @@ The config in use is the `WISP=` path.
 
 ```
 source surface widget const mut lock gamma wallpaper media compound
-region group for in cell true false exec emit set animate
+region group for in cell true false exec emit set animate include
 on_click on_right_click on_middle_click on_change
 ```
 

@@ -3,7 +3,7 @@
 **W**idget **I**nterface, **S**ingle **P**rocess - one Wayland daemon that draws
 a whole desktop shell, from a file you write.
 
-![wisp running the riverie config](desktop.png)
+![wisp running the reverie config](desktop.png)
 
 A normal Wayland desktop runs a bar, a notification daemon, a locker, a gamma
 tool and a wallpaper setter: five daemons, five config formats, five sets of
@@ -52,7 +52,7 @@ visibility conditions are all just fields - see the
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/darealhoks/wisp/main/install.sh | sh
-wispctl rebuild riverie  # compile an example config, install, run
+wispctl rebuild reverie  # compile an example config, install, run
 wisp                     # or: autostart = wisp
 
 # from a checkout instead:
@@ -112,7 +112,7 @@ gemoji) are in [THIRD_PARTY.md](THIRD_PARTY.md).
 
 ---
 
-Numbers above measured with [configs/riverie.wisp](configs/riverie.wisp) on an i5-1135G7 at
+Numbers above measured with [configs/reverie.wisp](configs/reverie.wisp) on an i5-1135G7 at
 1080p: 1 CPU tick per 10 s with its 2-second cpu/mem/temp polls, a flat 0
 without them; 3.1 MB RSS, 950 KB PSS. Your numbers depend on what you declared.
 

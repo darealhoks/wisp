@@ -1,9 +1,7 @@
 //! font = ~/.local/share/fonts/MapleMono-NF-Bold.ttf
 //! font_fallback = /usr/share/fonts/noto-emoji/NotoColorEmoji.ttf
 
-// ==================================
-//               BAR
-// ==================================
+// bar
 
 source time   = clock("%H:%M");
 source date_s = clock("%b %-d");
@@ -17,30 +15,11 @@ source tray_s = tray(icon_size=20);
 source vol_s  = pipewire();
 
 source hid    = ui_hidden();
-source notif_s = notifications(history=64);
+source notif_s = notifications(history=64, image=22);
 
-const TEXT   = #ffdbe2ee;
-const SUBTXT = #ffa5adbb;
-const CRUST  = #ff0e131c;
-const REST   = #ff141a26;
-const WSACT  = #ff64799c;
-const WSBORD = #ff2e3a4e;
-const BORD   = #ff2e3a4e;
-const YELLOW = #ffa8bfdd;
-const ORANGE = #ffddab64;
-const RED    = #ffe0603f;
-const GREEN  = #ff97bb90;
-const PRIM   = #ff64799c;
-const TERT   = #ff92aed2;
+include "theme.wisp";
 
-const TGREEN  = #ffc0e0b8;
-const TBLUE   = #ffb3ccec;
-const TVIOLET = #ffcbb8ee;
-const TRED    = #ffeeb9b3;
-const TTEAL   = #ffaedfdf;
-
-const TRAY_ICONS_ONLY = true; // icon-less tray items aren't shown
-const BLACK  = #ff000000;
+const TRAY_ICONS_ONLY = true; // icon-less tray items are hidden, not labelled
 
 surface bar {
 	layer = top;
@@ -53,7 +32,7 @@ surface bar {
 	bg = #00000000;
 	radius = 0;
 
-	/* left side, left > right */
+	// align=left packs left→right in declaration order
 
 		widget edge_l {
 		align = left;
@@ -102,7 +81,7 @@ surface bar {
 		}
 	}
 
-	/* right side, right > left */
+	// align=right packs right→left in declaration order
 		widget edge_r {
 		align = right;
 		pad = 2;
@@ -134,8 +113,7 @@ surface bar {
 		widget sep_conn2.sep {
 			text = "/";
 		}
-		// the panel is anchored top|right, so the bell belongs on the right
-		// edge of the bar — in the HUD it opened a surface nowhere near itself
+		// notifs panel is anchored top|right, so the bell must stay on the right
 		widget notif {
 			icon = 0xf0f3;
 			text = notif_s.count > 0 ? "{notif_s.count}" : "";
@@ -189,7 +167,6 @@ surface bar {
 		for tray_item in tray_s.items {
 			cell.tray {
 				icon       = tray_item.icon;
-				// an app with its own attention artwork says it itself
 				bg         = tray_item.status == "NeedsAttention"
 					&& !tray_item.has_attention_icon ? RED
 					: tray_item.menu_open ? REST : #00000000;
@@ -230,7 +207,7 @@ group {
 
 widget {
 	fg = TEXT;
-	icon_gap = 5; // icon column → label gap
+	icon_gap = 5;
 }
 .dim   {
 	fg = SUBTXT;
@@ -274,18 +251,20 @@ widget {
 	bg = REST;
 }
 
-// ==================================
-//               HUD
-// ==================================
+// hud
 
 source gamma_warm = gamma_warm();
 source dnd_on     = dnd();
 source mirror_on  = toplevel(app_id="at.yrlf.wl_mirror");
+// written by ~/next/rice/mango/caffeine; inotify wants a literal absolute path
+source caffeine_on = inotify(path="/run/user/1000/caffeine");
 
 surface hud {
 	layer = overlay;
 	anchor = top;
-	width  = 244;          // 5 × 32px button + 4 × 8px separator, each +6 gap
+	width  = 297;          // 6×(32+6) + 5×(9+6) − 6: pad is a trailing advance, one per
+	                       // widget, last one dropped on a centered run. "/" is 9 at 14px.
+	                       // too small does not shrink, it clips off both edges
 	height = 40;
 	font_size = 14;
 	reveal_on_hover = 20;
@@ -332,6 +311,14 @@ surface hud {
 		}
 		;
 	}
+	widget sep5.sep {
+		text = "/";
+	}
+	widget caff_btn.btn {
+		icon = 0xf0f4;
+		fg = caffeine_on.value == "1" ? PRIM : TEXT;
+		on_click() = exec("/home/hoks/.local/bin/caffeine toggle");
+	}
 }
 
 #hud widget {
@@ -345,48 +332,40 @@ surface hud {
 	radius = 8;
 }
 
-#gamma_btn, #dnd_btn, #mirror_btn, #notif {
+#gamma_btn, #dnd_btn, #mirror_btn, #caff_btn, #notif {
 	transition_fg = 180ms;
 }
 .btn:pressed {
 	bg = REST;
 }
 
-// ==================================
-//       NOTIFICATION CENTER
-// ==================================
+// notifications
 
-// Persistent panel over the history ring. `wispctl notif toggle` (bar bell)
-// flips notif_s.open, which creates/destroys the surface — closed costs no
-// pool and no timer.
 surface notifs {
 	layer   = overlay;
 	anchor  = top | right;
-	margin  = 46;          // clears the bar (height 34 + its own margin 6)
-	margin_x = 6;          // flush with the bar's right edge
+	margin  = 46;          // bar height 34 + bar margin 6, keep in sync
+	margin_x = 6;          // matches the bar margin
 	width   = 380;
 	height  = 420;
 	exclusive_zone = -1;
 	axis    = vertical;
-	scroll  = rows;        // one wheel notch = exactly one card, whatever its height
+	scroll  = rows;
 	font_size = 14;
 	visible = notif_s.open;
-	output  = active;      // one copy, on the monitor whose bell was clicked
-	pad_x   = 10;          // one inset for the whole panel; rows fill what's left
+	output  = active;
+	pad_x   = 10;
 	pad_y   = 8;
 	on_escape = "wispctl notif close";
-	dismiss_on_unfocus;    // clicking anywhere else closes it, like a dropdown
-	                       // (kbd is on_demand, so an open panel never eats typing)
+	dismiss_on_unfocus;
 
-	bg = CRUST;
+	bg = NOTIFBG;
 	radius = 8;
 	border = BORD;
 	border_width = 2;
 
-	// bell / title / trash: the two 26px squares balance, so the title is
-	// actually centered instead of merely left of the button
 	group nhead {
-		sticky;                // stays pinned; the cards scroll beneath it
+		sticky;
 		height = 30;
 		widget nbell.dim {
 			width = 26;
@@ -411,24 +390,23 @@ surface notifs {
 	}
 	widget nempty {
 		width   = 356;         // declared width → the text centers across it too
-		height  = 330;         // fills the card area, so the text centers in it
+		height  = 330;
 		text    = "nothing yet…";
-		fg      = #ff5c6678;
+		fg      = EMPTY;
 		visible = notif_s.count == 0;
 	}
 	for note in notif_s.history {
 		cell.note {
-			icon = note.icon;
+			icon = note.image;   // pixmap thumbnail; note.icon glyph is the fallback
 			text = "{note.summary}\n{note.body}";
 			body_lines = 4;
 			body_fit;
 			wrap;
 			text_align = start;
 			fg      = TEXT;
-			body_fg = SUBTXT;   // summary reads first, body recedes
+			body_fg = SUBTXT;
 			icon_fg = note.urgent ? RED : TERT;
 			border  = note.urgent ? RED : #00000000;
-			// click a card to dismiss it
 			on_click() = exec("wispctl notif dismiss {note.id}");
 		}
 	}
@@ -438,7 +416,7 @@ surface notifs {
 	pad_x = 0;
 	gap   = 0;
 	bg    = #00000000;
-	border = #00000000;    // don't inherit the panel frame around the header
+	border = #00000000;    // else the header inherits the panel frame
 }
 #nclear {
 	height = 26;           // else the press fill spans the whole header band
@@ -457,18 +435,17 @@ surface notifs {
 	pad_y  = 10;
 	pad    = 8;
 	border_width = 1;
+	icon_box = 22;   // == notifications(image=): glyph fallback shares the thumbnail square
 	icon_gap = 8;
 }
 .note:hover {
-	bg = #ff1b2233;
+	bg = HOVER;
 }
 .note:pressed {
 	bg = WSBORD;
 }
 
-// ==================================
-//           OSD (notifs)
-// ==================================
+// osd
 
 surface osd {
 	spawned_by = osd;
@@ -487,7 +464,7 @@ surface osd {
 	gap = 0;
 	pad_x = 14;
 	icon_gap = 12;
-	image = 32; // cover art square; falls back to the icon glyph
+	image = 32;
 	prog_h = 10;
 
 	timeout_low = 3000;
@@ -508,7 +485,12 @@ surface osd {
 		align = left;
 		width = 58;
 		icon = $image;
-		visible = $has_icon;   // collapse the column, don't indent past an empty box
+		icon_fg = $icon == 0xf019 ? TERT       // f019 = em's download glyph, matches /usr/local/bin/em
+			: $icon == 0xf0e7 ? ORANGE     // power-mode performance
+			: $icon == 0xf24e ? TBLUE      // power-mode balanced
+			: $icon == 0xf240 ? GREEN      // power-mode battery
+			: #00000000;
+		visible = $has_icon;
 	}
 
 	widget title {
@@ -517,7 +499,7 @@ surface osd {
 		body_lines = 1 + $nbody;
 		elide;
 		pad = 12;
-		x_offset = $has_icon ? 0 : 14;  // no icon column → keep the pad_x inset
+		x_offset = $has_icon ? 0 : 14;  // no icon column → stands in for the pad_x 14 inset
 		y_offset = $progress >= 0 ? -9 : 0;
 	}
 
@@ -547,7 +529,7 @@ surface osd {
 	fg = TEXT;
 }
 
-// text-only: a per-slab bg breaks the seamless chain the stacked slabs read as
+// fg only, a per-slab bg breaks the seamless stacked-slab chain
 #osd widget:warn {
 	fg = ORANGE;
 }
@@ -607,39 +589,16 @@ surface pill {
 	fg = ORANGE;
 }
 
-// ==================================
-//            Subsystems
-// ==================================
+// subsystems
 
 lock {
-	bg         = BLACK;
-	ring       = PRIM;
-	ring_bad   = RED;
-	fg         = YELLOW;
-	dim        = #60000000;   // scrim over the wallpaper, not a text color
-	caps       = ORANGE;
-	prompt     = "Password";
-	pam        = "system-auth";
-	font_size  = 20;
-	wall       = true;
+	bg        = BLACK;
+	dim       = #00000000;   // the default scrim is opaque grey
+	pam       = "system-auth";
+	font_size = 20;
 
-	// swaylock's default face: one centered ring, nothing else. No anchor bits
-	// → centered on both axes. Per-state colour is just another ring with a
-	// different show=, drawn in order: base, then PAM, then wrong on top.
-	// swaylock's proportions (radius:thickness 5:1), scaled up from its 50/10.
-	ring dial { radius = 80; thickness = 16; bg = #cc0e131c;
-	            border = BORD; border_width = 2; fg = PRIM; show = !wrong; }
-	// The 60° arc that jumps to a new angle on every keystroke. Its own element
-	// with a transparent stroke, so it only exists while there is input —
-	// swaylock shows no highlight on an empty buffer.
-	ring keys { radius = 80; thickness = 16; fg = #00000000; show = typing;
-	            highlight = TERT; highlight_bs = SUBTXT; separator = CRUST; }
-	ring busy { radius = 80; thickness = 16; fg = TERT; show = verifying; }
-	ring bad  { radius = 80; thickness = 16; fg = RED;  show = wrong; }
-
-	text verify { text = "Verifying"; show = verifying; fg = SUBTXT; font_size = 14; }
-	text bad_t  { text = "Wrong";     show = wrong;     fg = RED;    font_size = 14; }
-	text caps_t { text = "Caps Lock"; show = caps;      fg = ORANGE; font_size = 14; y = 110; }
+	text dots   { text = "{dots}";    show = typing; fg = TEXT; }
+	text caps_t { text = "Caps Lock"; show = caps;   fg = ORANGE; font_size = 14; y = 40; }
 }
 
 gamma {
@@ -653,7 +612,7 @@ gamma {
 }
 
 wallpaper {
-	path = "~/next/rice/walls/riverie.png";
+	path = WALL;
 	transition = wipe;
 	wipe_dir   = down_right;
 	wipe_soft  = 200;
@@ -662,16 +621,11 @@ wallpaper {
 }
 
 media {
-	// media keys
 }
 
-// ==================================
-//              Tooltip
-// ==================================
+// tooltip
 
-// Decoration only — never focusable, never clickable (tooltip.c pins
-// keyboard_interactivity 0 + a zero-area input region). `width` is a clamp:
-// the surface auto-widths to $text and elides past it.
+// width is a clamp, the surface auto-widths to $text and elides past it
 surface tooltip {
 	spawned_by = tooltip;
 	layer = overlay;
@@ -683,7 +637,7 @@ surface tooltip {
 	pad_x      = 8;
 	pad_y      = 4;
 	anchor_gap = 4;
-	delay_ms   = 500;   // hover dwell before it appears
+	delay_ms   = 500;
 
 	bg           = CRUST;
 	border       = BORD;
@@ -698,9 +652,7 @@ surface tooltip {
 	}
 }
 
-// ==================================
-//              Menus
-// ==================================
+// menus
 
 surface menu {
 	spawned_by = menu;
@@ -802,7 +754,7 @@ menu tray {
 	width       = 200;
 	row_h       = 24;
 	separator_h = 13;       // 1px hairline + 6px either side
-	separator   = REST;     // same near-invisible line the OSD stack uses
+	separator   = REST;
 	separator_frac = 92;
 	max_visible = 24;
 	anchor_gap  = 6;
@@ -820,10 +772,7 @@ menu tray {
 		cell {
 			height = 24;
 			text   = row.label;
-			// one icon column: the app's own raster wins it, the checkmark
-			// only shows on rows that brought no icon (a checkbox row
-			// virtually never does). 0 = no glyph, so a menu where no row
-			// has an icon loses the column instead of indenting every label
+			// icon 0 = no glyph, so an icon-less menu loses the column instead of indenting every label
 			icon   = row.has_icon ? row.icon : (row.checked ? 0xf00c : 0);
 			icon_box = 12;   // == the square menu_icons_load decodes for row_h 24
 			icon_gap = 6;

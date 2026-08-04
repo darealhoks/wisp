@@ -68,9 +68,9 @@ endif
 endif
 endif
 
-# Still no selector (fresh build/, no tag) → canonical default. riverie is what
+# Still no selector (fresh build/, no tag) → canonical default. reverie is what
 # syml.sh installs, so a tagless tree rebuilds the preset that's actually running.
-WISP ?= configs/riverie.wisp
+WISP ?= configs/reverie.wisp
 # Absolute so the tag can't thrash between rel/abs spellings of one config.
 override WISP := $(abspath $(WISP))
 # ponytail: build dirs keyed by basename — two same-named configs from
@@ -159,6 +159,10 @@ WISPC_BOOT_SRC := $(wildcard $(TOOLDIR)/wispc/*.c) $(TOOLDIR)/wispc/wispc.h
 # --emit only when the .wisp or wispc binary is newer than the generated files.
 # Files touched by --emit: features.h, objects.mk, gen_*.c, main.c.
 WISPC_STAMP   := $(GENDIR)/.emit-stamp
+# Resolved `include` targets of the last emit. A symlinked theme.wisp swapped to
+# an older palette is not "newer than the stamp", so the list is compared by
+# content as well as by mtime — otherwise a theme switch would be a no-op.
+WISPC_DEPS    := $(GENDIR)/.emit-deps
 WISPC_NEED  := $(shell mkdir -p $(GENDIR) $(BUILD); \
   rebuild_wispc=0; \
   if [ ! -x $(WISPC_BOOT) ]; then rebuild_wispc=1; else \
@@ -168,8 +172,16 @@ WISPC_NEED  := $(shell mkdir -p $(GENDIR) $(BUILD); \
     $(WISPC_CC) \
         $(wildcard $(TOOLDIR)/wispc/*.c) -o $(WISPC_BOOT) 1>&2 || { echo FAIL; exit 0; }; \
   fi; \
-  if [ ! -f $(WISPC_STAMP) ] || [ $(WISP) -nt $(WISPC_STAMP) ] || [ $(WISPC_BOOT) -nt $(WISPC_STAMP) ]; then \
-    $(WISPC_BOOT) --emit $(GENDIR) $(WISPC_EMIT_FLAGS) $(WISP) 1>&2 && touch $(WISPC_STAMP) || { echo FAIL; exit 0; }; \
+  need=0; \
+  if [ ! -f $(WISPC_STAMP) ] || [ ! -f $(WISPC_DEPS) ] || [ $(WISP) -nt $(WISPC_STAMP) ] || [ $(WISPC_BOOT) -nt $(WISPC_STAMP) ]; then need=1; else \
+    cur=$$($(WISPC_BOOT) --includes $(WISP) 2>/dev/null); \
+    if [ "$$cur" != "$$(cat $(WISPC_DEPS))" ]; then need=1; else \
+      for f in $$cur; do if [ "$$f" -nt $(WISPC_STAMP) ]; then need=1; break; fi; done; \
+    fi; \
+  fi; \
+  if [ $$need = 1 ]; then \
+    $(WISPC_BOOT) --emit $(GENDIR) $(WISPC_EMIT_FLAGS) $(WISP) 1>&2 && \
+    $(WISPC_BOOT) --includes $(WISP) > $(WISPC_DEPS) && touch $(WISPC_STAMP) || { echo FAIL; exit 0; }; \
   fi; \
   echo OK)
 ifneq ($(WISPC_NEED),OK)
@@ -195,7 +207,7 @@ HDR := $(SRCDIR)/wisp.h $(SRCDIR)/proto.h $(SRCDIR)/config.h \
        $(GENDIR)/features.h $(GENDIR)/gen_overrides.h $(GENDIR)/gen_menus.h
 
 WISPC_SRC := $(TOOLDIR)/wispc/arena.c $(TOOLDIR)/wispc/diag.c $(TOOLDIR)/wispc/lex.c \
-            $(TOOLDIR)/wispc/parse.c $(TOOLDIR)/wispc/style.c $(TOOLDIR)/wispc/sema.c $(TOOLDIR)/wispc/sema_types.c $(TOOLDIR)/wispc/dump.c \
+            $(TOOLDIR)/wispc/include.c $(TOOLDIR)/wispc/parse.c $(TOOLDIR)/wispc/style.c $(TOOLDIR)/wispc/sema.c $(TOOLDIR)/wispc/sema_types.c $(TOOLDIR)/wispc/dump.c \
             $(TOOLDIR)/wispc/codegen.c $(TOOLDIR)/wispc/codegen_util.c \
             $(TOOLDIR)/wispc/codegen_sources.c $(TOOLDIR)/wispc/codegen_expr.c \
             $(TOOLDIR)/wispc/codegen_items.c $(TOOLDIR)/wispc/codegen_surface.c \
@@ -330,7 +342,11 @@ $(ROOT)/bake: $(TOOLDIR)/bake.c
 # sub-make lands in its own build/<name>/, so with fresh caches this is a
 # mtime sweep + copy — `wispctl rebuild other` then switches without compiling.
 CONFDIR := $(or $(XDG_CONFIG_HOME),$(HOME)/.config)/wisp
-ALL_WISP := $(sort $(abspath $(wildcard configs/*.wisp) $(wildcard $(CONFDIR)/*.wisp)))
+# User configs are found recursively, matching `wispctl rebuild`'s lookup:
+# dot-dirs pruned, symlinked dirs not followed (find's default), depth 8.
+# theme.wisp is a palette fragment every config includes, never a config itself.
+ALL_WISP := $(filter-out %/theme.wisp,$(sort $(abspath $(wildcard configs/*.wisp) \
+    $(shell find $(CONFDIR) -maxdepth 8 -name '.*' -prune -o -name '*.wisp' -type f -print 2>/dev/null))))
 
 warm-cache: $(BIN)
 	@for w in $(filter-out $(WISP),$(ALL_WISP)); do \
@@ -367,7 +383,10 @@ install-share:
 	rm -rf $(SHAREDIR)
 	install -d $(SHAREDIR)/configs $(SHAREDIR)/docs
 	cp -r Makefile src $(SHAREDIR)/
-	install -m 644 configs/*.wisp $(SHAREDIR)/configs/
+	# Whole tree, not a *.wisp glob: a config's `include` targets live in
+	# subdirs (configs/themes/) and a flat copy would install a config whose
+	# include is missing — broken on first `wispctl rebuild`.
+	cp -r configs/. $(SHAREDIR)/configs/
 	install -m 644 docs/*.md $(SHAREDIR)/docs/
 
 uninstall:
@@ -388,7 +407,8 @@ distclean: clean
 
 # Configs present under configs/. Glob so deleting a .wisp file doesn't break
 # `make check`; add new ones by dropping them in configs/ — no Makefile edit.
-CONFIGS := $(patsubst configs/%.wisp,%,$(wildcard configs/*.wisp))
+# theme.wisp excluded: palette fragment, not a config.
+CONFIGS := $(patsubst configs/%.wisp,%,$(filter-out configs/theme.wisp,$(wildcard configs/*.wisp)))
 
 # Build matrix: every config present under configs/. Per-config build dirs make
 # this incremental and side-effect-free: nothing to clean, and WISP_NOSELECT=1
@@ -421,17 +441,18 @@ check:
 	    echo "==> nm assertions skipped (configs/minimal.wisp absent)"; \
 	fi; \
 	if $(MAKE) -s check-diag; then :; else fail=1; fi; \
+	if $(MAKE) -s check-rebuild; then :; else fail=1; fi; \
 	if [ $$fail -ne 0 ]; then echo "check: FAIL"; exit 1; fi; \
 	echo "check: PASS"
 
 # Diagnostic golden corpus: one deliberate mistake per tests/diag/*.wisp, each
 # with a committed *.expected stderr. Normalise the path prefix so goldens are
 # location-independent. Regenerate a golden after an intended message change with:
-#   ./wispc --check tests/diag/NAME.wisp 2>&1 | sed 's|.*tests/diag/|tests/diag/|' > tests/diag/NAME.expected
+#   ./wispc --check tests/diag/NAME.wisp 2>&1 | sed 's|[^ ]*tests/diag/|tests/diag/|g' > tests/diag/NAME.expected
 check-diag: $(WISPC_BOOT)
 	@echo "==> Diagnostic goldens"; fail=0; tmp=$$(mktemp); \
 	for w in tests/diag/*.wisp; do \
-	    $(WISPC_BOOT) --check "$$w" 2>&1 | sed 's|.*tests/diag/|tests/diag/|' > $$tmp; \
+	    $(WISPC_BOOT) --check "$$w" 2>&1 | sed 's|[^ ]*tests/diag/|tests/diag/|g' > $$tmp; \
 	    if diff -q "$${w%.wisp}.expected" $$tmp >/dev/null; then \
 	        printf "  %-34s OK\n" "$$(basename $$w)"; \
 	    else \
@@ -443,10 +464,16 @@ check-diag: $(WISPC_BOOT)
 	if [ $$fail -ne 0 ]; then echo "check-diag: FAIL"; exit 1; fi; \
 	echo "check-diag: PASS"
 
+# Config discovery for `wispctl rebuild <name>`: nested resolution, shallowest
+# match, and the same-depth ambiguity error. Sandboxed in a temp XDG dir with a
+# failing $WISP_SRC Makefile, so it never builds and never pokes the daemon.
+check-rebuild: $(BUILD)/wispctl
+	@sh tests/rebuild-lookup.sh $(BUILD)/wispctl
+
 # Fuzz the D-Bus wire reader (the session-bus attack surface) under ASan.
 # Needs clang+libFuzzer and a built config for wisp.h's generated includes, so
-# it borrows build/riverie/gen-tw. Run: make fuzz && ./build/fuzz/fuzz_dbus -max_len=512 fuzz/corpus
-FUZZ_GENDIR := $(ROOT)/riverie/gen-tw
+# it borrows build/reverie/gen-tw. Run: make fuzz && ./build/fuzz/fuzz_dbus -max_len=512 fuzz/corpus
+FUZZ_GENDIR := $(ROOT)/reverie/gen-tw
 fuzz: fuzz-dbus fuzz-dispatch fuzz-wl
 
 fuzz-dbus: $(FUZZ_GENDIR)/features.h
@@ -481,4 +508,4 @@ fuzz-wl: $(FUZZ_GENDIR)/features.h
 $(FUZZ_GENDIR)/features.h:
 	@echo "fuzz: build a config first (make install)"; exit 1
 
-.PHONY: all tools install install-tools install-share uninstall clean distclean check check-diag fuzz fuzz-dbus fuzz-dispatch fuzz-wl
+.PHONY: all tools install install-tools install-share uninstall clean distclean check check-diag check-rebuild fuzz fuzz-dbus fuzz-dispatch fuzz-wl

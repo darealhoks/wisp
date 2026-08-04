@@ -23,6 +23,10 @@ void diag_error(Loc l, const char *fmt, ...) __attribute__((format(printf,2,3)))
  * `notifications(history=N)` overrides it into `notif_hist_cap` (sema.c). */
 #define NOTIF_HIST_CAP 16
 extern int notif_hist_cap;
+/* Center thumbnail square (px); 0 = no images in the history ring.
+ * `notifications(image=N)` sets it (sema.c); decode rides the OSD path, so it
+ * only takes effect when the OSD surface also declares `image = N`. */
+extern int notif_image_px;
 
 void diag_note (Loc l, const char *fmt, ...) __attribute__((format(printf,2,3)));
 void diag_hint (Loc l, const char *fmt, ...) __attribute__((format(printf,2,3)));
@@ -47,6 +51,7 @@ typedef enum {
     TK_KW_ON_PRESS, TK_KW_ON_RELEASE, TK_KW_ON_DRAG, TK_KW_ON_CHANGE,
     TK_KW_ON_RCLICK, TK_KW_ON_MCLICK,
     TK_KW_EXEC, TK_KW_EMIT, TK_KW_SET, TK_KW_ANIMATE,
+    TK_KW_INCLUDE,
 } TokKind;
 
 typedef struct {
@@ -66,6 +71,13 @@ typedef struct {
     Tok cur, peek;
     int have_peek;
 } Lexer;
+
+/* ---------- include ---------- */
+char *include_open(Loc site, const char *from, const char *path, char **out_src);
+void  include_close(void);
+void  include_root(const char *file);
+const char *include_src (int i);  /* i-th included file's text, NULL past end */
+const char *include_file(int i);  /* ... and its resolved path */
 
 void lex_init(Lexer *L, const char *file, const char *src);
 void lex_next(Lexer *L);            /* advances cur */

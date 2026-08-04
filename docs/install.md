@@ -2,7 +2,7 @@
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/darealhoks/wisp/main/install.sh | sh
-wispctl rebuild riverie   # compile an example config, install it, reload
+wispctl rebuild reverie   # compile an example config, install it, reload
 wisp                      # or add `wisp` to your compositor autostart
 ```
 
@@ -59,7 +59,7 @@ Set them on the make command line, or as `//!` directive comments inside the
 
 | knob | default | meaning |
 |---|---|---|
-| `WISP` | `configs/riverie.wisp` | which config to build |
+| `WISP` | `configs/reverie.wisp` | which config to build |
 | `FONT_BACKEND` | `truetype` | `truetype` (TTF/OTF rasterized in-process) or `bitmap` (PSF/BDF baked to const tables) |
 | `FONT` | `~/.local/share/fonts/MapleMono-NF-Bold.ttf` | the font to bake sizes from |
 | `FONT_FALLBACK` | empty | second font in the chain, truetype only; a CBDT emoji font renders in colour |
@@ -116,5 +116,5 @@ codegen; the full list of check-passes-emit-fails cases is in [[gotchas]].
 - `make` alone is not enough after an edit, use `make install`, because `wispctl reload` re-execs the installed binary.
 - `FRACTIONAL=1` with `FONT_BACKEND=bitmap` is a hard Makefile error; bitmap fonts can only pixel-double.
 - `FONT_BACKEND=baked` and `=freetype` were retired and now error out.
-- Only two configs ship: `riverie` and `anemoia`.
+- Only two configs ship: `reverie` and `anemoia`.
 - `wispctl rebuild` needs the share dir (or `$WISP_SRC`) present, it shells out to `make -C` there.

@@ -58,7 +58,7 @@ surface bar {
 }
 ```
 
-The tree ships two example configs, `configs/riverie.wisp` and
+The tree ships two example configs, `configs/reverie.wisp` and
 `configs/anemoia.wisp`. Both are full desktops and both are worth reading.
 
 ## Requirements in one line

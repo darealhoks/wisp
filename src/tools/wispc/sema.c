@@ -90,7 +90,7 @@ static const PropSchema SCHEMAS[] = {
       " layer margin margin_x max max_visible output pad pad_x pad_y prog_fg prog_h prog_track"
       " prompt radius radius_bl radius_br radius_inner radius_outer radius_tl"
       " radius_tr reveal_anim_ms reveal_easing reveal_gutter reveal_on_hover"
-      " delay_ms dismiss_on_unfocus keyboard on_escape row_h scroll separator separator_frac separator_h size slide_ms sort spawned_by terminal"
+      " delay_ms dismiss_on_unfocus keyboard on_escape row_h scroll separator separator_frac separator_h size slide_ms sort sound spawned_by terminal"
       " timeout timeout_low timeout_normal visible width " },
     { "group", "group",
       " align bg border border_width gap height pad pad_x radius sticky " },
@@ -259,16 +259,25 @@ static void read_tray_icon_size(SemaResult *r, Expr *c) {
  * stays unbacked until notifications arrive, and it also sizes the per-cell
  * st[]/hit arrays in every generated surface, so it stays compile-time. */
 int notif_hist_cap = NOTIF_HIST_CAP;
+int notif_image_px;
 static void read_notif_history(Expr *c) {
     for (int i = 0; i < c->call.nargs; i++) {
         const char *kn = c->call.argnames ? c->call.argnames[i] : NULL;
-        if (!kn || c->call.anlen[i] != 7 || memcmp(kn, "history", 7)) continue;
-        if (c->call.args[i]->kind != EX_INT) {
-            diag_error(c->loc, "notifications history takes an integer"); return;
+        if (kn && c->call.anlen[i] == 7 && !memcmp(kn, "history", 7)) {
+            if (c->call.args[i]->kind != EX_INT) {
+                diag_error(c->loc, "notifications history takes an integer"); return;
+            }
+            long v = (long)c->call.args[i]->i;
+            if (v < 1 || v > 128) { diag_error(c->loc, "notifications history must be 1..128"); return; }
+            notif_hist_cap = (int)v;
+        } else if (kn && c->call.anlen[i] == 5 && !memcmp(kn, "image", 5)) {
+            if (c->call.args[i]->kind != EX_INT) {
+                diag_error(c->loc, "notifications image takes an integer (px)"); return;
+            }
+            long v = (long)c->call.args[i]->i;
+            if (v < 0 || v > 128) { diag_error(c->loc, "notifications image must be 0..128"); return; }
+            notif_image_px = (int)v;
         }
-        long v = (long)c->call.args[i]->i;
-        if (v < 1 || v > 128) { diag_error(c->loc, "notifications history must be 1..128"); return; }
-        notif_hist_cap = (int)v;
     }
 }
 

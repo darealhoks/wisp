@@ -9,7 +9,7 @@ static int err_count = 0;
 
 /* file -> source buffer, so a diagnostic can print the offending line. The
  * lexer owns the buffers; we only borrow pointers (valid for the whole run). */
-static struct { const char *file; const char *buf; } sources[16];
+static struct { const char *file; const char *buf; } sources[32];
 static int nsources = 0;
 
 void diag_add_source(const char *file, const char *buf) {

@@ -231,7 +231,8 @@ struct Widget {
      * coordinate outside the pixel layer (layout, input, cutouts) stays
      * logical, which is what keeps the scale==1 path byte-identical. */
     int        w, h;
-    int        margin_top;           /* last set_margin top; popups anchor below it */
+    int        margin_top, margin_bot; /* last set_margin; popups anchor off the real rect */
+    uint32_t   anchor_bits;          /* last set_anchor, to know which edge margins count from */
     int        scale120;             /* copy of the output's, in 120ths, >= 120 */
     int        sent_scale120;        /* last set_buffer_scale sent (120ths); 0 = none */
 #ifdef WISP_FRACTIONAL
@@ -424,11 +425,15 @@ void    cutout_drop_output(Output *o);   /* clear all cutouts scoped to a remove
 int     cutout_apply(const char *self,   Output *self_out, uint32_t *px, int sw, int sh);
 /* Rect of the bar cell most recently clicked, so a popup opened as a result of
  * that click can be anchored under it instead of centered. Recorded by the
- * generated click dispatch, consumed (and time-boxed) by menu_create. */
-typedef struct { Output *out; int x, w, below; int64_t ms; } ClickAnchor;
+ * generated click dispatch, consumed (and time-boxed) by menu_create or by
+ * output_active() — whichever popup the click opened gets it, exactly once. */
+typedef struct { Output *out; int x, w, below, top; int64_t ms; } ClickAnchor;
 extern ClickAnchor click_anchor;
 void    widget_note_click(Widget *w, int x, int cw);
+/* Widget's real top/bottom edge in its output's logical coords. */
+void    widget_screen_span(const Widget *w, int *top, int *below);
 Output *output_active(void);             /* monitor an `output = active;` surface opens on */
+void    click_anchor_spend(void);        /* the click closed a panel: don't let a menu inherit it */
 
 void    widget_set_anchor(Widget *w, uint32_t anchor_bits);
 void    widget_set_size(Widget *w, int width, int height);
@@ -744,7 +749,7 @@ Widget *menu_create_action(const char *title,
 /* Explicit anchor rect a popup hangs under, in the output's logical coords.
  * Kept separate from ClickAnchor on purpose: menus consume that one
  * destructively, and an explicit anchor must not disturb a pending click. */
-typedef struct { Output *out; int x, w, below; } TipAnchor;
+typedef struct { Output *out; int x, w, below, top; } TipAnchor;
 void    tooltip_show(const char *text, const TipAnchor *at);
 /* Hover path: schedule `text` (must outlive the wait — codegen passes a string
  * literal) after TIP_DELAY_MS. Re-arming or hiding cancels a pending one. */
@@ -821,9 +826,13 @@ const char *notif_summary(int i);
 const char *notif_body(int i);
 int         notif_urgent(int i);
 uint32_t    notif_icon(int i);
+const uint32_t *notif_image(int i);  /* NOTIF_IMAGE_PX² thumbnail, NULL = none */
 uint32_t    notif_id(int i);
+/* `image` (OSD_IMAGE_PX² premultiplied ARGB, or NULL) is only borrowed — the
+ * ring keeps its own downscaled copy; the caller still owns the pointer. */
 void        notif_push(const char *app, const char *summary, const char *body,
-                       uint32_t icon_cp, int urgency, uint32_t replaces_id);
+                       uint32_t icon_cp, const uint32_t *image, int urgency,
+                       uint32_t replaces_id);
 void        notif_dismiss(uint32_t id);
 void        notif_clear(void);
 
@@ -948,6 +957,7 @@ void wl_roundtrip(void);                 /* block until one display.sync complet
 void media_volume(const char *arg);    /* "up" | "down" | "mute" */
 void media_mic(const char *arg);       /* "mute" */
 void media_backlight(const char *arg); /* "up" | "down" */
+void media_backlight_restore(void);    /* undo the boot-time brightness=max lie */
 
 /* ============================================================ */
 /* D-Bus transport + notification server (dbus.c + notify.c) — optional */
@@ -1110,7 +1120,10 @@ typedef enum { ANIM_T_INT = 0, ANIM_T_FLOAT, ANIM_T_COLOR } AnimType;
 
 typedef void (*AnimDone)(void *user);
 
-#define ANIM_MAX 32
+/* a post-reload bar can legitimately batch ~46 item tweens (tags dump + status
+ * deltas + SNI replies land together); overflow now snaps instead of freezing,
+ * but keep headroom so it stays a tween, not a jump */
+#define ANIM_MAX 64
 
 typedef struct Anim {
     int        active;
@@ -1178,6 +1191,8 @@ void msg(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 __attribute__((noreturn)) void die(const char *fmt, ...);
 
 int64_t now_ms(void);
+
+void path_add_self_dir(void);
 
 /* DSL string `==` lowers to this: a raw `==` on char* would pointer-compare.
  * Inline (not a macro) so the operands aren't re-expanded — the macro form

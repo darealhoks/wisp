@@ -4,6 +4,7 @@
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
+#include <ftw.h>
 #include <time.h>
 #include <limits.h>
 #include <stdio.h>
@@ -79,6 +80,60 @@ static int new_wall_path(const char *src, char *out, size_t outsz) {
     return got;
 }
 
+/* Config discovery walk. nftw() has no user-data hook, so the walk state is
+ * file-static — wispctl is a one-shot process, one walk per run. */
+#define WALK_TIED 8
+static const char *walk_name;
+static size_t walk_namelen;
+static char walk_hit[WALK_TIED][PATH_MAX];
+static int walk_nhit, walk_depth;
+
+static int walk_cb(const char *p, const struct stat *sb, int t, struct FTW *f) {
+    const char *base = p + f->base;
+    /* Dot-dirs are never config trees; 8 levels is deeper than any real one. */
+    if (t == FTW_D)
+        return (f->level >= 8 || (f->level && base[0] == '.'))
+               ? FTW_SKIP_SUBTREE : FTW_CONTINUE;
+    if (t != FTW_F || base[0] == '.' || f->level > walk_depth) return FTW_CONTINUE;
+    if (strncmp(base, walk_name, walk_namelen)
+        || (base[walk_namelen] && strcmp(base + walk_namelen, ".wisp")))
+        return FTW_CONTINUE;
+    if (f->level < walk_depth) { walk_depth = f->level; walk_nhit = 0; }
+    if (walk_nhit < WALK_TIED) snprintf(walk_hit[walk_nhit], PATH_MAX, "%s", p);
+    walk_nhit++;
+    return FTW_CONTINUE;
+}
+
+/* A literal path wins outright; otherwise <conf> is walked recursively for
+ * `<name>.wisp` or a plain file `<name>`, shallowest match winning. A tie is a
+ * hard error — silently picking one of two same-named configs costs an hour of
+ * confusion. FTW_PHYS keeps symlinked dirs (and their loops) out of the walk.
+ * Prints its own diagnostic; returns 1 on a hit. */
+static int resolve_config(const char *name, const char *conf, const char *src,
+                          char *out) {
+    if (access(name, R_OK) == 0 && realpath(name, out)) return 1;
+
+    walk_name = name; walk_namelen = strlen(name);
+    walk_nhit = 0; walk_depth = 1 << 20;
+    nftw(conf, walk_cb, 16, FTW_PHYS | FTW_ACTIONRETVAL);
+    if (walk_nhit > 1) {
+        fprintf(stderr, "wispctl: config '%s' is ambiguous, %d matches:\n",
+                name, walk_nhit);
+        for (int i = 0; i < walk_nhit && i < WALK_TIED; i++)
+            fprintf(stderr, "  %s\n", walk_hit[i]);
+        return 0;
+    }
+    if (walk_nhit == 1 && realpath(walk_hit[0], out)) return 1;
+
+    char p[PATH_MAX];
+    snprintf(p, sizeof p, "%s/configs/%s.wisp", src, name);
+    if (access(p, R_OK) == 0 && realpath(p, out)) return 1;
+
+    fprintf(stderr, "wispctl: config '%s' not found "
+            "(searched %s recursively and %s/configs)\n", name, conf, src);
+    return 0;
+}
+
 /* rebuild [name] — recompile the installed daemon from a .wisp, then reload.
  * Runtime sources come from $WISP_SRC (a checkout) or the installed share dir;
  * the chosen config is remembered in <confdir>/current so a bare `rebuild`
@@ -103,19 +158,7 @@ static int cmd_rebuild(const char *name) {
     char cur[PATH_MAX], wisp[PATH_MAX] = "";
     snprintf(cur, sizeof cur, "%s/current", conf);
     if (name) {
-        char cand[4][PATH_MAX];
-        snprintf(cand[0], PATH_MAX, "%s", name);
-        snprintf(cand[1], PATH_MAX, "%s/%s.wisp", conf, name);
-        snprintf(cand[2], PATH_MAX, "%s/%s", conf, name);
-        snprintf(cand[3], PATH_MAX, "%s/configs/%s.wisp", src, name);
-        int found = 0;
-        for (int i = 0; i < 4 && !found; i++)
-            if (access(cand[i], R_OK) == 0 && realpath(cand[i], wisp)) found = 1;
-        if (!found) {
-            fprintf(stderr, "wispctl: config '%s' not found "
-                    "(looked in %s and %s/configs)\n", name, conf, src);
-            return 1;
-        }
+        if (!resolve_config(name, conf, src, wisp)) return 1;
         /* Remember even if the build then fails: a bare `rebuild` retrying
          * the config you're fixing is the behavior you want. */
         mkdir(conf, 0755);
@@ -293,7 +336,8 @@ static const char USAGE[] =
 "  reload                    re-exec the installed wisp binary in place.\n"
 "                            does NOT rebuild: use `rebuild` for that\n"
 "  rebuild [config]          recompile from a .wisp, install, reload.\n"
-"                            config = a name in ~/.config/wisp (or a path);\n"
+"                            config = a name found anywhere under\n"
+"                            ~/.config/wisp (searched recursively), or a path;\n"
 "                            omitted = the last one used\n"
 "  update                    fetch + install the latest wisp from github,\n"
 "                            then rebuild + reload\n"
@@ -319,8 +363,9 @@ static const char USAGE[] =
 "                            progress -1 omits the bar; icon-cp is hex; same\n"
 "                            slot replaces the previous slab\n"
 "  tooltip <x> <width> <below> <text> | tooltip hide\n"
-"  notify <urgency> <summary> [body] [icon-cp] [timeout-ms]\n"
-"                            urgency 0|1|2; timeout -1 default, 0 sticky\n"
+"  notify [-t] <urgency> <summary> [body] [icon-cp] [timeout-ms]\n"
+"                            urgency 0|1|2; timeout -1 default, 0 sticky;\n"
+"                            -t = transient, skipped by the notification center\n"
 "  osd-clear                 dismiss everything on screen\n"
 "  dnd on|off|toggle|status  do not disturb\n"
 "  notif open|close|toggle|status    show/hide the notification center panel\n"

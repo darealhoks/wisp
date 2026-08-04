@@ -1,0 +1,1 @@
+/home/hoks/next/rice/walls/reverie/wisp.wisp

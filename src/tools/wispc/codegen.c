@@ -147,6 +147,9 @@ static void emit_main(FILE *o, SrcInst *srcs, int nsrc, SemaResult *r) {
      * zombies until RLIMIT_NPROC kills all spawning. exec_line sources still
      * waitpid() their own pid; ECHILD there just makes them re-kick. */
     fputs("    signal(SIGCHLD, SIG_IGN);\n", o);
+    /* Before anything can spawn: a session-manager PATH has no ~/.local/bin,
+     * which silently 127s every `exec("wispctl …")` in the config. */
+    fputs("    path_add_self_dir();\n", o);
     /* --reload-fds wl=N,ctl=M,hi=H,adopt=...,gamma=...,old=... : adopt
      * inherited fds; wl_adopt parses the rest (id high-water mark, in-place
      * surface/gamma adoption records, leftover ids to reap). */
@@ -177,6 +180,8 @@ static void emit_main(FILE *o, SrcInst *srcs, int nsrc, SemaResult *r) {
           "        wl_roundtrip(); wl_reap_old();\n"
           "    }\n", o);
     fputs("    if (reload_ctl >= 0) ctl_adopt(reload_ctl); else ctl_open();\n", o);
+    /* fresh start only: reloads must not clobber a level set by another tool */
+    fputs("    if (reload_ctl < 0) media_backlight_restore();\n", o);
     fputs("    key_rep_tfd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);\n", o);
     if (has_status_src(srcs, nsrc)) fputs("    wispgen_status_setup();\n", o);
     if (has_poll) fputs("    wispgen_status_init();\n", o);
@@ -241,6 +246,11 @@ static void emit_main(FILE *o, SrcInst *srcs, int nsrc, SemaResult *r) {
         fputs("    if (bz_fd >= 0) epoll_add_fd(bz_fd);\n", o);
     if (r->has_gamma && !has_poll)
         fputs("    epoll_add_fd(wispgen_gamma_tfd);\n", o);
+    if (r->has_anim)
+        /* the anim timerfd is created lazily and epoll_add_fd is a no-op
+         * before epoll_create1 — a tween started during the reload path's
+         * cold renders would otherwise never tick (same re-add dbus/pw get) */
+        fputs("    if (anim_fd() >= 0) epoll_add_fd(anim_fd());\n", o);
     for (int i = 0; i < nsrc; i++)
         if (srcs[i].drv->drv == DRV_CLOCK || srcs[i].drv->drv == DRV_EXEC ||
             srcs[i].drv->drv == DRV_INOTIFY)
@@ -539,11 +549,16 @@ static void emit_block_overrides(FILE *o, Decl *d, const char *label,
             fprintf(o, "#undef %s\n#define %s 0x%08xu\n", map[i].macro, map[i].macro,
                     (unsigned)eval_color_ctx(ctx, e, 0));
             break;
-        case 2:
-            if (e->kind != EX_STRING) continue;
+        case 2: {
+            /* Follows const chains, and errors rather than silently leaving
+             * the config.h default (that was how `path = WALL;` kept the
+             * stock dwl wallpaper path). */
+            Expr *s = eval_string_ctx(ctx, e);
+            if (!s) continue;
             fprintf(o, "#undef %s\n#define %s \"%.*s\"\n",
-                    map[i].macro, map[i].macro, (int)e->str.n, e->str.s);
+                    map[i].macro, map[i].macro, (int)s->str.n, s->str.s);
             break;
+        }
         case 3: {
             int v = -1;
             if (e->kind == EX_BOOL) v = e->b ? 1 : 0;
@@ -630,8 +645,12 @@ static void emit_overrides(FILE *o, Unit *u, CGCtx *ctx) {
         {"wipe_dir",   "WALL_WIPE_DIR",    4},
         {"wipe_soft",  "WALL_WIPE_SOFT",   0},
     };
-    emit_block_overrides(o, find_block(u, D_WALLPAPER), "wallpaper", wallmap,
+    Decl *wallb = find_block(u, D_WALLPAPER);
+    emit_block_overrides(o, wallb, "wallpaper", wallmap,
                          (int)(sizeof wallmap / sizeof wallmap[0]), ctx);
+    /* There is no built-in image, so a pathless block paints WALL_BG forever. */
+    if (wallb && !block_prop(wallb, "path"))
+        diag_error(wallb->loc, "`wallpaper` needs a `path` — there is no default image");
 
     Decl *osd = find_spawn_template(u, "osd");
     if (osd) {
@@ -700,6 +719,16 @@ static void emit_overrides(FILE *o, Unit *u, CGCtx *ctx) {
                 fprintf(o, "#undef %s\n#define %s %d\n",
                         map[i].macro, map[i].macro, eval_int(e, 0));
             }
+        }
+        Expr *snd = surface_prop(osd, "sound");
+        if (snd && snd->kind == EX_STRING) {
+            fputs("#undef OSD_SOUND\n#define OSD_SOUND \"", o);
+            for (size_t j = 0; j < snd->str.n; j++) {
+                char c = snd->str.s[j];
+                if (c == '"' || c == '\\') fputc('\\', o);
+                fputc(c, o);
+            }
+            fputs("\"\n", o);
         }
         /* The icon widget's declared width IS the text column's left edge — the
          * slot is reserved whether or not the notification carries an icon.

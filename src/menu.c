@@ -517,9 +517,10 @@ Widget *menu_create(const char *title, char items[][ITEM_MAX], int n, int client
                  : (click_anchor.ms && now_ms() - click_anchor.ms < 500
                     && click_anchor.out && MENU_VERTICAL);
     if (!a.out) {
-        a = (TipAnchor){ click_anchor.out, click_anchor.x, click_anchor.w, click_anchor.below };
+        a = (TipAnchor){ click_anchor.out, click_anchor.x, click_anchor.w, click_anchor.below, click_anchor.top };
         click_anchor.ms = 0;
     }
+    if (!a.top) a.top = a.below;   /* explicit `menu --at` gives no top edge */
     pend_anchor = (TipAnchor){0};
     w->s.menu.anchored = anchored;
 

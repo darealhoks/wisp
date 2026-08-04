@@ -42,6 +42,11 @@ int      image_mtime(const char *path, int64_t *mtime);
  * Used for menu app icons and notification cover art. */
 uint32_t *image_scale_square(const uint8_t *rgba, int sw, int sh, int ds);
 
+/* Same box filter, premultiplied-ARGB square → smaller square, malloc'd
+ * (free()). Downscales an OSD-size pixmap into the notification-center
+ * thumbnail without re-decoding the source. */
+uint32_t *image_scale_pm(const uint32_t *pm, int spx, int dpx);
+
 /* Cached decode+scale for the DSL `image` widget prop: `spec` is a file path
  * (leading "~/" expanded) or a freedesktop icon name, `px` the square side.
  * Returns a premultiplied-ARGB px*px square owned by the cache (never free it),

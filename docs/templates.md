@@ -564,7 +564,7 @@ surface bar {
 - Every visible piece is a declared `frame`/`text`/`ring` element. Declare none and you get the legacy layout: centred dots plus a wrong and a CAPS line.
 - A `ring`'s `radius` is the ring's own radius and `gap` is in degrees; there are no per-state ring colours, only more `ring` elements with different `show`.
 - `highlight` is the per-keypress arc; it is opt-in, jumps angle on every character and backspace, and needs no timer because the keystroke already repaints. It draws whenever its element's `show` passes, so gate it on `typing` for swaylock's behaviour of no arc on an empty buffer.
-- `wall = true` draws the compiled `wallpaper { path }` (default `~/.local/share/dwl/wallpaper.png`), mapping the daemon's on-disk cover-fit cache and decoding it once itself if that cache is cold. A runtime `wispctl wall` override is not followed, and a missing file falls back to `bg`.
+- `wall = true` draws the compiled `wallpaper { path }`, mapping the daemon's on-disk cover-fit cache and decoding it once itself if that cache is cold. A runtime `wispctl wall` override is not followed, and a missing file falls back to `bg`.
 - `dim` is composited over the background, so an opaque colour hides the wallpaper entirely.
 - `font_size` on the block and on each element feeds the baked font size list.
 

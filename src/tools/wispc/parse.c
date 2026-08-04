@@ -52,7 +52,8 @@ static int lev(const char *a, size_t an, const char *b, size_t bn) {
  * that merely resembles a keyword never triggers a false rewrite. */
 static const char *kw_suggest(const char *s, size_t n) {
     static const char *K[] = { "source","surface","compound","widget","group",
-        "cell","region","const","mut","lock","gamma","wallpaper","media","menu", NULL };
+        "cell","region","const","mut","lock","gamma","wallpaper","media","menu",
+        "include", NULL };
     for (int i = 0; K[i]; i++)
         if (lev(s, n, K[i], strlen(K[i])) <= 1) return K[i];
     return NULL;
@@ -1053,33 +1054,72 @@ static Decl *parse_style_rule(P *p) {
     return d;
 }
 
+static void parse_decls(P *p, VList *decls);
+
+/* `include "path.wisp";` — parse the named file's top-level declarations
+ * straight into this unit. Tokens keep their own file in Loc, so a diagnostic
+ * inside the included file names that file, not the includer. */
+static void parse_include(P *p, VList *decls) {
+    Loc site = cur(p).loc;
+    lex_next(&p->L);
+    if (!at(p, TK_STRING)) {
+        diag_error(cur(p).loc, "include needs a quoted path, e.g. include \"theme.wisp\";");
+        skip_decl(p);
+        return;
+    }
+    Tok t = cur(p);
+    char path[1024];
+    snprintf(path, sizeof path, "%.*s", (int)t.len, t.s);
+    lex_next(&p->L);
+    expect(p, TK_SEMI, "';' after include path");
+
+    char *isrc = NULL;
+    char *ifile = include_open(site, p->file, path, &isrc);
+    if (!ifile) return;
+    P ip = {.a = p->a, .file = ifile };
+    lex_init(&ip.L, ifile, isrc);
+    parse_decls(&ip, decls);
+    include_close();
+}
+
 Unit *parse_file(Arena *a, const char *file, const char *src) {
     P p = {.a = a, .file = file };
     lex_init(&p.L, file, src);
+    include_root(file);
 
     Unit *u = NEW(&p, Unit);
     u->arena = a; u->file = file;
     VList decls = {0};
-    while (!at(&p, TK_EOF)) {
-        Tok t = cur(&p);
+    parse_decls(&p, &decls);
+    int n;
+    Decl **arr = (Decl**)vl_freeze(&p, &decls, &n);
+    u->decls = NEW_ARR(&p, Decl*, n);
+    for (int i = 0; i < n; i++) u->decls[i] = arr[i];
+    u->n = n;
+    return u;
+}
+
+static void parse_decls(P *p, VList *decls) {
+    while (!at(p, TK_EOF)) {
+        Tok t = cur(p);
         Decl *d = NULL;
         switch (t.kind) {
-        case TK_KW_SOURCE:    d = parse_source(&p); break;
+        case TK_KW_SOURCE:    d = parse_source(p); break;
         /* `surface NAME {` is a decl; bare `surface {`/`surface.cls {` is a
          * style rule on every surface. Same tokens can't mean both. */
         case TK_KW_SURFACE:
-            d = (lex_peek(&p.L).kind == TK_IDENT)
-                ? parse_surface_or_compound(&p, D_SURFACE, false) : parse_style_rule(&p);
+            d = (lex_peek(&p->L).kind == TK_IDENT)
+                ? parse_surface_or_compound(p, D_SURFACE, false) : parse_style_rule(p);
             break;
         case TK_KW_WIDGET: case TK_KW_GROUP: case TK_KW_CELL: case TK_KW_REGION:
         case TK_IDENT: case TK_HASH: case TK_DOT:
             if (t.kind == TK_IDENT && !(t.len == 4 && memcmp(t.s, "menu", 4) == 0)) {
-                Tok pk = lex_peek(&p.L);
+                Tok pk = lex_peek(&p->L);
                 /* `foo = ...;` at top level — a property with no block around it. */
                 if (pk.kind == TK_ASSIGN) {
                     diag_error(t.loc, "property '%.*s' is not inside any block", (int)t.len, t.s);
                     diag_hint(t.loc, "properties live inside a surface/widget/group/... block, not at top level");
-                    skip_decl(&p); continue;
+                    skip_decl(p); continue;
                 }
                 /* `srface bar { ... }` — a mistyped declaration keyword. A real
                  * two-part style selector never leads with a near-keyword id. */
@@ -1087,33 +1127,28 @@ Unit *parse_file(Arena *a, const char *file, const char *src) {
                 if (pk.kind == TK_IDENT && (sug = kw_suggest(t.s, t.len))) {
                     diag_error(t.loc, "unknown declaration keyword '%.*s'", (int)t.len, t.s);
                     diag_hint(t.loc, "did you mean '%s'?", sug);
-                    skip_decl(&p); continue;
+                    skip_decl(p); continue;
                 }
             }
             d = (t.kind == TK_IDENT && t.len == 4 && memcmp(t.s, "menu", 4) == 0 &&
-                 lex_peek(&p.L).kind == TK_IDENT)
-                ? parse_surface_or_compound(&p, D_SURFACE, true) : parse_style_rule(&p);
+                 lex_peek(&p->L).kind == TK_IDENT)
+                ? parse_surface_or_compound(p, D_SURFACE, true) : parse_style_rule(p);
             break;
-        case TK_KW_COMPOUND:  d = parse_surface_or_compound(&p, D_COMPOUND, false); break;
-        case TK_KW_CONST:     d = parse_const_or_mut(&p, D_CONST); break;
-        case TK_KW_MUT:       d = parse_const_or_mut(&p, D_MUT); break;
-        case TK_KW_LOCK:      d = parse_block_decl(&p, D_LOCK,      "lock"); break;
-        case TK_KW_GAMMA:     d = parse_block_decl(&p, D_GAMMA,     "gamma"); break;
-        case TK_KW_WALLPAPER: d = parse_block_decl(&p, D_WALLPAPER, "wallpaper"); break;
-        case TK_KW_MEDIA:     d = parse_block_decl(&p, D_MEDIA,     "media"); break;
+        case TK_KW_COMPOUND:  d = parse_surface_or_compound(p, D_COMPOUND, false); break;
+        case TK_KW_CONST:     d = parse_const_or_mut(p, D_CONST); break;
+        case TK_KW_MUT:       d = parse_const_or_mut(p, D_MUT); break;
+        case TK_KW_LOCK:      d = parse_block_decl(p, D_LOCK,      "lock"); break;
+        case TK_KW_GAMMA:     d = parse_block_decl(p, D_GAMMA,     "gamma"); break;
+        case TK_KW_WALLPAPER: d = parse_block_decl(p, D_WALLPAPER, "wallpaper"); break;
+        case TK_KW_MEDIA:     d = parse_block_decl(p, D_MEDIA,     "media"); break;
+        case TK_KW_INCLUDE:   parse_include(p, decls); continue;
         default:
             diag_error(t.loc, "expected a top-level declaration "
                        "(source, const, mut, surface, compound, group, widget, "
-                       "lock, gamma, wallpaper, media) or a style rule");
-            lex_next(&p.L);
+                       "lock, gamma, wallpaper, media, include) or a style rule");
+            lex_next(&p->L);
             continue;
         }
-        if (d) vl_push(&decls, d);
+        if (d) vl_push(decls, d);
     }
-    int n;
-    Decl **arr = (Decl**)vl_freeze(&p, &decls, &n);
-    u->decls = NEW_ARR(&p, Decl*, n);
-    for (int i = 0; i < n; i++) u->decls[i] = arr[i];
-    u->n = n;
-    return u;
 }

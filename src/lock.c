@@ -15,6 +15,7 @@
  *   4. on Enter                fork wisp-lock-helper (PAM) once; pipe pw → stdin
  *   5. helper "ok"             lock.unlock_and_destroy(); tear down all widgets
  *      helper "fail"           wrong-state ring, clear input, try again
+ *      helper "exec"/no reply  helper unrunnable — logged, never silent
  *   6. lock.finished           compositor aborted us — drop state
  *   7. on hotplug add          lock_on_output_added() spawns a fresh surface
  *      on hotplug remove       lock_on_output_removed() drops the widget
@@ -405,6 +406,24 @@ void lock_engage(void) {
         if (outputs[i].active) lock_attach_surface(&outputs[i]);
 }
 
+/* The session that runs the lock is spawned by the compositor, which greetd
+ * started — ~/.local/bin is off its PATH, so a bare LOCK_HELPER_BIN would
+ * never resolve. Prefer the helper sitting next to the running binary; PATH
+ * is only the fallback. Writes into `buf`, returns it or NULL. */
+static const char *helper_path(char *buf, size_t cap) {
+    if (strchr(LOCK_HELPER_BIN, '/')) return LOCK_HELPER_BIN;
+    char exe[512];
+    ssize_t n = readlink("/proc/self/exe", exe, sizeof exe - 1);
+    if (n <= 0) return NULL;
+    exe[n] = 0;
+    char *slash = strrchr(exe, '/');
+    if (!slash) return NULL;
+    *slash = 0;
+    if ((size_t)snprintf(buf, cap, "%s/" LOCK_HELPER_BIN, exe) >= cap) return NULL;
+    if (access(buf, X_OK) != 0) return NULL;
+    return buf;
+}
+
 static void spawn_helper(void) {
     if (ls.helper_pid > 0) return;
     int in_pipe[2], out_pipe[2];
@@ -417,7 +436,13 @@ static void spawn_helper(void) {
         dup2(out_pipe[1], 1);
         close(in_pipe[0]); close(in_pipe[1]);
         close(out_pipe[0]); close(out_pipe[1]);
+        char buf[512];
+        const char *p = helper_path(buf, sizeof buf);
+        if (p) execl(p, p, LOCK_PAM_SERVICE, (char *)NULL);
         execlp(LOCK_HELPER_BIN, LOCK_HELPER_BIN, LOCK_PAM_SERVICE, (char *)NULL);
+        /* Distinct from "fail": a helper we cannot exec is a broken install,
+         * not a wrong password, and must not masquerade as one. */
+        (void)!write(1, "exec\n", 5);
         _exit(127);
     }
     close(in_pipe[0]); close(out_pipe[1]);
@@ -446,6 +471,11 @@ void lock_on_helper_event(void) {
         ls.helper_pid = 0;
     }
     int ok = (n > 0 && buf[0] == 'o');
+    /* "exec\n", or a closed pipe with no reply at all (helper died) — either
+     * way PAM was never consulted, so say so instead of blaming the password. */
+    if (n <= 0 || buf[0] == 'e')
+        msg("lock: %s did not run — check that it is installed next to wisp-lock",
+            LOCK_HELPER_BIN);
     if (ok) {
         msg("lock: unlock");
         finish_unlock();

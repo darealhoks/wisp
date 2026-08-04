@@ -87,7 +87,10 @@ static void mg_parse_line(const char *p, const char *end) {
         if (idx && (!mon || idx < mon)) {
             uint32_t bit, n = (uint32_t)atoi(idx);
             const char *e = mg_find(idx, end, "\"client_count\":");
-            if (!e || n < 1 || n > 32) break;
+            if (!e || n < 1 || n > 32) {  /* surprise: publish what parsed */
+                mg_flush(o, occ, act, urg, all);
+                return;
+            }
             bit = 1u << (n - 1);
             all |= bit;
             const char *q = mg_find(idx, end, "\"is_active\":");
@@ -116,6 +119,7 @@ static void mg_parse_line(const char *p, const char *end) {
 
 void mango_dispatch(void) {
     for (;;) {
+        if (mg_len == sizeof mg_buf) mg_len = 0;   /* oversized line: drop, or a full buffer reads 0 and fakes EOF */
         ssize_t n = read(mango_fd, mg_buf + mg_len, sizeof mg_buf - mg_len);
         if (n < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) return;
@@ -133,7 +137,6 @@ void mango_dispatch(void) {
             mg_len -= (size_t)(nl + 1 - mg_buf);
             memmove(mg_buf, nl + 1, mg_len);
         }
-        if (mg_len == sizeof mg_buf) mg_len = 0;   /* oversized line: drop */
     }
 }
 

@@ -62,6 +62,7 @@ static void emit_features(FILE *o, SemaResult *r) {
     P(has_toplevel, "TOPLEVEL");
     P(has_tooltip, "TOOLTIP");
     fprintf(o, "#define NOTIF_HIST_CAP %d\n", notif_hist_cap);
+    fprintf(o, "#define NOTIF_IMAGE_PX %d\n", notif_image_px);
     #undef P
     fputs("\n#endif\n", o);
 }
@@ -229,7 +230,7 @@ static void print_font_sizes(Unit *u) {
 }
 
 static int usage(void) {
-    fputs("usage: wispc [--dump-ast | --check | --features | --deps | --font-sizes | --emit DIR [--no-line-map] | --watch [--reload]] FILE\n", stderr);
+    fputs("usage: wispc [--dump-ast | --check | --features | --deps | --includes | --font-sizes | --emit DIR [--no-line-map] | --watch [--reload]] FILE\n", stderr);
     return 2;
 }
 
@@ -274,7 +275,7 @@ static int watch_loop(const char *path, int do_reload) {
 }
 
 int main(int argc, char **argv) {
-    enum { MODE_CHECK, MODE_AST, MODE_FEATURES, MODE_DEPS, MODE_FONTS, MODE_EMIT, MODE_WATCH } mode = MODE_CHECK;
+    enum { MODE_CHECK, MODE_AST, MODE_FEATURES, MODE_DEPS, MODE_FONTS, MODE_INCLUDES, MODE_EMIT, MODE_WATCH } mode = MODE_CHECK;
     const char *path = NULL;
     const char *emit_path = NULL;
     int watch_reload = 0;
@@ -284,6 +285,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--features"))   mode = MODE_FEATURES;
         else if (!strcmp(argv[i], "--deps"))       mode = MODE_DEPS;
         else if (!strcmp(argv[i], "--font-sizes")) mode = MODE_FONTS;
+        else if (!strcmp(argv[i], "--includes"))   mode = MODE_INCLUDES;
         else if (!strcmp(argv[i], "--emit"))       { mode = MODE_EMIT; if (++i >= argc) return usage(); emit_path = argv[i]; }
         else if (!strcmp(argv[i], "--no-line-map")) cg_line_map = 0;
         else if (!strcmp(argv[i], "--watch"))      mode = MODE_WATCH;
@@ -299,12 +301,25 @@ int main(int argc, char **argv) {
 
     Arena *a = arena_new();
     Unit *u = parse_file(a, path, src);
+    /* Before the parse gate: the Makefile asks for the include list to decide
+     * whether a build is stale, and must get it even from a broken unit. */
+    if (mode == MODE_INCLUDES) {
+        for (int i = 0; include_file(i); i++) puts(include_file(i));
+        arena_free(a); free(src); return 0;
+    }
     if (diag_count() > 0) { arena_free(a); free(src); return 1; }
     style_apply(a, u);
     if (diag_count() > 0) { arena_free(a); free(src); return 1; }
 
     if (mode == MODE_AST)   { dump_unit(stdout, u);   arena_free(a); free(src); return 0; }
-    if (mode == MODE_FONTS) { print_font_sizes(u); print_font_glyphs(src); arena_free(a); free(src); return 0; }
+    if (mode == MODE_FONTS) {
+        print_font_sizes(u);
+        print_font_glyphs(src);
+        /* Included files hide icon literals too — the scan is lexical, so it
+         * has to see every buffer that fed the unit. */
+        for (int i = 0; include_src(i); i++) print_font_glyphs(include_src(i));
+        arena_free(a); free(src); return 0;
+    }
 
     SemaResult *r = sema_check(a, u);
     if (diag_count() > 0) { arena_free(a); free(src); return 1; }

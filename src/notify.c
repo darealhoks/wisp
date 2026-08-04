@@ -245,9 +245,14 @@ static int parse_hint(R *r, Hints *hn) {
 /* NOTIF_HIST_CAP comes from the generated features.h — wispc sizes the per-cell
  * st[]/hit/tween arrays from the same value, so the two cannot drift. */
 #define NOTIF_CAP NOTIF_HIST_CAP
+/* Thumbnails need the OSD decode path — without it no pixmap ever arrives. */
+#define NOTIF_IMG (OSD_IMAGE_PX > 0 && NOTIF_IMAGE_PX > 0)
 typedef struct {
     char     app[64], summary[128], body[256];
     uint32_t icon;
+#if NOTIF_IMG
+    uint32_t *image;  /* NOTIF_IMAGE_PX² premultiplied ARGB, owned; NULL = none */
+#endif
     uint32_t id;      /* monotonic; the only stable dismiss key */
     uint32_t rid;     /* app replaces_id / sync-hint hash, 0 = never replaces */
     uint8_t  urgency;
@@ -280,26 +285,45 @@ const char *notif_body(int i)      { const NotifEntry *e = nent(i); return e ? e
 int         notif_urgent(int i)    { const NotifEntry *e = nent(i); return e && e->urgency >= 2; }
 uint32_t    notif_icon(int i)      { const NotifEntry *e = nent(i); return e ? e->icon : 0; }
 uint32_t    notif_id(int i)        { const NotifEntry *e = nent(i); return e ? e->id : 0; }
+#if NOTIF_IMG
+const uint32_t *notif_image(int i) { const NotifEntry *e = nent(i); return e ? e->image : NULL; }
+static void nimg_drop(int i)       { free(nhist[i].image); nhist[i].image = NULL; }
+#else
+const uint32_t *notif_image(int i) { (void)i; return NULL; }
+#endif
 
 /* rid = the app's replaces_id (or a hash of its synchronous hint): an app that
  * updates one notification overwrites its row instead of flooding the ring.
  * The row keeps its serial id so a click already in flight still hits it. */
 void notif_push(const char *app, const char *summary, const char *body,
-                uint32_t icon_cp, int urgency, uint32_t rid) {
+                uint32_t icon_cp, const uint32_t *image, int urgency,
+                uint32_t rid) {
     int at = -1;
     if (rid)
         for (int i = 0; i < nhist_n; i++)
             if (nhist[i].rid == rid) { at = i; break; }
     uint32_t id;
+    int fresh = 0;   /* slot `at` never held an entry — nothing to drop */
     if (at >= 0) {
         id = nhist[at].id;
     } else {
-        if (nhist_n < NOTIF_CAP) nhist_n++;
+        if (nhist_n < NOTIF_CAP) { nhist_n++; fresh = 1; }
         at = nhist_n - 1;
         id = ++nhist_serial;
     }
+#if NOTIF_IMG
+    /* memmove overwrites slot `at` (the replaced row / the evicted oldest). */
+    if (!fresh) nimg_drop(at);
+#else
+    (void)fresh;
+#endif
     memmove(&nhist[1], &nhist[0], (size_t)at * sizeof nhist[0]);
     NotifEntry *e = &nhist[0];
+#if NOTIF_IMG
+    e->image = image ? image_scale_pm(image, OSD_IMAGE_PX, NOTIF_IMAGE_PX) : NULL;
+#else
+    (void)image;
+#endif
     e->id  = id;
     e->rid = rid;
     snprintf(e->app,     sizeof e->app,     "%s", app     ? app     : "");
@@ -315,14 +339,23 @@ void notif_push(const char *app, const char *summary, const char *body,
 void notif_dismiss(uint32_t id) {
     for (int i = 0; i < nhist_n; i++) {
         if (nhist[i].id != id) continue;
+#if NOTIF_IMG
+        nimg_drop(i);
+#endif
         memmove(&nhist[i], &nhist[i + 1], (size_t)(nhist_n - i - 1) * sizeof nhist[0]);
         nhist_n--;
+#if NOTIF_IMG
+        nhist[nhist_n].image = NULL;   /* shifted down; don't double-free later */
+#endif
         notif_repaint();
         return;
     }
 }
 
 void notif_clear(void) {
+#if NOTIF_IMG
+    for (int i = 0; i < nhist_n; i++) nimg_drop(i);
+#endif
     nhist_n = 0;
     notif_repaint();
 }
@@ -398,7 +431,7 @@ static void handle_notify(R *r, uint32_t serial, const char *sender) {
      * most of the point. Progress posts (volume/backlight gauges) are transient
      * readouts, not messages, so they never land here. */
     if (hn.progress < 0)
-        notif_push(app_name, summary, body, hn.icon_cp, hn.urgency, rid);
+        notif_push(app_name, summary, body, hn.icon_cp, image, hn.urgency, rid);
 
     uint32_t out_id;
 #ifdef WISP_HAS_OSD
@@ -409,6 +442,11 @@ static void handle_notify(R *r, uint32_t serial, const char *sender) {
     } else {
         out_id = osd_post(rid, summary, body, hn.icon_cp, image, hn.progress,
                           hn.urgency, hn.muted, timeout);
+        /* Only real messages ring — progress posts are our own volume/backlight
+         * gauges. ponytail: ignores hint:suppress-sound; parse it if an app
+         * that plays its own sound starts double-ringing. */
+        if (OSD_SOUND && hn.progress < 0)
+            spawn_detached(OSD_SOUND);
     }
 #else
     /* No OSD engine linked; just acknowledge with a stable non-zero id. */

@@ -434,13 +434,10 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
     fprintf(o, "%s(void)__mtxt;\n", indent);
     if (widget_flag(wd, "wrap")) {
         fprintf(o, "%sif (txt && txt[0]) {\n", indent);
-        /* Vertical draw insets content by `pad + pad_x` and the trailing pad_x
-         * stays free, so the column must lose `pad + 2*pad_x` — measuring with
-         * only 2*pad_x overshoots the region and clips the last glyph. */
         if (vertical) {
             { Expr *vw = widget_prop(wd, "width");   /* same row width the draw uses */
-              if (vw) fprintf(o, "%s    int __ww = %d - %d;\n", indent, eval_int(vw, 0), padE + 2 * pad_xm);
-              else    fprintf(o, "%s    int __ww = __reg_w - %d;\n", indent, padE + 2 * pad_xm); }
+              if (vw) fprintf(o, "%s    int __ww = %d - %d;\n", indent, eval_int(vw, 0), 2 * pad_xm);
+              else    fprintf(o, "%s    int __ww = __reg_w - %d;\n", indent, 2 * pad_xm); }
         } else {
             emit_wrap_left(o, "            ", idx_expr);
             fprintf(o, "%s    int __ww = __reg_w - __wleft - %d;\n", indent, 2 * pad_xm);
@@ -822,7 +819,6 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
         /* Same column the measure pass used — the declared `pad` constant, not
          * st[].pad, so a reveal tween can't re-break the lines mid-animation. */
         int wrap_inset = 2 * eval_int(widget_prop(wd, "pad_x"), 0);
-        if (vertical) wrap_inset += eval_int(widget_prop(wd, "pad"), 0);
         if (!vertical) emit_wrap_left(o, "            ", idx_expr);
         fprintf(o, "%s    if (txt && txt[0]) txt = text_wrapped(f, txt, %s - %s%d, body_lines, (int *)0);\n",
                 indent, vertical ? "__rw" : "__reg_w", vertical ? "" : "__wleft - ", wrap_inset);
@@ -882,8 +878,9 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
         int shspread = eval_int(widget_prop(wd, "shadow_spread"), 0);
         /* Main axis is Y, so the slab already spans the region width and
          * pad_x can't grow it — it insets the content instead (both sides,
-         * the elide clamp below takes the trailing one). */
-        fprintf(o, "%s    int cx = __rx + pad + %d;\n",
+         * the elide clamp below takes the trailing one). `pad` is main-axis
+         * row spacing and must stay out of the X inset or left != right. */
+        fprintf(o, "%s    int cx = __rx + %d;\n",
                 indent, eval_int(widget_prop(wd, "pad_x"), 0));
         /* pad_y is inside the measured row height (see vpad_y), so start/end
          * alignment must inset by it or the text sits on the card's edge. */
@@ -927,7 +924,7 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
             fprintf(o, "%s      if (cp || pms) __cw += %s;\n", indent, v_icw);
             fprintf(o, "%s      if ((cp || pms) && txt && txt[0]) __cw += %d;\n", indent, v_icg);
             fprintf(o, "%s      if (txt) { const char *__q = txt; while (*__q && *__q != '\\n') __q++; char __t3[256]; int __L3 = (int)(__q - txt); if (__L3 > 255) __L3 = 255; memcpy(__t3, txt, __L3); __t3[__L3] = 0; __cw += text_width(f, __t3); }\n", indent);
-            fprintf(o, "%s      int __av = __rw - pad - %d;\n", indent, 2 * v_padx);
+            fprintf(o, "%s      int __av = __rw - %d;\n", indent, 2 * v_padx);
             fprintf(o, "%s      if (__cw < __av) cx += (__av - __cw) / 2; }\n", indent);
         }
         fprintf(o, "%s    if (cp || pms) { int __icw = %s; draw_cp_centered(sl->px, w->w, w->h, cx, cy, __icw, f->line_h, f, cp, ifg, pm, pms); cx += __icw; if (txt && txt[0]) cx += %d; }\n",
@@ -1244,9 +1241,13 @@ int emit_surface_click_dispatch(FILE *o, BarItem *items, int nitems,
         fprintf(o, "          __%s_hover_st = __hs;\n", nm);
         fprintf(o, "          __%s_hover_w = __hs >= 0 ? w : 0;\n", nm);
         if (any_tip) {
-            /* Anchor mirrors widget_note_click: cell rect + the bar's own top
-             * margin, so a floating bar's tooltip clears it. */
-            fprintf(o, "          if (__ht) { TipAnchor __ta = { w->output, __hx, __hcw, w->margin_top + w->h }; tooltip_arm(__ht, &__ta); }\n");
+            /* Anchor mirrors widget_note_click: cell rect + the bar's real
+             * screen rect, so a floating or bottom bar's tooltip clears it. */
+            fprintf(o, "          if (__ht) {\n");
+            fprintf(o, "              TipAnchor __ta = { w->output, __hx, __hcw, 0, 0 };\n");
+            fprintf(o, "              widget_screen_span(w, &__ta.top, &__ta.below);\n");
+            fprintf(o, "              tooltip_arm(__ht, &__ta);\n");
+            fprintf(o, "          }\n");
             fprintf(o, "          else tooltip_hide();\n");
         }
         fprintf(o, "          return 1;\n");

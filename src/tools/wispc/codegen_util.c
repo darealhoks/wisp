@@ -166,6 +166,26 @@ uint32_t eval_color_ctx(CGCtx *ctx, Expr *e, uint32_t dflt) {
         diag_error(e->loc, "compile-time color prop needs a #aarrggbb literal or a const naming one");
     return dflt;
 }
+/* Same const-chain walk as eval_color_ctx, for compile-time string props
+ * (`wallpaper { path = WALL; }` with WALL living in an included fragment). */
+Expr *eval_string_ctx(CGCtx *ctx, Expr *e) {
+    if (!e) return NULL;
+    Expr *r = e;
+    for (int hop = 0; hop < 16; hop++) {
+        if (r->kind == EX_STRING) return r;
+        if (r->kind != EX_IDENT || !ctx) break;
+        Decl *k = find_konst(ctx, r->ident.s, r->ident.n);
+        if (!k || !k->konst.val) break;
+        r = k->konst.val;
+    }
+    if (e->kind == EX_IDENT)
+        diag_error(e->loc, "`%s` does not resolve to a string literal here; this "
+                           "prop is compile-time and needs a \"...\" or a const chain ending in one",
+                   sname(e->ident.s, e->ident.n));
+    else
+        diag_error(e->loc, "compile-time string prop needs a \"...\" literal or a const naming one");
+    return NULL;
+}
 /* Generalized to "start / end / center" so the same enum works for both
  * horizontal (left/right) and vertical (top/bottom) layouts. */
 Align eval_align(Expr *e) {

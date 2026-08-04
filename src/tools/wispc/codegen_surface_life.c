@@ -52,6 +52,7 @@ int emit_surface_life(FILE *o, Decl *sur, CGCtx *ctx, const char *nm,
          * current last entry until the registry is empty. (A forward for-loop
          * would skip the element swapped into the freed slot.) */
         fprintf(o, "        while (__%s_nw > 0) widget_destroy(__%s_widgets[__%s_nw - 1]);\n", nm, nm, nm);
+        fputs("        click_anchor_spend();\n", o);
         fputs("    }\n", o);
     }
     fputs("}\n\n", o);

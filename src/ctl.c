@@ -323,6 +323,7 @@ static int dispatch(Client *c, char *cmd) {
             at.x = atoi(p);
             if ((p = strchr(p, ','))) at.w = atoi(p + 1);
             if (p && (p = strchr(p + 1, ','))) at.below = atoi(p + 1);
+            at.top = at.below;   /* one edge is all the CLI form carries */
             av += 2; ac -= 2;
         }
         /* `menu <name>` opens a menu declared in the .wisp; two or more args
@@ -389,22 +390,33 @@ static int dispatch(Client *c, char *cmd) {
             (void)!write(c->fd, "ok\n", 3); return 0;
         }
         if (argc < 5) return fail(c, "usage: tooltip <x> <width> <below> <text> | tooltip hide");
-        TipAnchor at = { focused_output, atoi(argv[1]), atoi(argv[2]), atoi(argv[3]) };
+        TipAnchor at = { focused_output, atoi(argv[1]), atoi(argv[2]), atoi(argv[3]), atoi(argv[3]) };
         tooltip_show(argv[4], &at);
         (void)!write(c->fd, "ok\n", 3); return 0;
     }
 #endif
-    /* notify <urgency:0|1|2> <summary> [body] [icon-cp] [timeout-ms]
-     *   timeout: -1 → urgency default; 0 → sticky. */
+    /* notify [-t] <urgency:0|1|2> <summary> [body] [icon-cp] [timeout-ms]
+     *   timeout: -1 → urgency default; 0 → sticky; -t → toast only, skip the center.
+     *   Same DnD gate as the dbus path: urgency<2 lands in the center, no toast. */
     if (!strcmp(op, "notify")) {
-        if (argc < 3) return fail(c, "usage: notify <urgency> <summary> [body] [icon-cp] [timeout-ms]");
-        int urgency = atoi(argv[1]);
-        const char *summary = argv[2];
-        const char *body = argc >= 4 ? argv[3] : "";
+        int transient = 0, s = 0;
+        if (argc >= 2 && (!strcmp(argv[1], "-t") || !strcmp(argv[1], "--transient"))) {
+            transient = 1; s = 1;
+        }
+        if (argc - s < 3) return fail(c, "usage: notify [-t] <urgency> <summary> [body] [icon-cp] [timeout-ms]");
+        int urgency = atoi(argv[s + 1]);
+        const char *summary = argv[s + 2];
+        const char *body = argc - s >= 4 ? argv[s + 3] : "";
         unsigned icon = 0;
-        if (argc >= 5) parse_hex(argv[4], &icon);
-        int timeout = argc >= 6 ? atoi(argv[5]) : -1;
-        osd_post(0, summary, body, icon, NULL, -1, urgency, 0, timeout);
+        if (argc - s >= 5) parse_hex(argv[s + 4], &icon);
+        int timeout = argc - s >= 6 ? atoi(argv[s + 5]) : -1;
+#ifdef WISP_HAS_DBUS
+        if (!transient) notif_push("wispctl", summary, body, icon, NULL, urgency, 0);
+#else
+        (void)transient;
+#endif
+        if (!(dnd_on && urgency < 2))
+            osd_post(0, summary, body, icon, NULL, -1, urgency, 0, timeout);
         (void)!write(c->fd, "ok\n", 3); return 0;
     }
     if (!strcmp(op, "osd-clear")) {
@@ -550,8 +562,8 @@ static int dispatch(Client *c, char *cmd) {
     }
 #endif
 #ifdef WISP_HAS_OSD
-    /* dnd on|off|toggle|status — when on, dbus app notifications (urgency<2)
-     * are swallowed. Critical urgency=2 always passes through. */
+    /* dnd on|off|toggle|status — when on, app notifications (urgency<2) from
+     * dbus and `wispctl notify` alike are swallowed. urgency=2 always passes. */
     if (!strcmp(op, "dnd")) {
         if (argc < 2) return fail(c, "usage: dnd on|off|toggle|status");
         const char *sub = argv[1];

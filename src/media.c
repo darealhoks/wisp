@@ -17,6 +17,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #define SLOT_VOL 1
@@ -84,6 +85,28 @@ static int read_int_file(const char *path) {
     if (n <= 0) return -1;
     b[n] = 0; return atoi(b);
 }
+/* $XDG_STATE_HOME/wisp/backlight: "<raw> <max>". amdgpu (and others) report
+ * brightness = max at boot no matter what level the firmware actually set, and
+ * actual_brightness is derived from the same value in a different scale — no
+ * sysfs file has the truth. systemd-backlight solves this by save/restore;
+ * OpenRC boxes have nothing, so wisp does it itself. */
+static const char *bl_state_path(void) {
+    static char p[512];
+    if (p[0]) return p;
+    const char *s = getenv("XDG_STATE_HOME");
+    if (s && s[0]) {
+        snprintf(p, sizeof p, "%s/wisp", s);
+    } else {
+        const char *h = getenv("HOME");
+        if (!h) return NULL;
+        snprintf(p, sizeof p, "%s/.local/state/wisp", h);
+    }
+    mkdir(p, 0755);
+    size_t n = strlen(p);
+    snprintf(p + n, sizeof p - n, "/backlight");
+    return p;
+}
+
 static int write_int_file(const char *path, int v) {
     int fd = open(path, O_WRONLY); if (fd < 0) return -1;
     char b[32]; int n = snprintf(b, sizeof b, "%d", v);
@@ -105,5 +128,35 @@ void media_backlight(const char *arg) {
     if (n < 0)   n = 0;
     if (n > max) n = max;
     write_int_file(cur_p, n);
+    const char *st = bl_state_path();
+    if (st) {
+        char b[64];
+        int len = snprintf(b, sizeof b, "%d %d\n", n, max);
+        int fd = open(st, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (fd >= 0) {
+            if (write(fd, b, len) < 0) { /* state is best-effort */ }
+            close(fd);
+        }
+    }
     osd_post(SLOT_BRI, "Brightness", "", ICON_SUN, NULL, n * 100 / max, 1, 0, OSD_TIMEOUT_OSD);
+}
+
+void media_backlight_restore(void) {
+    const char *dev = bl_dev(); if (!dev) return;
+    const char *st = bl_state_path(); if (!st) return;
+    int fd = open(st, O_RDONLY); if (fd < 0) return;
+    char b[64]; int n = (int)read(fd, b, sizeof b - 1); close(fd);
+    if (n <= 0) return;
+    b[n] = 0;
+    int raw, smax;
+    if (sscanf(b, "%d %d", &raw, &smax) != 2 || smax <= 0 || raw < 0) return;
+    char cur_p[360], max_p[360];
+    snprintf(cur_p, sizeof cur_p, "%s/brightness", dev);
+    snprintf(max_p, sizeof max_p, "%s/max_brightness", dev);
+    int cur = read_int_file(cur_p), max = read_int_file(max_p);
+    if (cur < 0 || max <= 0) return;
+    if (cur != max) return;  /* the boot lie is always "max"; anything else is a real level */
+    if (smax != max) raw = (int)((long long)raw * max / smax);  /* kernel changed units */
+    if (raw >= max) return;
+    write_int_file(cur_p, raw);
 }
