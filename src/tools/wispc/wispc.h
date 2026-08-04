@@ -44,7 +44,7 @@ typedef enum {
     TK_PLUS, TK_MINUS, TK_STAR, TK_SLASH, TK_PERCENT,
     TK_AND, TK_OR, TK_NOT, TK_PIPE, TK_AMP,
     TK_KW_SOURCE, TK_KW_SURFACE, TK_KW_WIDGET, TK_KW_CONST, TK_KW_MUT,
-    TK_KW_LOCK, TK_KW_GAMMA, TK_KW_WALLPAPER, TK_KW_MEDIA,
+    TK_KW_LOCK, TK_KW_GAMMA, TK_KW_WALLPAPER, TK_KW_MEDIA, TK_KW_IDLE,
     TK_KW_COMPOUND, TK_KW_REGION, TK_KW_GROUP,
     TK_KW_FOR, TK_KW_IN, TK_KW_CELL,
     TK_KW_TRUE, TK_KW_FALSE, TK_KW_ON_CLICK, TK_KW_ON_SCROLL,
@@ -236,13 +236,13 @@ struct Region {
 
 typedef enum {
     D_SOURCE, D_SURFACE, D_CONST, D_MUT, D_LOCK, D_GAMMA, D_WALLPAPER,
-    D_MEDIA, D_COMPOUND, D_STYLE,
+    D_MEDIA, D_IDLE, D_COMPOUND, D_STYLE,
 } DKind;
 
 /* One `frame|text|ring NAME { … }` inside `lock { … }`. The lock has no flex
  * layout — every element is free-positioned — so it needs neither the Widget
  * node nor the surface body machinery. */
-typedef enum { LK_FRAME, LK_TEXT, LK_RING } LockKind;
+typedef enum { LK_FRAME, LK_TEXT, LK_RING, LK_TIMEOUT } LockKind;
 typedef struct {
     Loc loc;
     const char *name; size_t nlen;
@@ -325,7 +325,7 @@ typedef struct SemaResult {
     const char **spawned_names;
     const char ***spawned_args;
     /* feature set */
-    bool has_dbus, has_mpris, has_tray, has_osd, has_menu, has_hud, has_bar, has_lock, has_gamma, has_wallpaper, has_media, has_anim, has_pipewire, has_toplevel, has_tooltip, has_image;
+    bool has_idle, has_dbus, has_mpris, has_tray, has_osd, has_menu, has_hud, has_bar, has_lock, has_gamma, has_wallpaper, has_media, has_anim, has_pipewire, has_toplevel, has_tooltip, has_image;
     bool has_src_cpu, has_src_mem, has_src_temp, has_src_bat, has_src_net, has_src_disk, has_src_vpn;
     bool has_src_exec, has_src_tags, has_src_backlight, has_power, has_bluez;
     bool net_rates_used;           /* a config reads net.rx_kbps/tx_kbps */

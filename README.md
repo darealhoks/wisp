@@ -6,8 +6,8 @@ a whole desktop shell, from a file you write.
 ![wisp running the reverie config](desktop.png)
 
 A normal Wayland desktop runs a bar, a notification daemon, a locker, a gamma
-tool and a wallpaper setter: five daemons, five config formats, five sets of
-dependencies. wisp is one process that does all of it - because a bar, a hover
+tool, an idle watcher and a wallpaper setter: six daemons, six config formats,
+six sets of dependencies. wisp is one process that does all of it - because a bar, a hover
 panel, a notification slab, an app menu and a lock screen are the same thing, a
 layer-shell surface, configured differently.
 

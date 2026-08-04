@@ -505,6 +505,10 @@ void output_destroy(Output *o) {
         wl_req(o->gamma_ctrl, GAMMA_CTRL_REQ_DESTROY, NULL, 0, -1);
         o->gamma_ctrl = 0;
     }
+    if (o->power_ctrl) {
+        wl_req(o->power_ctrl, OUTPUT_POWER_REQ_DESTROY, NULL, 0, -1);
+        o->power_ctrl = 0;
+    }
     /* wl_output: just stop referencing the id. */
 
     if (focused_output == o) {
@@ -562,6 +566,14 @@ static void handle_registry_global(uint32_t name, const char *iface, uint32_t ve
     } else if (!id_gamma_mgr && !strcmp(iface, "zwlr_gamma_control_manager_v1")) {
         id_gamma_mgr = wl_new_id();
         wl_registry_bind(name, iface, 1, id_gamma_mgr);
+#ifdef WISP_HAS_IDLE
+    } else if (!id_idle_notifier && !strcmp(iface, "ext_idle_notifier_v1")) {
+        id_idle_notifier = wl_new_id();
+        wl_registry_bind(name, iface, 1, id_idle_notifier);
+    } else if (!id_output_power_mgr && !strcmp(iface, "zwlr_output_power_manager_v1")) {
+        id_output_power_mgr = wl_new_id();
+        wl_registry_bind(name, iface, 1, id_output_power_mgr);
+#endif
     } else if (!id_slock_mgr && !strcmp(iface, "ext_session_lock_manager_v1")) {
         id_slock_mgr = wl_new_id();
         wl_registry_bind(name, iface, 1, id_slock_mgr);
@@ -617,6 +629,7 @@ static void handle(uint32_t obj, uint16_t op, uint8_t *body, uint32_t bodylen) {
             for (int i = 0; i < MAX_OUTPUTS; i++) {
                 Output *o = &outputs[i];
                 if (o->gamma_ctrl == id) o->gamma_ctrl = 0;
+                if (o->power_ctrl == id) o->power_ctrl = 0;
             }
         }
         return;
@@ -695,6 +708,9 @@ static void handle(uint32_t obj, uint16_t op, uint8_t *body, uint32_t bodylen) {
             return;
         }
     }
+#ifdef WISP_HAS_IDLE
+    if (idle_wl_event(obj, op)) return;
+#endif
 #ifdef WISP_HAS_GAMMA
     {
         Output *go = output_by_gamma(obj);

@@ -109,6 +109,8 @@ static const PropSchema SCHEMAS[] = {
     { "wallpaper", "wallpaper block",
       " path bg fade_ms transition dither_px wipe_dir wipe_soft " },
     { "media", "media block", " " },
+    { "idle", "idle block", " before_sleep " },
+    { "idle_timeout", "idle timeout", " after run resume " },
 };
 
 static bool word_in(const char *list, const char *w, size_t n) {
@@ -879,6 +881,44 @@ SemaResult *sema_check(Arena *a, Unit *u) {
                     && p->val->kind == EX_INT && p->val->i == 0) fade = 0;
             }
             if (fade) s.r->has_anim = true;
+            break;
+        }
+        case D_IDLE: {
+            if (s.s.idle) diag_error(d->loc, "duplicate idle block");
+            s.s.idle = d; s.r->has_idle = 1;
+            for (int j = 0; j < d->block.n; j++) {
+                Prop *p = d->block.props[j];
+                check_prop("idle", p);
+                if (p->nlen != 12 || memcmp(p->name, "before_sleep", 12) != 0) continue;
+                int ok = p->val && (p->val->kind == EX_STRING ||
+                        (p->val->kind == EX_IDENT && p->val->ident.n == 4 &&
+                         memcmp(p->val->ident.s, "lock", 4) == 0));
+                if (!ok)
+                    diag_error(p->loc, "idle before_sleep must be the builtin `lock` or a shell command string");
+            }
+            for (int j = 0; j < d->block.nels; j++) {
+                LockElem *e = d->block.els[j];
+                if (!e->name) { diag_error(e->loc, "idle timeout needs a name"); continue; }
+                for (int k = 0; k < j; k++) {
+                    LockElem *o = d->block.els[k];
+                    if (o->name && o->nlen == e->nlen && memcmp(o->name, e->name, e->nlen) == 0)
+                        diag_error(e->loc, "duplicate idle timeout '%s'", e->name);
+                }
+                Prop *after = NULL;
+                for (int k = 0; k < e->n; k++) {
+                    Prop *p = e->props[k];
+                    check_prop("idle_timeout", p);
+                    if (p->nlen == 5 && memcmp(p->name, "after", 5) == 0) after = p;
+                    else if (((p->nlen == 3 && !memcmp(p->name, "run", 3)) ||
+                              (p->nlen == 6 && !memcmp(p->name, "resume", 6))) &&
+                             p->val && p->val->kind != EX_STRING)
+                        diag_error(p->loc, "idle timeout %s must be a shell command string", p->name);
+                }
+                if (!after)
+                    diag_error(e->loc, "idle timeout '%s' needs `after = <duration>;`", e->name);
+                else if (!after->val || after->val->kind != EX_INT || after->val->i <= 0)
+                    diag_error(after->loc, "idle timeout after must be a positive duration (e.g. 300s)");
+            }
             break;
         }
         case D_MEDIA:

@@ -95,6 +95,7 @@ static int64_t retry_delay(void) {
 }
 
 int lock_active(void)   { return ls.requested; }
+int lock_locked(void)   { return ls.locked_state; }
 int lock_helper_fd(void) { return ls.helper_fd; }
 
 /* Pick the font matching the DSL-requested pixel size (`lock { font_size }`

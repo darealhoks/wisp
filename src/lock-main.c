@@ -53,7 +53,12 @@ void epoll_del_fd(int fd) {
 }
 
 int main(int argc, char **argv) {
-    (void)argc; (void)argv;
+    /* --ready-fd N: write one byte once the compositor confirms `locked`. The
+     * daemon's `idle { before_sleep = lock }` holds its logind delay
+     * inhibitor until that byte arrives, so suspend can't beat the lock up. */
+    int ready_fd = -1;
+    for (int i = 1; i < argc; i++)
+        if (!strcmp(argv[i], "--ready-fd") && i + 1 < argc) ready_fd = atoi(argv[++i]);
 
     /* Block SIGINT/SIGTERM/SIGCHLD via signalfd so we can drive them from
      * epoll instead of async handlers (would race with wl I/O otherwise). */
@@ -104,6 +109,10 @@ int main(int argc, char **argv) {
     if (!lock_active()) return 1;
 
     while (lock_active()) {
+        if (ready_fd >= 0 && lock_locked()) {
+            (void)!write(ready_fd, "1", 1);
+            close(ready_fd); ready_fd = -1;
+        }
         struct epoll_event evs[8];
         int n = epoll_wait(ep_fd, evs, 8, -1);
         if (n < 0) {

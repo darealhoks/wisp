@@ -7,7 +7,7 @@ never matters, sema is two-pass. Statements end with `;`, blocks with `}`.
 source NAME = call(args) [ { on_change() = stmt; } ] ;
 const NAME = expr;      mut NAME = expr;
 surface NAME { … }      compound NAME { … }      menu NAME { … }
-lock { … }   gamma { … }   wallpaper { … }   media { … }
+lock { … }   gamma { … }   wallpaper { … }   media { … }   idle { … }
 SELECTOR[, SELECTOR]* { prop = value; … }
 include "path.wisp";
 ```
@@ -72,7 +72,7 @@ The config in use is the `WISP=` path.
 `[A-Za-z_][A-Za-z0-9_]*`. Reserved words:
 
 ```
-source surface widget const mut lock gamma wallpaper media compound
+source surface widget const mut lock gamma wallpaper media idle compound
 region group for in cell true false exec emit set animate include
 on_click on_right_click on_middle_click on_change
 ```

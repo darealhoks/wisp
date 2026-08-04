@@ -27,7 +27,7 @@ typedef struct {
     Decl **src;     int nsrc;
     Decl **sur;     int nsur;
     Decl **kon;     int nkon;    /* const + mut */
-    Decl *lock, *gamma, *wall;
+    Decl *lock, *gamma, *wall, *idle;
 } Syms;
 
 typedef struct ScopeEnt {

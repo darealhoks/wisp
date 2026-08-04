@@ -12,7 +12,7 @@ Eight things the runtime treats differently. The DSL picks between them by
 | OSD pill | `surface pill { spawned_by = osd_pill; … }` |
 | menu template | `surface menu { spawned_by = menu; … }` |
 | compound | `compound NAME { region … }` |
-| blocks | `lock {}` `gamma {}` `wallpaper {}` `media {}` |
+| blocks | `lock {}` `gamma {}` `wallpaper {}` `media {}` `idle {}` |
 
 Property **names** are validated per kind, but the `surface` schema is one union
 across every surface flavour. An OSD-only property on a bar passes `--check` and
@@ -461,6 +461,47 @@ and write through PipeWire. MPRIS control still needs an `mpris()` source or
 `wispctl mpris`.
 
 Skeleton for all four blocks: [[templates#wallpaper-and-media]].
+
+## idle
+
+`idle { … }` replaces swayidle and wlopm. It links the idle client, binds
+`ext-idle-notify-v1`, and adds **no timer**: every countdown belongs to the
+compositor.
+
+```
+idle {
+    timeout blank {
+        after  = 300s;
+        run    = "wispctl dpms off";
+        resume = "wispctl dpms on";
+    }
+    timeout sleep { after = 720s; run = "loginctl suspend"; }
+
+    before_sleep = lock;
+}
+```
+
+| property | where | default | note |
+|---|---|---|---|
+| `after` | `timeout` | required | duration before the timeout fires; must be positive (`300s`, `5000ms`) |
+| `run` | `timeout` | — | `/bin/sh -c` command run when the seat goes idle |
+| `resume` | `timeout` | — | command run when activity comes back |
+| `before_sleep` | block | — | `lock` (the builtin) or a command string, run before the system suspends |
+
+Timeout names must be unique; they are documentation. Any number of timeouts.
+
+`before_sleep` takes a logind `delay` sleep inhibitor on the system bus at
+startup and holds it until the action is **up**, not merely started — the
+builtin `lock` releases it the moment the compositor confirms the lock surface,
+a command string when it exits. That is swayidle's `-w`, and it is what stops a
+suspend from beating the lock to the screen.
+
+Declaring the block also enables [[wispctl#screen-power]] (`wispctl dpms
+on|off`), which is what `run` strings use instead of `wlopm`.
+
+If the compositor does not advertise `ext_idle_notifier_v1` (a nested session,
+a greeter) wisp warns once on stderr and the timeouts never fire; nothing else
+is affected.
 
 ## Widgets, groups and cells
 

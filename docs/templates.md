@@ -598,6 +598,29 @@ media { }
 - `wipe_soft` is the lerp band width in px; 1 is a hard line. `dither_px` (default 16) is the block size for `transition = dither`.
 - `media { }` must be empty; any property inside is an error. It enables both the media keys and PipeWire.
 
+## Idle
+
+```wisp
+idle {
+	timeout blank {
+		after  = 300s;
+		run    = "wispctl dpms off";
+		resume = "wispctl dpms on";
+	}
+	timeout sleep {
+		after = 720s;
+		run   = "loginctl suspend";
+	}
+
+	before_sleep = lock;
+}
+```
+
+- One `ext_idle_notification_v1` per `timeout`, so the compositor owns the countdown: no timer, no poll.
+- `after` is required and positive; `resume` is optional. Both commands run under `/bin/sh -c`.
+- `before_sleep = lock` execs the locker and holds logind's sleep inhibitor until the lock is actually on screen. A command string is held until it exits.
+- Guard policy (a caffeine flag, an AC check) belongs in the command: `run = "caffeine blank || wispctl dpms off";`.
+
 ## Gotchas
 
 - Every block here is a whole config, not a fragment. Pasting two of them into one file is fine, but two `surface bar` declarations is a duplicate-declaration error.

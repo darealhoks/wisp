@@ -204,7 +204,8 @@ endif
 
 HDR := $(SRCDIR)/wisp.h $(SRCDIR)/proto.h $(SRCDIR)/config.h \
        $(SRCDIR)/font.h $(SRCDIR)/render_px.h $(GENDIR)/bake.h \
-       $(GENDIR)/features.h $(GENDIR)/gen_overrides.h $(GENDIR)/gen_menus.h
+       $(GENDIR)/features.h $(GENDIR)/gen_overrides.h $(GENDIR)/gen_menus.h \
+       $(GENDIR)/gen_idle.h
 
 WISPC_SRC := $(TOOLDIR)/wispc/arena.c $(TOOLDIR)/wispc/diag.c $(TOOLDIR)/wispc/lex.c \
             $(TOOLDIR)/wispc/include.c $(TOOLDIR)/wispc/parse.c $(TOOLDIR)/wispc/style.c $(TOOLDIR)/wispc/sema.c $(TOOLDIR)/wispc/sema_types.c $(TOOLDIR)/wispc/dump.c \

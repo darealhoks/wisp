@@ -499,6 +499,18 @@ static int dispatch(Client *c, char *cmd) {
         return 0;
     }
 #endif
+#ifdef WISP_HAS_IDLE
+    /* dpms on|off — screen power for every output (replaces wlopm). What an
+     * `idle { timeout }` run string calls. */
+    if (!strcmp(op, "dpms")) {
+        if (argc < 2) return fail(c, "usage: dpms on|off");
+        if (!strcmp(argv[1], "on"))       dpms_set(1);
+        else if (!strcmp(argv[1], "off")) dpms_set(0);
+        else return fail(c, "unknown dpms mode: %s", argv[1]);
+        (void)!write(c->fd, "ok\n", 3);
+        return 0;
+    }
+#endif
 #ifdef WISP_HAS_WALL
     /* wall <path> — switch the wallpaper at runtime with a crossfade. Path is
      * resolved by the daemon ("~/" ok); a missing file keeps the current one. */

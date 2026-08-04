@@ -1,0 +1,15 @@
+tests/diag/idle-bad.wisp:4:2: error: idle before_sleep must be the builtin `lock` or a shell command string
+  	before_sleep = 3;
+  	^
+tests/diag/idle-bad.wisp:2:2: error: idle timeout 'blank' needs `after = <duration>;`
+  	timeout blank { run = "wispctl dpms off"; }
+  	^
+tests/diag/idle-bad.wisp:3:2: error: duplicate idle timeout 'blank'
+  	timeout blank { after = 0; delay = 5; }
+  	^
+tests/diag/idle-bad.wisp:3:29: error: unknown idle timeout property 'delay'
+  	timeout blank { after = 0; delay = 5; }
+  	                           ^
+tests/diag/idle-bad.wisp:3:18: error: idle timeout after must be a positive duration (e.g. 300s)
+  	timeout blank { after = 0; delay = 5; }
+  	                ^

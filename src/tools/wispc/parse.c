@@ -53,6 +53,7 @@ static int lev(const char *a, size_t an, const char *b, size_t bn) {
 static const char *kw_suggest(const char *s, size_t n) {
     static const char *K[] = { "source","surface","compound","widget","group",
         "cell","region","const","mut","lock","gamma","wallpaper","media","menu",
+        "idle",
         "include", NULL };
     for (int i = 0; K[i]; i++)
         if (lev(s, n, K[i], strlen(K[i])) <= 1) return K[i];
@@ -922,6 +923,28 @@ static LockElem *parse_lock_elem(P *p, Tok kw, LockKind k) {
     return e;
 }
 
+/* `before_sleep = lock;` — `lock` lexes as a block keyword, so the generic
+ * prop parser can never hand it back as an identifier. */
+static Prop *parse_idle_prop(P *p, Tok n) {
+    if (n.len != 12 || memcmp(n.s, "before_sleep", 12) != 0) return parse_prop_named(p, n);
+    Prop *pr = NEW(p, Prop);
+    pr->loc = n.loc;
+    pr->name = arena_strn(p->a, n.s, n.len);
+    pr->nlen = n.len;
+    expect(p, TK_ASSIGN, "'='");
+    if (at(p, TK_KW_LOCK)) {
+        Tok t = cur(p); lex_next(&p->L);
+        Expr *e = NEW(p, Expr);
+        e->kind = EX_IDENT; e->loc = t.loc;
+        e->ident.s = arena_strn(p->a, t.s, t.len); e->ident.n = t.len;
+        pr->val = e;
+    } else {
+        pr->val = parse_expr(p);
+    }
+    expect(p, TK_SEMI, "';'");
+    return pr;
+}
+
 static Decl *parse_block_decl(P *p, DKind dk, const char *name) {
     (void)name;
     Tok kw = cur(p); lex_next(&p->L);
@@ -935,14 +958,21 @@ static Decl *parse_block_decl(P *p, DKind dk, const char *name) {
         if (!at(p, TK_IDENT)) { diag_error(cur(p).loc, "expected a property name"); lex_next(&p->L); continue; }
         Tok t = cur(p);
         LockKind lk = LK_FRAME;
-        bool elkw = dk == D_LOCK;
-        if (elkw) {
+        bool elkw = dk == D_LOCK || dk == D_IDLE;
+        if (dk == D_LOCK) {
             if      (t.len == 5 && memcmp(t.s, "frame", 5) == 0) lk = LK_FRAME;
             else if (t.len == 4 && memcmp(t.s, "text",  4) == 0) lk = LK_TEXT;
             else if (t.len == 4 && memcmp(t.s, "ring",  4) == 0) lk = LK_RING;
             else elkw = false;
+        } else if (dk == D_IDLE) {
+            if (t.len == 7 && memcmp(t.s, "timeout", 7) == 0) lk = LK_TIMEOUT;
+            else elkw = false;
         }
-        if (!elkw) { vl_push(&props, parse_prop(p)); continue; }
+        if (!elkw) {
+            if (dk == D_IDLE) { lex_next(&p->L); vl_push(&props, parse_idle_prop(p, t)); }
+            else vl_push(&props, parse_prop(p));
+            continue;
+        }
         lex_next(&p->L);
         /* `text = …` / `ring = …` are still props; only `KW [NAME] {` opens
          * an element. */
@@ -1141,11 +1171,12 @@ static void parse_decls(P *p, VList *decls) {
         case TK_KW_GAMMA:     d = parse_block_decl(p, D_GAMMA,     "gamma"); break;
         case TK_KW_WALLPAPER: d = parse_block_decl(p, D_WALLPAPER, "wallpaper"); break;
         case TK_KW_MEDIA:     d = parse_block_decl(p, D_MEDIA,     "media"); break;
+        case TK_KW_IDLE:      d = parse_block_decl(p, D_IDLE,      "idle"); break;
         case TK_KW_INCLUDE:   parse_include(p, decls); continue;
         default:
             diag_error(t.loc, "expected a top-level declaration "
                        "(source, const, mut, surface, compound, group, widget, "
-                       "lock, gamma, wallpaper, media, include) or a style rule");
+                       "lock, gamma, wallpaper, media, idle, include) or a style rule");
             lex_next(&p->L);
             continue;
         }

@@ -40,6 +40,7 @@ Four subcommands never touch the socket: `help`, `rebuild`, `update` and `lock`.
 | `tooltip` | `<x> <width> <below> <text>`, or `hide` | tooltip | `ok` |
 | `gamma` | `auto\|day\|night\|flat\|off\|state\|is-warm` | gamma | `ok`, the mode, or `1`/`0` |
 | `wall` | `<path.png>` | wallpaper | `ok` or an error |
+| `dpms` | `on\|off` | idle | `ok` |
 
 A feature gate is a compile-time thing. A command whose feature the config never
 declared is indistinguishable from a typo:
@@ -50,6 +51,19 @@ err: unknown command: gamma (not in this build/preset?)
 
 The socket also accepts a `lock` command, but the daemon is deliberately built
 without that feature defined, so it never resolves. Use `wispctl lock`.
+
+## Screen power
+
+`wispctl dpms on|off` sets `zwlr_output_power_v1` on every connected output —
+`wlopm --off "*"` without the process. It exists only when the config declares
+an [[modules#idle]] block, since that is what it is there to serve:
+
+```
+timeout blank { after = 300s; run = "wispctl dpms off"; resume = "wispctl dpms on"; }
+```
+
+An output whose compositor refuses power control (or whose control another
+client already holds) is skipped and logged once; the rest still switch.
 
 ## Client-side subcommands
 

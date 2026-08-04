@@ -114,6 +114,24 @@
 #define GAMMA_CTRL_EV_GAMMA_SIZE 0
 #define GAMMA_CTRL_EV_FAILED     1
 
+/* ext_idle_notifier_v1 / ext_idle_notification_v1 (idle.c). We bind v1: the
+ * v2 addition is get_input_idle_notification, which wisp doesn't use. */
+#define IDLE_NOTIFIER_REQ_DESTROY              0
+#define IDLE_NOTIFIER_REQ_GET_IDLE_NOTIFICATION 1
+#define IDLE_NOTIF_REQ_DESTROY 0
+#define IDLE_NOTIF_EV_IDLED    0
+#define IDLE_NOTIF_EV_RESUMED  1
+
+/* zwlr_output_power_manager_v1 / zwlr_output_power_v1 (idle.c) — `wispctl dpms`. */
+#define OUTPUT_POWER_MGR_REQ_GET_OUTPUT_POWER 0
+#define OUTPUT_POWER_MGR_REQ_DESTROY          1
+#define OUTPUT_POWER_REQ_SET_MODE 0
+#define OUTPUT_POWER_REQ_DESTROY  1
+#define OUTPUT_POWER_EV_MODE   0
+#define OUTPUT_POWER_EV_FAILED 1
+#define OUTPUT_POWER_MODE_OFF 0
+#define OUTPUT_POWER_MODE_ON  1
+
 /* ext_session_lock_manager_v1 / ext_session_lock_v1 / ext_session_lock_surface_v1 */
 #define SLOCK_MGR_REQ_DESTROY 0
 #define SLOCK_MGR_REQ_LOCK    1

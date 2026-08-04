@@ -1,7 +1,7 @@
 # wisp
 
 wisp is one Wayland process that draws a whole desktop shell: bar, hover HUD,
-notifications, app menu, lock screen, gamma, wallpaper, media keys. You declare
+notifications, app menu, lock screen, gamma, wallpaper, media keys, idle. You declare
 all of it in a `.wisp` file, and the bundled compiler `wispc` lowers that file
 to C and links it into the daemon. A config that never mentions notifications
 produces a binary with no D-Bus client in it. It links libc and libm and

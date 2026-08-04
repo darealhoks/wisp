@@ -13,6 +13,7 @@ static const struct { const char *kw; TokKind k; } KWS[] = {
     {"gamma",    TK_KW_GAMMA},
     {"wallpaper",TK_KW_WALLPAPER},
     {"media",    TK_KW_MEDIA},
+    {"idle",     TK_KW_IDLE},
     {"compound", TK_KW_COMPOUND},
     {"region",   TK_KW_REGION},
     {"group",    TK_KW_GROUP},

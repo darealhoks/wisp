@@ -95,6 +95,14 @@ extern uint32_t id_layer_shell, id_wm_base;
 extern uint32_t layer_shell_ver;
 extern uint32_t id_pointer, id_keyboard;
 extern uint32_t id_gamma_mgr;
+#ifdef WISP_HAS_IDLE
+extern uint32_t id_idle_notifier, id_output_power_mgr;   /* 0 = compositor lacks it */
+/* One declared `idle { timeout … }` row; the table lives in gen_idle.h. */
+typedef struct { int after_ms; const char *run, *resume; } IdleTimeout;
+void idle_init(void);
+int  idle_wl_event(uint32_t obj, uint16_t op);   /* 1 = consumed */
+void dpms_set(int on);
+#endif
 extern uint32_t id_slock_mgr, id_slock;
 extern uint32_t id_extws_mgr;    /* ext_workspace_manager_v1; 0 = unsupported */
 extern uint32_t id_river_status_mgr, id_river_control;  /* river workspace source (river.c) */
@@ -144,6 +152,8 @@ struct Output {
     uint32_t wl_output;              /* bound wl_output object id */
     char     name[64];               /* wl_output.name (v4); mango ipc key */
     uint32_t gamma_ctrl;             /* zwlr_gamma_control_v1; 0 if not held */
+    uint32_t power_ctrl;             /* zwlr_output_power_v1 (idle.c); 0 if not held */
+    int      power_failed;           /* sticky once the compositor sent FAILED */
     uint32_t gamma_size;             /* ramp size (set by gamma_size event) */
     int      gamma_failed;           /* sticky once compositor sent FAILED */
     int      last_applied_k;         /* last Kelvin written to this output */
@@ -936,6 +946,7 @@ typedef struct {
 } LockEl;
 
 void lock_engage(void);                  /* request session lock */
+int  lock_locked(void);                  /* compositor confirmed the lock is up */
 void lock_on_locked(void);               /* compositor confirmed lock */
 void lock_on_finished(void);             /* lock rejected / forcibly ended */
 void lock_on_surf_configure(Widget *w, uint32_t serial, int width, int height);

@@ -623,6 +623,21 @@ wallpaper {
 media {
 }
 
+// swayidle's job; the caffeine guards stay shell (flag file, emerge, AC)
+idle {
+	timeout blank {
+		after  = 300s;
+		run    = "caffeine blank || wispctl dpms off";
+		resume = "wispctl dpms on";
+	}
+	timeout suspend {
+		after = 720s;
+		run   = "caffeine sleep || loginctl suspend";
+	}
+
+	before_sleep = lock;
+}
+
 // tooltip
 
 // width is a clamp, the surface auto-widths to $text and elides past it
