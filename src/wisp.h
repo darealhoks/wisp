@@ -153,7 +153,6 @@ struct Output {
     char     name[64];               /* wl_output.name (v4); mango ipc key */
     uint32_t gamma_ctrl;             /* zwlr_gamma_control_v1; 0 if not held */
     uint32_t power_ctrl;             /* zwlr_output_power_v1 (idle.c); 0 if not held */
-    int      power_failed;           /* sticky once the compositor sent FAILED */
     uint32_t gamma_size;             /* ramp size (set by gamma_size event) */
     int      gamma_failed;           /* sticky once compositor sent FAILED */
     int      last_applied_k;         /* last Kelvin written to this output */

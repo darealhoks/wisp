@@ -72,7 +72,7 @@ void dpms_set(int on) {
     }
     for (int i = 0; i < MAX_OUTPUTS; i++) {
         Output *o = &outputs[i];
-        if (!o->active || o->power_failed) continue;
+        if (!o->active) continue;
         if (!o->power_ctrl) {
             o->power_ctrl = wl_new_id();
             uint32_t a[2] = { o->power_ctrl, o->wl_output };
@@ -100,10 +100,9 @@ int idle_wl_event(uint32_t obj, uint16_t op) {
         Output *o = &outputs[i];
         if (!o->active || !o->power_ctrl || o->power_ctrl != obj) continue;
         if (op == OUTPUT_POWER_EV_FAILED) {
-            msg("dpms: output power control failed (another client holds it?)");
+            msg("dpms: output power control failed (another client holds it?) — will retry");
             wl_req(o->power_ctrl, OUTPUT_POWER_REQ_DESTROY, NULL, 0, -1);
             o->power_ctrl = 0;
-            o->power_failed = 1;
         }
         return 1;
     }
