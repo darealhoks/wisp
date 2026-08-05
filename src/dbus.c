@@ -309,6 +309,10 @@ static void dispatch_one(const uint8_t *msg, int msg_len) {
                !strcmp(iface, "org.freedesktop.DBus.Introspectable")) {
         handled = tray_method_call(&r, iface, member, path, serial, sender);
 #endif
+#ifdef WISP_HAS_IDLE
+    } else if (!strcmp(iface, "org.freedesktop.ScreenSaver")) {
+        handled = screensaver_method_call(&r, member, path, serial, sender);
+#endif
     } else if (!strcmp(iface, "org.freedesktop.DBus.Peer") &&
                !strcmp(member, "Ping")) {
         dbus_reply_empty(serial, sender);
@@ -549,6 +553,11 @@ int dbus_connect(void) {
     /* Best-effort: another tray host already owning the Watcher just means we
      * never receive items — not a reason to tear down the notification server. */
     for (int i = 0; i < own_name_n; i++) call_request_name(own_names[i]);
+#ifdef WISP_HAS_IDLE
+    /* nothing else on a wlroots box implements it, so browsers' "don't blank
+     * during video" requests land nowhere unless we take the name */
+    call_request_name("org.freedesktop.ScreenSaver");
+#endif
     int fl = fcntl(fd, F_GETFL); fcntl(fd, F_SETFL, fl | O_NONBLOCK);
     for (int i = 0; i < dbus_sub_n; i++)
         call_add_match(dbus_subs[i].iface, dbus_subs[i].member);

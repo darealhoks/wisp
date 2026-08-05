@@ -103,6 +103,11 @@ void dbus_reply_empty(uint32_t serial, const char *sender);
 void dbus_reply_error(uint32_t serial, const char *sender,
                       const char *name, const char *msg);
 
+/* idle.c: org.freedesktop.ScreenSaver Inhibit/UnInhibit on /ScreenSaver or
+ * /org/freedesktop/ScreenSaver. Returns non-zero if the call was answered. */
+int screensaver_method_call(R *r, const char *member, const char *path,
+                            uint32_t serial, const char *sender);
+
 /* tray.c: method calls on org.kde.StatusNotifierWatcher plus the Properties
  * and Introspectable interfaces (we're the only object serving them, so they
  * all land here). Returns non-zero if the call was answered.

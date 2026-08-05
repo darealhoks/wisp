@@ -6,6 +6,11 @@
  * `delay` inhibitor fd), and `wispctl dpms` is a request on
  * zwlr_output_power_v1. Nothing here polls; idle stays 0 ticks/sec.
  *
+ * We also own org.freedesktop.ScreenSaver (dbus.c routes it here): nothing else
+ * on a wlroots box does, so a browser playing video would be blanked. An active
+ * Inhibit cookie destroys the notification objects; the last release recreates
+ * them, which restarts the compositor's countdowns.
+ *
  * The logind connection is a third tiny system-bus client, same shape as
  * power.c / bluez.c (SASL + Hello + AddMatch), with one addition: the Inhibit
  * reply carries a unix fd, so the read loop is recvmsg + SCM_RIGHTS.
@@ -39,6 +44,7 @@
 int idle_bus_fd = -1;
 
 static uint32_t notif_ids[IDLE_N_TIMEOUTS ? IDLE_N_TIMEOUTS : 1];
+static int      notifs_live;
 
 static void run_sh(const char *cmd) {
     if (!cmd || !*cmd) return;
@@ -105,6 +111,7 @@ int idle_wl_event(uint32_t obj, uint16_t op) {
 }
 
 static void idle_notify_init(void) {
+    notifs_live = 1;                /* set even on failure, so ss_apply stops retrying */
     if (IDLE_N_TIMEOUTS == 0) return;
     if (!id_idle_notifier || !id_seat) {
         msg("idle: ext-idle-notify-v1 unavailable — %d declared timeout(s) will never fire",
@@ -116,6 +123,95 @@ static void idle_notify_init(void) {
         uint32_t a[3] = { notif_ids[i], (uint32_t)idle_timeouts[i].after_ms, id_seat };
         wl_req(id_idle_notifier, IDLE_NOTIFIER_REQ_GET_IDLE_NOTIFICATION, a, 3, -1);
     }
+}
+
+/* ============================================================ */
+/* org.freedesktop.ScreenSaver — inhibitors from Firefox/mpv/… */
+/* ============================================================ */
+
+/* ponytail: 12 slots; overflow hands out an untracked cookie (we are already
+ * inhibited by whoever filled the table) — raise the cap if it ever logs */
+#define SS_MAX 12
+static struct { uint32_t cookie; char owner[64]; } ss_cookies[SS_MAX];
+static uint32_t ss_next_cookie = 1;
+
+static void ss_apply(void) {
+    int inhibited = 0;
+    for (int i = 0; i < SS_MAX; i++) if (ss_cookies[i].cookie) inhibited = 1;
+    if (inhibited && notifs_live) {
+        for (int i = 0; i < IDLE_N_TIMEOUTS; i++) {
+            if (!notif_ids[i]) continue;
+            wl_req(notif_ids[i], IDLE_NOTIF_REQ_DESTROY, NULL, 0, -1);
+            notif_ids[i] = 0;
+        }
+        notifs_live = 0;
+    } else if (!inhibited && !notifs_live) {
+        idle_notify_init();
+    }
+}
+
+static void ss_drop_owner(const char *name) {
+    int hit = 0;
+    for (int i = 0; i < SS_MAX; i++)
+        if (ss_cookies[i].cookie && !strcmp(ss_cookies[i].owner, name)) {
+            ss_cookies[i].cookie = 0;
+            hit = 1;
+        }
+    if (hit) ss_apply();
+}
+
+static void ss_name_owner_changed(const char *sender, const char *path,
+                                  const uint8_t *body, int len, const char *sig) {
+    (void)sender; (void)path;
+    if (!sig || strncmp(sig, "sss", 3)) return;
+    R r = { .b = body, .len = len, .pos = 0, .ok = 1 };
+    char name[64];
+    snprintf(name, sizeof name, "%s", rstr(&r));
+    rstr(&r);
+    const char *new_owner = rstr(&r);
+    if (r.ok && !new_owner[0]) ss_drop_owner(name);
+}
+
+int screensaver_method_call(R *r, const char *member, const char *path,
+                            uint32_t serial, const char *sender) {
+    if (strcmp(path, "/ScreenSaver") && strcmp(path, "/org/freedesktop/ScreenSaver"))
+        return 0;
+    if (!strcmp(member, "Inhibit")) {
+        static int subscribed;
+        if (!subscribed) {
+            subscribed = 1;
+            dbus_subscribe("org.freedesktop.DBus", "NameOwnerChanged", ss_name_owner_changed);
+        }
+        uint32_t cookie = ss_next_cookie++;
+        if (!ss_next_cookie) ss_next_cookie = 1;
+        int slot = -1;
+        for (int i = 0; i < SS_MAX; i++) if (!ss_cookies[i].cookie) { slot = i; break; }
+        if (slot < 0) {
+            msg("idle: %d ScreenSaver inhibitors held, %s's is untracked", SS_MAX, sender);
+        } else {
+            ss_cookies[slot].cookie = cookie;
+            snprintf(ss_cookies[slot].owner, sizeof ss_cookies[slot].owner, "%s", sender);
+            ss_apply();
+        }
+        W b = {0};
+        wu32(&b, cookie);
+        Msg m = { .type = DBUS_TYPE_METHOD_RETURN, .reply_serial = serial,
+                  .destination = sender, .signature = "u",
+                  .body = b.b, .body_len = b.pos };
+        send_msg(&m);
+        free(b.b);
+        return 1;
+    }
+    if (!strcmp(member, "UnInhibit")) {
+        uint32_t cookie = ru32(r);
+        if (r->ok && cookie)
+            for (int i = 0; i < SS_MAX; i++)
+                if (ss_cookies[i].cookie == cookie) { ss_cookies[i].cookie = 0; break; }
+        ss_apply();
+        dbus_reply_empty(serial, sender);
+        return 1;
+    }
+    return 0;
 }
 
 /* ============================================================ */
