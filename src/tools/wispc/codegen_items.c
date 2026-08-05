@@ -1244,7 +1244,7 @@ int emit_surface_click_dispatch(FILE *o, BarItem *items, int nitems,
             /* Anchor mirrors widget_note_click: cell rect + the bar's real
              * screen rect, so a floating or bottom bar's tooltip clears it. */
             fprintf(o, "          if (__ht) {\n");
-            fprintf(o, "              TipAnchor __ta = { w->output, __hx, __hcw, 0, 0 };\n");
+            fprintf(o, "              TipAnchor __ta = { w->output, __hx - w->chrome_pad_x, __hcw, 0, 0 };\n");
             fprintf(o, "              widget_screen_span(w, &__ta.top, &__ta.below);\n");
             fprintf(o, "              tooltip_arm(__ht, &__ta);\n");
             fprintf(o, "          }\n");
@@ -1387,7 +1387,7 @@ int emit_surface_click_dispatch(FILE *o, BarItem *items, int nitems,
 /* Groups — container + contiguous members as one flex slot      */
 /* ============================================================ */
 
-static Expr *group_prop(Group *g, const char *name) {
+Expr *group_prop(Group *g, const char *name) {
     size_t L = strlen(name);
     for (int i = 0; i < g->nprops; i++)
         if (g->props[i]->nlen == L && memcmp(g->props[i]->name, name, L) == 0)
@@ -1485,6 +1485,11 @@ int emit_group_draw(FILE *o, BarItem *items, int first, int nitems,
     int bw   = eval_int(group_prop(g, "border_width"), 1);
     uint32_t cbg  = eval_color_ctx(ctx, group_prop(g, "bg"), 0);
     uint32_t cbor = eval_color_ctx(ctx, group_prop(g, "border"), 0);
+    uint32_t shc  = eval_color_ctx(ctx, group_prop(g, "shadow"), 0);
+    int shx = eval_int(group_prop(g, "shadow_x"), 0);
+    int shy = eval_int(group_prop(g, "shadow_y"), 0);
+    int shblur = eval_int(group_prop(g, "shadow_blur"), 8);
+    int shspread = eval_int(group_prop(g, "shadow_spread"), 0);
 
     fputs("    {\n", o);
     fprintf(o, "        int __gw = %d, __gn = 0;\n", 2 * padx);
@@ -1543,6 +1548,10 @@ int emit_group_draw(FILE *o, BarItem *items, int first, int nitems,
         fputs("        int __gdraw = 1; (void)__gdraw;\n", o);
     }
     const char *gg = vertical ? "if (__gdraw) " : "if (__gdraw && __gn) ";
+    if (shc & 0xff000000u)
+        fprintf(o, "        %sfill_rounded_shadow(sl->px,w->w,w->h, __bx + %d, __gy + %d, __bw + %d, __gh + %d, %d, %d, 0x%08xu);\n",
+                gg, shx - shspread, shy - shspread, 2 * shspread, 2 * shspread,
+                r + shspread, shblur > 0 ? shblur : 8, shc);
     if (r > 0) {
         if (cbg  & 0xff000000u) fprintf(o, "        %sfill_rect_rounded(sl->px,w->w,w->h, __bx,__gy,__bw,__gh, %d,%d,%d,%d, 0x%08xu);\n", gg, r, r, r, r, cbg);
         if (cbor & 0xff000000u) fprintf(o, "        %sfill_rect_rounded_border(sl->px,w->w,w->h, __bx,__gy,__bw,__gh, %d,%d,%d,%d, %d,1,1,1,1,0, 0x%08xu);\n", gg, r, r, r, r, bw, cbor);

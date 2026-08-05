@@ -15,6 +15,7 @@ extern void render_pill(Widget *w);
  * (square top, emerges from under the bar); negative rests it that many px
  * INSIDE the bar row — straddling the edge to conserve screen space. */
 #define PILL_FR (OSD_PILL_MARGIN <= 0 ? OSD_PILL_FILLET_R : 0)
+#define PILL_SH_X (OSD_PILL_SH_L > OSD_PILL_SH_R ? OSD_PILL_SH_L : OSD_PILL_SH_R)
 
 static Widget *pill_widget(void) {
     for (int i = 0; i < MAX_WIDGETS; i++)
@@ -27,14 +28,14 @@ static Widget *pill_make_on(Output *o) {
     Widget *w = widget_alloc(W_OSD);
     if (!w) { msg("wisp: no widget slot for OSD pill"); return NULL; }
     w->s.osd.is_pill = 1;
-    w->w = OSD_PILL_W + 2 * PILL_FR;
+    w->w = OSD_PILL_W + 2 * PILL_FR + 2 * PILL_SH_X;
     /* pill_margin is baked into the buffer (osd_pill_layout's vh sweeps the
      * whole height) instead of being a layer-surface margin: a margin puts the
      * buffer top BELOW the screen edge, so the slide tween clipped there —
      * the pill visibly vanished pill_margin px before reaching the edge.
      * Flush mode swaps that inset for the bar row the fillets claw into
      * (minus however far a negative margin tucks the body into the bar). */
-    w->h = OSD_PILL_H + OSD_PILL_MARGIN + (PILL_FR ? osd_bar_split() : 0);
+    w->h = OSD_PILL_H + OSD_PILL_MARGIN + OSD_PILL_SH_B + (PILL_FR ? osd_bar_split() : 0);
     widget_setup_surface(w, LAYER_OVERLAY, "wisp-osd-pill", o);
     widget_set_size(w, w->w, w->h);
     /* Anchor TOP → compositor centers horizontally. exclusive_zone=-1 ignores

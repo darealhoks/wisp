@@ -56,6 +56,8 @@ int emit_spawned_osd_skeleton(FILE *o, Decl *sur, CGCtx *ctx, const char *nm, in
     int sep_frac       = eval_int(surface_prop(sur, "separator_frac"), 0);
     uint32_t sep_col   = eval_color_ctx(ctx, surface_prop(sur, "separator"), 0);
     int fillet_r       = eval_int(surface_prop(sur, "fillet_r"), 0);
+    SurShadow sh;
+    shadow_pad_core(sur, ctx, &sh);
 
     /* Anchor drives the whole stack layout. An edge in the mask with margin 0
      * means the chain sits FLUSH against that screen edge: no round-over, no
@@ -118,8 +120,15 @@ int emit_spawned_osd_skeleton(FILE *o, Decl *sur, CGCtx *ctx, const char *nm, in
           "        if (g.vh > 0) { if (__first < 0) __first = i; __last = i;\n"
           "            __chain_h = g.y + g.vh; } }\n"
           "    (void)__chain_h;\n", o);
-    fprintf(o, "    int __chain_x = %s;\n",
-            (amask & 8) ? "w->w - __slab_w" : (amask & 4) ? "0" : "(w->w - __slab_w) / 2");
+    /* A centered chain rides a symmetric shadow pad (osd.c pads both sides by
+     * max(pad_l,pad_r)), so the midpoint is still the body's; a left-flush one
+     * has to step over its left pad explicitly. Right-flush needs nothing: the
+     * pad grows the buffer leftward. */
+    char chain_x[64];
+    if (amask & 8)      snprintf(chain_x, sizeof chain_x, "w->w - __slab_w");
+    else if (amask & 4) snprintf(chain_x, sizeof chain_x, "%d", sh.pad_l);
+    else                snprintf(chain_x, sizeof chain_x, "(w->w - __slab_w) / 2");
+    fprintf(o, "    int __chain_x = %s;\n", chain_x);
     /* __jsplit is the bar junction line (where the fillets sit); __split is
      * how far down the body fill must stay clear of it. They differ only for
      * a straddling pill, which paints over the bar row. */
@@ -219,6 +228,15 @@ int emit_spawned_osd_skeleton(FILE *o, Decl *sur, CGCtx *ctx, const char *nm, in
          * bar cutout already nulled (wallpaper would show through the bar),
          * so it only applies past the junction. __split is 0 everywhere else,
          * which makes the call plain fill_rect_rounded. */
+        /* One shadow per slab, drawn just before that slab's body. The loop
+         * runs top→bottom, so a slab's shadow lands on the previous slab's
+         * bottom edge when `gap` is smaller than the blur — same ceiling the
+         * bar pills have. */
+        if (sh.col & 0xff000000u)
+            fprintf(o, "        fill_rounded_shadow(sl->px, w->w, w->h, __reg_x + %d,"
+                       " __reg_y + %d, __reg_w + %d, __reg_h + %d, %d, %d, 0x%08xu);\n",
+                    sh.x - sh.spread, sh.y - sh.spread, 2 * sh.spread, 2 * sh.spread,
+                    slab_radius + sh.spread, sh.blur, sh.col);
         fputs("        fill_rect_rounded_split(sl->px, w->w, w->h, __reg_x, __reg_y, __reg_w,"
               " __reg_h, __rtl, __rtr, __rbr, __rbl, __split, __bg);\n", o);
         (void)cbd; (void)bde;
@@ -435,6 +453,13 @@ int emit_menu_render(FILE *o, Decl *sur, Decl *tmpl, CGCtx *ctx, const char *nm,
     int pad         = eval_int(surface_prop(sur, "pad"), 0);
     int pad_x       = eval_int(surface_prop(sur, "pad_x"), pad);
     int pad_y       = eval_int(surface_prop(sur, "pad_y"), pad);
+    SurShadow sh;
+    shadow_pad_core(sur, ctx, &sh);
+    /* A horizontal menu is stretched to the output width and sized by menu.c
+     * from MENU_HEIGHT alone — there is nowhere to put a pad, so a shadow would
+     * silently do nothing. */
+    if (sh.any && !vert && !tip)
+        diag_error(sur->loc, "menu '%s': shadow needs `axis = vertical`", nm);
 
     fprintf(o, "void render_%s(Widget *w) {\n", nm);
     /* The render clip is process-global: any early return below would hand
@@ -447,15 +472,25 @@ int emit_menu_render(FILE *o, Decl *sur, Decl *tmpl, CGCtx *ctx, const char *nm,
     fputs("    widget_ensure_pool(w, 2);\n", o);
     fputs("    BufSlot *sl = widget_free_slot(w);\n    if (!sl) return;\n", o);
     fputs("    clear_buf(sl->px, w->w, w->h, 0);\n", o);
-    fprintf(o, "    fill_rect_rounded(sl->px, w->w, w->h, 0, 0, w->w, w->h, %d, %d, %d, %d, 0x%08xu);\n",
+    /* The BODY is not the buffer: a shadow pads the buffer per side (menu.c /
+     * tooltip.c size it from the same numbers via WispMenuGeom.pad_* resp.
+     * TIP_SHADOW_PAD_*), and everything below lays out inside the body rect. */
+    fprintf(o, "    int __mbx = %d, __mby = %d, __mbw = w->w - %d, __mbh = w->h - %d;\n",
+            sh.pad_l, sh.pad_t, sh.pad_l + sh.pad_r, sh.pad_t + sh.pad_b);
+    if (sh.col & 0xff000000u)
+        fprintf(o, "    fill_rounded_shadow(sl->px, w->w, w->h, __mbx + %d, __mby + %d,"
+                   " __mbw + %d, __mbh + %d, %d, %d, 0x%08xu);\n",
+                sh.x - sh.spread, sh.y - sh.spread, 2 * sh.spread, 2 * sh.spread,
+                radius + sh.spread, sh.blur, sh.col);
+    fprintf(o, "    fill_rect_rounded(sl->px, w->w, w->h, __mbx, __mby, __mbw, __mbh, %d, %d, %d, %d, 0x%08xu);\n",
             radius, radius, radius, radius, bg);
     if (bord_w > 0 && (bord & 0xff000000u))
-        fprintf(o, "    fill_rect_rounded_border(sl->px, w->w, w->h, 0, 0, w->w, w->h,"
+        fprintf(o, "    fill_rect_rounded_border(sl->px, w->w, w->h, __mbx, __mby, __mbw, __mbh,"
                    " %d, %d, %d, %d, %d, 1, 1, 1, 1, 0, 0x%08xu);\n",
                 radius, radius, radius, radius, bord_w, bord);
     fprintf(o, "    const Font *f = &font_%d;\n",
             eval_int(surface_prop(sur, "font_size"), 14));
-    fprintf(o, "    int __cox = %d, __coy = %d, __cws = w->w - %d, __chs = w->h - %d;\n",
+    fprintf(o, "    int __cox = __mbx + %d, __coy = __mby + %d, __cws = __mbw - %d, __chs = __mbh - %d;\n",
             pad_x, pad_y, 2 * pad_x, 2 * pad_y);
     fputs("    (void)__cox; (void)__coy; (void)__cws; (void)__chs;\n", o);
     fputs("    int __clip_top = 0; (void)__clip_top;\n", o);
@@ -488,6 +523,14 @@ int emit_menu_render(FILE *o, Decl *sur, Decl *tmpl, CGCtx *ctx, const char *nm,
     fprintf(o, "    int end_pos = end_extent + %s;\n", org);
     fprintf(o, "    int center_pos = (end_extent - center_total) / 2 + %s;\n", org);
     fputs("    (void)start_pos; (void)end_pos; (void)center_pos;\n", o);
+    /* The row loop runs over every filtered row, not over the rows that fit:
+     * overflow past the last visible one used to be cut by the buffer edge.
+     * With a shadow the buffer is body + pad, so it has to be cut by the BODY
+     * rect instead — shaped, so a row also terminates along the frame's curve
+     * instead of squaring off over the border. */
+    fputs("    render_set_clip(__mby, __mby + __mbh);\n", o);
+    fprintf(o, "    render_set_clip_shape(__mbx, __mby, __mbw, __mbh, %d, %d, %d, %d);\n",
+            radius, radius, radius, radius);
     fputs("    /* --- draw pass --- */\n", o);
     for (int i = 0; i < nitems; i++) {
         if (items[i].group_id >= 0) {
@@ -498,6 +541,7 @@ int emit_menu_render(FILE *o, Decl *sur, Decl *tmpl, CGCtx *ctx, const char *nm,
         emit_item_draw(o, &items[i], ctx, vert, nm);
         if (ctx->failed) return 1;
     }
+    fputs("    render_clip_reset();\n", o);
     emit_hit_snapshot(o, nm);
     fputs("    widget_attach(w, sl, 0);\n", o);
     fputs("}\n\n", o);

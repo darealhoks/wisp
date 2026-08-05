@@ -196,13 +196,13 @@ void widget_screen_span(const Widget *w, int *top, int *below) {
         t = oh - w->margin_bot - w->h;
         if (t < 0) t = 0;
     }
-    *top   = t;
-    *below = t + w->h;
+    *top   = t + w->chrome_pad_y;
+    *below = t + w->h - w->chrome_pad_b;
 }
 
 void widget_note_click(Widget *w, int x, int cw) {
     click_anchor.out   = w->output;
-    click_anchor.x     = x;
+    click_anchor.x     = x - w->chrome_pad_x;
     click_anchor.w     = cw;
     widget_screen_span(w, &click_anchor.top, &click_anchor.below);
     click_anchor.ms    = now_ms();

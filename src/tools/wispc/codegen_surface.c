@@ -65,10 +65,18 @@ static uint64_t item_dep_mask(CGCtx *ctx, const BarItem *it) {
  * it always takes the full-render path. */
 static int surface_partial_ok(Decl *sur, BarItem *items, int nitems,
                               int vertical, int has_bord, int armpit,
-                              int armpit_any_outer, int reveal_g, int n_sliders) {
+                              int armpit_any_outer, int reveal_g, int n_sliders,
+                              int any_shadow) {
     (void)items; (void)nitems;
     if (vertical || has_bord || armpit || armpit_any_outer || reveal_g || n_sliders)
         return 0;
+    /* Any shadow anywhere kills partial repaint. A shadow spills past the box
+     * that owns it, so a dirty cell's restore rect has to be inflated by the
+     * shadow reach — and that inflated rect then wipes an idle NEIGHBOUR's
+     * shadow tail and body edge, which nothing redraws. Gaps between bar pills
+     * are routinely smaller than the blur, so this is the common case, not the
+     * corner one. */
+    if (any_shadow) return 0;
     static const char *round_props[] = {
         "radius", "radius_tl", "radius_tr", "radius_bl", "radius_br",
         "radius_inner", "radius_outer" };
@@ -127,6 +135,8 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     int anchor        = eval_anchor(surface_prop(sur, "anchor"));
     if (anchor < 0) anchor = 1 | 4 | 8;
     int vertical      = surface_is_vertical(sur);
+    SurShadow sh;
+    sur_shadow_pad(sur, ctx, anchor, margin, margin_x, width, height, &sh);
     if (!has_excl && width > 0) excl_zone = 0;
     (void)has_excl;
 
@@ -242,7 +252,7 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     for (int i = 0; i < nitems; i++) items[i].dep_mask = item_dep_mask(ctx, &items[i]);
     int partial_cap = (ctx->nsrc <= 64) &&
         surface_partial_ok(sur, items, nitems, vertical, has_bord, armpit,
-                           armpit_any_outer, reveal_g, n_sliders);
+                           armpit_any_outer, reveal_g, n_sliders, sh.any);
 
     /* `scroll = <px>` (pixel step) or `scroll = rows` (snap a notch to the next
      * row top). Both make this a scrollable container; the row table below is
@@ -621,6 +631,10 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
             int ib = __lr_ib > __lr_ob ? __lr_ib : __lr_ob;
             lr_pad_top = it; lr_pad_bot = ib;
         }
+        pad_l += sh.pad_l;
+        pad_r += sh.pad_r;
+        lr_pad_top += sh.pad_t;
+        lr_pad_bot += sh.pad_b;
         if (pad_l > 0) fprintf(o, "    __cox += %d; __cws -= %d;\n", pad_l, pad_l);
         if (pad_r > 0) fprintf(o, "    __cws -= %d;\n", pad_r);
         if (lr_pad_top > 0) fprintf(o, "    __coy += %d; __chs -= %d;\n", lr_pad_top, lr_pad_top);
@@ -743,6 +757,15 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
         int r_br = eval_int(surface_prop(sur, "radius_br"), r_br_def);
         int r_bl = eval_int(surface_prop(sur, "radius_bl"), r_bl_def);
         __sur_r_tl = r_tl; __sur_r_tr = r_tr; __sur_r_br = r_br; __sur_r_bl = r_bl;
+        if (sh.col & 0xff000000u) {
+            int maxr = r_tl;
+            if (r_tr > maxr) maxr = r_tr;
+            if (r_br > maxr) maxr = r_br;
+            if (r_bl > maxr) maxr = r_bl;
+            fprintf(o, "    fill_rounded_shadow(sl->px, w->w, w->h, __cox + %d, __coy + %d, __cws + %d, __chs + %d, %d, %d, 0x%08xu);\n",
+                    sh.x - sh.spread, sh.y - sh.spread, 2 * sh.spread, 2 * sh.spread,
+                    maxr + sh.spread, sh.blur, sh.col);
+        }
         if (r_tl | r_tr | r_br | r_bl) {
             /* clip_top is a RASTER clip, not geometry: shortening the rect here
              * would shrink the radius half-extent clamp and square the corners
@@ -1020,7 +1043,11 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
      * center_total during measure, but only N-1 gaps exist between N items.
      * Track the last contributor's pad and subtract it after measure. */
     fputs("    int __center_trail_pad = 0;\n", o);
-    fprintf(o, "    int end_extent = %s;\n", vertical ? "__chs" : "__cws");
+    /* Shadow layout inset on the stretched axis — see sur_shadow_pad. */
+    int lay_lead  = vertical ? sh.lay_t : sh.lay_l;
+    int lay_trail = vertical ? sh.lay_b : sh.lay_r;
+    fprintf(o, "    int end_extent = %s - %d;\n", vertical ? "__chs" : "__cws",
+            lay_lead + lay_trail);
     fprintf(o, "    __%s_nhit = 0;\n\n", nm);
     fputs("    /* --- measure pass --- */\n", o);
 
@@ -1031,9 +1058,11 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     }
 
     fputs("    if (center_total > __center_trail_pad) center_total -= __center_trail_pad;\n", o);
-    fprintf(o, "    int start_pos = %s;\n", vertical ? "__coy" : "__cox");
-    fprintf(o, "    int end_pos = end_extent + %s;\n", vertical ? "__coy" : "__cox");
-    fprintf(o, "    int center_pos = (end_extent - center_total) / 2 + %s;\n", vertical ? "__coy" : "__cox");
+    const char *lay_org = vertical ? "__coy" : "__cox";
+    fprintf(o, "    int start_pos = %s + %d;\n", lay_org, lay_lead);
+    fprintf(o, "    int end_pos = end_extent + %s + %d;\n", lay_org, lay_lead);
+    fprintf(o, "    int center_pos = (end_extent - center_total) / 2 + %s + %d;\n",
+            lay_org, lay_lead);
     fputs("    if (center_pos < 0 && __cox == 0 && __coy == 0) center_pos = 0;\n", o);
     fputs("    (void)start_pos; (void)end_pos; (void)center_pos;\n\n", o);
     /* Phase B: layout is known, so detect whether any cell's advance (or
@@ -1201,7 +1230,7 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
 
     SurGeom __g = { anchor, layer, margin, margin_x, width, height, excl_zone,
                     gut_g, gutter_top, gutter_bottom, armpit, reveal_g,
-                    cg_cid_tl, cg_cid_tr, cg_cid_br, cg_cid_bl };
+                    cg_cid_tl, cg_cid_tr, cg_cid_br, cg_cid_bl, sh };
     int __rc = emit_surface_life(o, sur, ctx, nm, items, nitems, &__g);
     ctx->scroll_rows = 0;
     return __rc;

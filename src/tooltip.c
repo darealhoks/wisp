@@ -91,9 +91,18 @@ void tooltip_show(const char *text, const TipAnchor *at) {
     if (mx > ow - tw) mx = ow - tw;
     if (mx < 0) mx = 0;
 
-    widget_set_size(w, tw, TIP_H);
+    /* tw/TIP_H are the BODY; a declared shadow pads the buffer around it and
+     * takes the same amount back out of the margin, so the body lands where it
+     * would with no shadow. Floored at 0 — a negative layer-shell margin would
+     * drag the body itself off-screen. */
+    int my = (at ? at->below : 0) + TIP_GAP - TIP_SHADOW_PAD_T;
+    mx -= TIP_SHADOW_PAD_L;
+    if (mx < 0) mx = 0;
+    if (my < 0) my = 0;
+    widget_set_size(w, tw + TIP_SHADOW_PAD_L + TIP_SHADOW_PAD_R,
+                       TIP_H + TIP_SHADOW_PAD_T + TIP_SHADOW_PAD_B);
     widget_set_anchor(w, LS_ANCHOR_TOP | LS_ANCHOR_LEFT);
-    widget_set_margin(w, (at ? at->below : 0) + TIP_GAP, 0, 0, mx);
+    widget_set_margin(w, my, 0, 0, mx);
     widget_set_exclusive_zone(w, -1);
     widget_set_kbd_interactive(w, 0);
     /* Zero-area region: the compositor routes every pointer event straight

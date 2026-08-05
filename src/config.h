@@ -58,6 +58,19 @@
 #ifndef MENU_HDR_H
 #define MENU_HDR_H      0             /* body height above the rows (query line); 0 = rows start at pad_y */
 #endif
+/* Drop-shadow buffer pad per side around the menu body (0 = none declared). */
+#ifndef MENU_SHADOW_PAD_L
+#define MENU_SHADOW_PAD_L 0
+#endif
+#ifndef MENU_SHADOW_PAD_R
+#define MENU_SHADOW_PAD_R 0
+#endif
+#ifndef MENU_SHADOW_PAD_T
+#define MENU_SHADOW_PAD_T 0
+#endif
+#ifndef MENU_SHADOW_PAD_B
+#define MENU_SHADOW_PAD_B 0
+#endif
 #ifndef MENU_TERMINAL
 #define MENU_TERMINAL   "foot -e"     /* prefix for .desktop Terminal=true apps */
 #endif

@@ -298,11 +298,36 @@ void emit_hit_snapshot(FILE *o, const char *nm);
  * buffer sized there must match the pixels painted here, so both read the same
  * gutter/armpit/fillet-corner numbers. cid_* is the wedge direction per corner
  * (see the anchor switch in emit_generated_surface). */
+/* Surface-scope drop shadow: the color/offset/softness as declared, plus the
+ * per-side buffer pad the shadow needs outside the body. Pads are folded into
+ * the SHM buffer, taken back out of the layer-surface margin, and added to the
+ * exclusive zone, so the body lands where it did without the shadow. */
+typedef struct {
+    uint32_t col;
+    int x, y, blur, spread;
+    int pad_l, pad_r, pad_t, pad_b;   /* buffer grows / margin shrinks by these */
+    int lay_l, lay_r, lay_t, lay_b;   /* stretched axis: item layout insets instead */
+    int any;   /* surface, a group or a cell declares a shadow — kills partial repaint */
+} SurShadow;
+
 typedef struct {
     int anchor, layer, margin, margin_x, width, height, excl_zone;
     int gut_g, gutter_top, gutter_bottom, armpit, reveal_g;
     int cid_tl, cid_tr, cid_br, cid_bl;
+    SurShadow sh;
 } SurGeom;
+
+Expr *group_prop(Group *g, const char *name);
+
+/* Fills s from the surface's shadow_* props, unioning every group's and cell's
+ * shadow reach into the pads (codegen_surface_life.c). No anchor/stretch/clamp
+ * logic — that is sur_shadow_pad's, and only a *generated* surface has an
+ * anchor. Spawned surfaces (menu, tooltip, osd) call the core directly and
+ * apply their own placement rule in their runtime file. */
+void shadow_pad_core(Decl *sur, CGCtx *ctx, SurShadow *s);
+
+void sur_shadow_pad(Decl *sur, CGCtx *ctx, int anchor, int margin, int margin_x,
+                    int width, int height, SurShadow *s);
 
 /* Which pad strip a fillet's wedge box extends into — depends on cid AND corner.
  *   LEFT  pad iff TL or BL with cid in {0,3}

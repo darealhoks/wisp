@@ -90,10 +90,12 @@ static const PropSchema SCHEMAS[] = {
       " layer margin margin_x max max_visible output pad pad_x pad_y prog_fg prog_h prog_track"
       " prompt radius radius_bl radius_br radius_inner radius_outer radius_tl"
       " radius_tr reveal_anim_ms reveal_easing reveal_gutter reveal_on_hover"
+      " shadow shadow_blur shadow_spread shadow_x shadow_y"
       " delay_ms dismiss_on_unfocus keyboard on_escape row_h scroll separator separator_frac separator_h size slide_ms sort sound spawned_by terminal"
       " timeout timeout_low timeout_normal visible width " },
     { "group", "group",
-      " align bg border border_width gap height pad pad_x radius sticky " },
+      " align bg border border_width gap height pad pad_x radius shadow"
+      " shadow_blur shadow_spread shadow_x shadow_y sticky " },
     { "lock", "lock block",
       " pam prompt bg ring ring_bad fg dim caps font_size wrong_ms wall"
       " retry_ms retry_growth retry_max_ms lockout_after privacy"

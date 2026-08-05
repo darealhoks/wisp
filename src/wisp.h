@@ -53,7 +53,12 @@ typedef struct Widget Widget;
  * fires, keeping idle at 0 CPU). */
 /* sep_h 0 = separators are full row_h rows; non-zero gives them their own
  * (shorter) slot, so the row grid is no longer uniform — see menu.c. */
-typedef struct { int width, row_h, max_vis, gap, hdr_h, pad_y, own_body, wants_hover, sep_h; } WispMenuGeom;
+/* pad_l/r/t/b: buffer rows/columns outside the body for the menu's drop
+ * shadow. width/row_h/hdr_h/pad_y all describe the BODY; the surface is the
+ * body plus these. Only a menu with its own body carries its own — a bodyless
+ * one draws through render_menu_default and takes MENU_SHADOW_PAD_*. */
+typedef struct { int width, row_h, max_vis, gap, hdr_h, pad_y, own_body, wants_hover, sep_h;
+                 int pad_l, pad_r, pad_t, pad_b; } WispMenuGeom;
 
 /* ============================================================ */
 /* Wayland I/O (wl.c)                                            */
@@ -241,6 +246,9 @@ struct Widget {
      * logical, which is what keeps the scale==1 path byte-identical. */
     int        w, h;
     int        margin_top, margin_bot; /* last set_margin; popups anchor off the real rect */
+    /* Buffer rows/columns outside the visible body (surface drop shadow): the
+     * margin was shrunk by these, so screen geometry must add them back. */
+    int        chrome_pad_x, chrome_pad_y, chrome_pad_b;
     uint32_t   anchor_bits;          /* last set_anchor, to know which edge margins count from */
     int        scale120;             /* copy of the output's, in 120ths, >= 120 */
     int        sent_scale120;        /* last set_buffer_scale sent (120ths); 0 = none */
@@ -750,6 +758,19 @@ Widget *menu_create_action(const char *title,
 #endif
 #ifndef TIP_GAP
 #define TIP_GAP   4
+#endif
+/* Drop-shadow buffer pad per side (0 = no shadow declared). */
+#ifndef TIP_SHADOW_PAD_L
+#define TIP_SHADOW_PAD_L 0
+#endif
+#ifndef TIP_SHADOW_PAD_R
+#define TIP_SHADOW_PAD_R 0
+#endif
+#ifndef TIP_SHADOW_PAD_T
+#define TIP_SHADOW_PAD_T 0
+#endif
+#ifndef TIP_SHADOW_PAD_B
+#define TIP_SHADOW_PAD_B 0
 #endif
 /* Hover dwell before the tooltip appears (`delay_ms` on the surface). */
 #ifndef TIP_DELAY_MS

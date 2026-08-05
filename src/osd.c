@@ -50,6 +50,22 @@
 #ifndef OSD_PILL_FILLET_R
 #define OSD_PILL_FILLET_R OSD_FILLET_R
 #endif
+/* Pill shadow pad, same rule as the stack's OSD_SH_* below: symmetric on x so
+ * the centered body keeps its screen position, and nothing above the body
+ * because the buffer top is screen y=0 — the top reach lives in the
+ * OSD_PILL_MARGIN band and is clipped past it. */
+#ifndef OSD_PILL_SH_L
+#define OSD_PILL_SH_L 0
+#endif
+#ifndef OSD_PILL_SH_R
+#define OSD_PILL_SH_R 0
+#endif
+#ifndef OSD_PILL_SH_T
+#define OSD_PILL_SH_T 0
+#endif
+#ifndef OSD_PILL_SH_B
+#define OSD_PILL_SH_B 0
+#endif
 /* Floating top-center stack, OSD_TOP_MARGIN px below the bar's exclusive zone.
  * Like the bottom-right anchor it is fully declared now — the margin is what
  * lifts the chain off every screen edge, so nothing is flush and the generated
@@ -73,6 +89,25 @@
 #define OSD_FILLET_R   18
 #endif
 #define OSD_SIDE_PAD   OSD_FILLET_R
+/* Drop-shadow buffer pad per side, from gen_overrides.h (0 = none declared).
+ * A centered chain gets the SAME pad both sides so its screen x is unchanged
+ * — an asymmetric shadow_x would otherwise slide the body. Nothing is added
+ * above the body: the buffer top is pinned to screen y=0 (exclusive_zone -1),
+ * so the top reach has to fit in the OSD_TOP_MARGIN band that is already
+ * there, exactly like the anchored-side margin clamp on a declared surface. */
+#ifndef OSD_SH_L
+#define OSD_SH_L 0
+#endif
+#ifndef OSD_SH_R
+#define OSD_SH_R 0
+#endif
+#ifndef OSD_SH_T
+#define OSD_SH_T 0
+#endif
+#ifndef OSD_SH_B
+#define OSD_SH_B 0
+#endif
+#define OSD_SH_X       (OSD_SH_L > OSD_SH_R ? OSD_SH_L : OSD_SH_R)
 #define OSD_TOTAL_H    (MAX_OSDS * OSD_MAX_SLAB_H + (MAX_OSDS - 1) * OSD_GAP)
 /* Surface extends UP into the bar's exclusive zone (exclusive_zone=-1) the
  * same way the HUD does — gives the OSD ownership of the bar-strip pixels
@@ -354,9 +389,13 @@ int osd_pill_layout(Widget *w) {
     osd_item_y[0] = 0;
     o->h = OSD_PILL_H;
     osd_anim_p[0] = slab_anim_p(o, now_ms());
-    int vh = (int)((double)w->h * osd_anim_p[0]);
+    /* The slide sweeps the buffer height and comes to rest with the body at its
+     * bottom, so the shadow's bottom pad must stay out of the sweep or the pill
+     * would rest that many px lower. */
+    int sweep = w->h - OSD_PILL_SH_B;
+    int vh = (int)((double)sweep * osd_anim_p[0]);
     if (vh < 0) vh = 0;
-    if (vh > w->h) vh = w->h;
+    if (vh > sweep) vh = sweep;
     osd_visible_h[0] = vh;
     return 1;
 }
@@ -426,13 +465,13 @@ int osd_dirty_band(Widget *w, int *y0, int *y1) {
     }
 #if OSD_ANCHOR_BR
     /* Chain pinned to the bottom edge; fillets overhang the top by FILLET_R. */
-    int hi = w->h - OSD_TOP_MARGIN;
-    int lo = hi - chain_h - OSD_FILLET_R;
+    int hi = w->h - OSD_TOP_MARGIN + OSD_SH_B;
+    int lo = hi - chain_h - OSD_FILLET_R - OSD_SH_T;
 #else
     /* Down-growing from the top margin; the leading slab clips off the buffer
      * top mid-slide, so start the band at row 0 (a handful of cheap rows). */
     int lo = 0;
-    int hi = OSD_TOP_MARGIN + chain_h;
+    int hi = OSD_TOP_MARGIN + chain_h + OSD_SH_B;
 #endif
     if (lo < 0) lo = 0;
     if (hi > w->h) hi = w->h;
@@ -471,16 +510,16 @@ static Widget *osd_make_on(Output *o) {
 #if OSD_ANCHOR_BR
     /* Buffer pads OSD_FILLET_R on the left and top for the armpit wedges;
      * body sits flush in the bottom-right corner. */
-    w->w = OSD_W + OSD_FILLET_R;
-    w->h = OSD_TOTAL_H + OSD_FILLET_R;
+    w->w = OSD_W + OSD_FILLET_R + OSD_SH_L;
+    w->h = OSD_TOTAL_H + OSD_FILLET_R + OSD_SH_T;
     widget_setup_surface(w, LAYER_OVERLAY, "wisp-osd", o);
     widget_set_size(w, w->w, w->h);
     widget_set_anchor(w, LS_ANCHOR_BOTTOM | LS_ANCHOR_RIGHT);
     widget_set_margin(w, 0, 0, 0, 0);
     widget_set_exclusive_zone(w, 0);
 #elif OSD_FLOAT
-    w->w = OSD_W;
-    w->h = OSD_TOTAL_H + OSD_TOP_MARGIN;
+    w->w = OSD_W + 2 * OSD_SH_X;
+    w->h = OSD_TOTAL_H + OSD_TOP_MARGIN + OSD_SH_B;
     widget_setup_surface(w, LAYER_OVERLAY, "wisp-osd", o);
     widget_set_size(w, w->w, w->h);
     /* Anchor TOP only -> compositor centers horizontally. exclusive_zone=-1
@@ -492,8 +531,8 @@ static Widget *osd_make_on(Output *o) {
     widget_set_margin(w, 0, 0, 0, 0);
     widget_set_exclusive_zone(w, -1);
 #else
-    w->w = OSD_W + 2 * OSD_SIDE_PAD;
-    w->h = OSD_TOTAL_H;
+    w->w = OSD_W + 2 * OSD_SIDE_PAD + 2 * OSD_SH_X;
+    w->h = OSD_TOTAL_H + OSD_SH_B;
     widget_setup_surface(w, LAYER_OVERLAY, "wisp-osd", o);
     widget_set_size(w, w->w, w->h);
     /* Anchor TOP only → compositor centers horizontally. exclusive_zone=-1
@@ -780,9 +819,9 @@ static void update_input_region(Widget *w) {
 #if OSD_ANCHOR_BR
     widget_set_input_region_rect(w, w->w - OSD_W, w->h - total, OSD_W, total);
 #elif OSD_FLOAT
-    widget_set_input_region_rect(w, 0, OSD_TOP_MARGIN, OSD_W, total);
+    widget_set_input_region_rect(w, (w->w - OSD_W) / 2, OSD_TOP_MARGIN, OSD_W, total);
 #else
-    widget_set_input_region_rect(w, OSD_SIDE_PAD, 0, OSD_W, total);
+    widget_set_input_region_rect(w, (w->w - OSD_W) / 2, 0, OSD_W, total);
 #endif
 }
 

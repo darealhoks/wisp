@@ -7,6 +7,107 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define __SPMAX(v) ((v) > 0 ? (v) : 0)
+#define __SPBUMP(p, v) do { if (__SPMAX(v) > (p)) (p) = __SPMAX(v); } while (0)
+
+static void shadow_bump(SurShadow *s, uint32_t col, int x, int y, int reach) {
+    if (!(col & 0xff000000u)) return;
+    s->any = 1;
+    __SPBUMP(s->pad_l, reach - x);
+    __SPBUMP(s->pad_r, reach + x);
+    __SPBUMP(s->pad_t, reach - y);
+    __SPBUMP(s->pad_b, reach + y);
+}
+
+/* A group pill's or a cell's shadow spills outside the body too, and unlike the
+ * surface shadow it gets no pad of its own — union its reach into the surface
+ * pad or a flush bar clips it. Defaults differ by scope and must match the draw
+ * sites: group shadow_y/blur default 0/8 (emit_group_draw), widget 2/8
+ * (emit_item_draw, where a declared blur of 0 also falls back to 8). */
+static void widget_shadow_bump(Widget *wd, CGCtx *ctx, SurShadow *s) {
+    int blur = eval_int(widget_prop(wd, "shadow_blur"), 0);
+    if (blur <= 0) blur = 8;
+    shadow_bump(s, eval_color_ctx(ctx, widget_prop(wd, "shadow"), 0),
+                eval_int(widget_prop(wd, "shadow_x"), 0),
+                eval_int(widget_prop(wd, "shadow_y"), 2),
+                blur + eval_int(widget_prop(wd, "shadow_spread"), 0));
+}
+
+static void item_shadow_pad(SBody *items, int n, CGCtx *ctx, SurShadow *s) {
+    for (int i = 0; i < n; i++) {
+        switch (items[i].kind) {
+        case SB_REGION:
+            item_shadow_pad(items[i].region->items, items[i].region->nitems, ctx, s);
+            break;
+        case SB_WIDGET:
+            widget_shadow_bump(items[i].widget, ctx, s);
+            break;
+        case SB_FOR:
+            for (int k = 0; k < items[i].forb->ncells; k++)
+                widget_shadow_bump(items[i].forb->cells[k], ctx, s);
+            break;
+        case SB_GROUP: {
+            Group *g = items[i].group;
+            shadow_bump(s, eval_color_ctx(ctx, group_prop(g, "shadow"), 0),
+                        eval_int(group_prop(g, "shadow_x"), 0),
+                        eval_int(group_prop(g, "shadow_y"), 0),
+                        eval_int(group_prop(g, "shadow_blur"), 8)
+                            + eval_int(group_prop(g, "shadow_spread"), 0));
+            for (int k = 0; k < g->nmembers; k++)
+                widget_shadow_bump(g->members[k], ctx, s);
+            break;
+        }
+        case SB_PROP: break;
+        }
+    }
+}
+
+void shadow_pad_core(Decl *sur, CGCtx *ctx, SurShadow *s) {
+    memset(s, 0, sizeof *s);
+    /* eval_color_ctx, not eval_color: a `const NAME = #color` must resolve or
+     * the alpha test below silently drops the shadow. */
+    s->col = eval_color_ctx(ctx, surface_prop(sur, "shadow"), 0);
+    if (s->col & 0xff000000u) {
+        s->x      = eval_int(surface_prop(sur, "shadow_x"), 0);
+        s->y      = eval_int(surface_prop(sur, "shadow_y"), 0);
+        s->blur   = eval_int(surface_prop(sur, "shadow_blur"), 8);   /* widget default */
+        s->spread = eval_int(surface_prop(sur, "shadow_spread"), 0);
+        shadow_bump(s, s->col, s->x, s->y, s->blur + s->spread);
+    }
+    item_shadow_pad(sur->surface.items, sur->surface.n, ctx, s);
+}
+#undef __SPMAX
+#undef __SPBUMP
+
+void sur_shadow_pad(Decl *sur, CGCtx *ctx, int anchor, int margin, int margin_x,
+                    int width, int height, SurShadow *s) {
+    shadow_pad_core(sur, ctx, s);
+    if (!(s->pad_l | s->pad_r | s->pad_t | s->pad_b)) return;
+    /* A stretched surface has no margin of its own on that axis — the compositor
+     * dictates the extent, so the buffer cannot grow there and a pad would be
+     * cropped. The reach becomes an item-LAYOUT inset instead: the first pill
+     * starts lay_l in from the buffer edge, which is exactly the room its shadow
+     * needs. The surface bg still fills edge to edge, and buffer x stays screen
+     * x, so no chrome_pad correction is owed on that axis. */
+    if ((anchor & 4) && (anchor & 8) && width == 0) {
+        s->lay_l = s->pad_l; s->lay_r = s->pad_r;
+        s->pad_l = s->pad_r = 0;
+    }
+    if ((anchor & 1) && (anchor & 2) && height == 0) {
+        s->lay_t = s->pad_t; s->lay_b = s->pad_b;
+        s->pad_t = s->pad_b = 0;
+    }
+    /* On an anchored side the pad is taken out of that side's margin, so it can
+     * never exceed it — a negative margin would drag the surface off-screen.
+     * Flush (margin 0) therefore suppresses that side's pad outright. */
+#define __SPCLAMP(p, m) do { if ((p) > (m)) (p) = (m); } while (0)
+    if (anchor & 1) __SPCLAMP(s->pad_t, margin);
+    if (anchor & 2) __SPCLAMP(s->pad_b, margin);
+    if (anchor & 4) __SPCLAMP(s->pad_l, margin_x);
+    if (anchor & 8) __SPCLAMP(s->pad_r, margin_x);
+#undef __SPCLAMP
+}
+
 int emit_surface_life(FILE *o, Decl *sur, CGCtx *ctx, const char *nm,
                       BarItem *items, int nitems, const SurGeom *g) {
     emit_surface_click_dispatch(o, items, nitems, ctx, ctx->r, nm);
@@ -136,9 +237,14 @@ int emit_surface_life(FILE *o, Decl *sur, CGCtx *ctx, const char *nm,
         int lr_pad_top = (g->anchor == 4 || g->anchor == 8) ? __MX(lit, lot) : 0;
         int lr_pad_bot = (g->anchor == 4 || g->anchor == 8) ? __MX(lib, lob) : 0;
 #undef __MX
-        __buf_w = total_w + pad_l + pad_r;
-        __buf_h = total_h + lr_pad_top + lr_pad_bot;
+        __buf_w = total_w + pad_l + pad_r + g->sh.pad_l + g->sh.pad_r;
+        __buf_h = total_h + lr_pad_top + lr_pad_bot + g->sh.pad_t + g->sh.pad_b;
         fprintf(o, "    widget_set_size(w, %d, %d);\n", __buf_w, __buf_h);
+        if (g->sh.pad_l | g->sh.pad_t | g->sh.pad_b) {
+            fprintf(o, "    w->chrome_pad_x = %d;\n", g->sh.pad_l);
+            fprintf(o, "    w->chrome_pad_y = %d;\n", g->sh.pad_t);
+            fprintf(o, "    w->chrome_pad_b = %d;\n", g->sh.pad_b);
+        }
     }
     fprintf(o, "    widget_set_anchor(w, %d);\n", g->anchor);
     if (is_hud) {
@@ -161,8 +267,16 @@ int emit_surface_life(FILE *o, Decl *sur, CGCtx *ctx, const char *nm,
     } else {
         /* Always set, even at 0: a reload adopts the old process's layer
          * surface, which may carry the previous preset's margin. */
-        fprintf(o, "    widget_set_margin(w, %d, %d, %d, %d);\n", g->margin, g->margin_x, g->margin, g->margin_x);
-        fprintf(o, "    widget_set_exclusive_zone(w, %d);\n", g->excl_zone);
+        /* The shadow pad eats into the margin so the body stays put, and is
+         * given back to the exclusive zone (measured from the anchored edge,
+         * margin included) so the reserved strip is unchanged. */
+        fprintf(o, "    widget_set_margin(w, %d, %d, %d, %d);\n",
+                g->margin - g->sh.pad_t, g->margin_x - g->sh.pad_r,
+                g->margin - g->sh.pad_b, g->margin_x - g->sh.pad_l);
+        int anch_pad = (g->anchor & 1) ? g->sh.pad_t : (g->anchor & 2) ? g->sh.pad_b
+                     : (g->anchor & 4) ? g->sh.pad_l : (g->anchor & 8) ? g->sh.pad_r : 0;
+        fprintf(o, "    widget_set_exclusive_zone(w, %d);\n",
+                g->excl_zone > 0 ? g->excl_zone + anch_pad : g->excl_zone);
         /* `on_escape` needs key events, and a layer surface only gets them with
          * keyboard interactivity. Default `on_demand`: an exclusive panel eats
          * every keystroke in the session while it is open, which for a bar
@@ -177,14 +291,17 @@ int emit_surface_life(FILE *o, Decl *sur, CGCtx *ctx, const char *nm,
              * to whatever is beneath (used by the decorative screen-corner
              * strip so it never steals clicks from windows/desktop). */
             fputs("    widget_set_input_region_rect(w, 0, 0, 0, 0);\n", o);
-        } else if (g->armpit > 0) {
+        } else if (g->armpit > 0 || (g->sh.pad_l | g->sh.pad_r | g->sh.pad_t | g->sh.pad_b)) {
             /* Constrain pointer input to the painted body. Without this the
              * default full-surface region would let the transparent feet strip
              * (the extra `armpit` rows on the desktop side) intercept clicks
              * across the whole width. A region wider than the surface is clipped
              * by the compositor, so 1<<15 safely spans any output. */
-            fprintf(o, "    widget_set_input_region_rect(w, 0, %d, %d, %d);\n",
-                    (g->anchor & 1) ? 0 : g->armpit, 1 << 15, g->height);
+            int spad_x = g->sh.pad_l | g->sh.pad_r;
+            int rx = (spad_x && g->width > 0) ? g->sh.pad_l : 0;
+            int rw = (spad_x && g->width > 0) ? g->width : 1 << 15;
+            fprintf(o, "    widget_set_input_region_rect(w, %d, %d, %d, %d);\n",
+                    rx, g->sh.pad_t + ((g->anchor & 1) ? 0 : g->armpit), rw, g->height);
         }
         fputs("    wl_req(w->surface, SURFACE_REQ_COMMIT, NULL, 0, -1);\n", o);
     }

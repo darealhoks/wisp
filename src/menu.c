@@ -161,6 +161,16 @@ int menu_icon_px(void) {
     return rh - 12;
 }
 
+/* Buffer = body + shadow pad. The input region has to be re-stated over the
+ * body: a menu is clickable, and the default full-surface region would let the
+ * transparent shadow gutter swallow clicks meant for what is behind it. */
+static void menu_size_surface(Widget *w, int body_h) {
+    const WispMenuGeom *g = &w->s.menu.geom;
+    widget_set_size(w, g->width + g->pad_l + g->pad_r, body_h + g->pad_t + g->pad_b);
+    if (g->pad_l | g->pad_r | g->pad_t | g->pad_b)
+        widget_set_input_region_rect(w, g->pad_l, g->pad_t, g->width, body_h);
+}
+
 /* Layout lives in the .wisp: `render` is the generated renderer for this
  * menu's declared body (or the `spawned_by = menu` template's). menu.c owns
  * only what surrounds it — the surface size, and keeping the selection inside
@@ -175,12 +185,12 @@ void menu_render(Widget *w) {
          * realloc, which reads as lag. Empty rows just show background. */
         int slots = w->s.menu.n_items < g->max_vis ? w->s.menu.n_items : g->max_vis;
         int want_h = g->hdr_h + rows_total_h(w, f, slots) + 2 * g->pad_y;
-        if (w->w != g->width || w->h != want_h) {
-            widget_set_size(w, g->width, want_h);
+        if (w->w != g->width + g->pad_l + g->pad_r || w->h != want_h + g->pad_t + g->pad_b) {
+            menu_size_surface(w, want_h);
             wl_req(w->surface, SURFACE_REQ_COMMIT, NULL, 0, -1);
             return;
         }
-        int avail = w->h - g->hdr_h - 2 * g->pad_y;
+        int avail = want_h - g->hdr_h - 2 * g->pad_y;
         int *top = &w->s.menu.view_top;
         /* sel_scan() returns -1 (no selectable row: empty filter, all-separator
          * menu) — never follow it into the view, or view_top goes negative and
@@ -201,7 +211,7 @@ void menu_render(Widget *w) {
          * layout, so a page may flip one item early, never late.
          * ponytail: ~16px/item + 48px reserve mirror the .wisp's cell pads;
          * feed real hit rects back from the renderer if presets diverge. */
-        int avail = w->w - text_width(f, w->s.menu.prompt)
+        int avail = w->w - g->pad_l - g->pad_r - text_width(f, w->s.menu.prompt)
                   - text_width(f, w->s.menu.query) - 48;
         int *top = &w->s.menu.view_top;
         if (w->s.menu.sel >= 0) {
@@ -220,7 +230,8 @@ void menu_render(Widget *w) {
 }
 
 static int menu_avail(const Widget *w) {
-    return w->h - w->s.menu.geom.hdr_h - 2 * w->s.menu.geom.pad_y;
+    const WispMenuGeom *g = &w->s.menu.geom;
+    return w->h - g->pad_t - g->pad_b - g->hdr_h - 2 * g->pad_y;
 }
 
 /* Filtered-row index under a pointer, or -1. Horizontal menus have variable-width items and no hit grid of
@@ -230,7 +241,7 @@ static int menu_avail(const Widget *w) {
 static int menu_row_at(const Widget *w, int px_y) {
     if (!MENU_VERTICAL) return -1;
     const Font *f = &font_small;
-    int y = w->s.menu.geom.pad_y + w->s.menu.geom.hdr_h;
+    int y = w->s.menu.geom.pad_t + w->s.menu.geom.pad_y + w->s.menu.geom.hdr_h;
     if (px_y < y) return -1;
     int end = w->s.menu.view_top + vis_from(w, f, w->s.menu.view_top, menu_avail(w));
     for (int i = w->s.menu.view_top; i < end; i++) {
@@ -505,7 +516,11 @@ Widget *menu_create(const char *title, char items[][ITEM_MAX], int n, int client
     if (!g->max_vis) g->max_vis = MENU_MAX_VIS;
     if (!g->gap)     g->gap     = MENU_GAP;
     if (!g->wants_hover) g->wants_hover = MENU_WANTS_HOVER;
-    if (!g->own_body) { g->pad_y = MENU_PAD_Y; g->hdr_h = MENU_HDR_H; }
+    if (!g->own_body) {
+        g->pad_y = MENU_PAD_Y; g->hdr_h = MENU_HDR_H;
+        g->pad_l = MENU_SHADOW_PAD_L; g->pad_r = MENU_SHADOW_PAD_R;
+        g->pad_t = MENU_SHADOW_PAD_T; g->pad_b = MENU_SHADOW_PAD_B;
+    }
 
     /* A menu opened as a result of a bar click hangs under the cell that was
      * clicked. The rect can't ride the exec() → wispctl → ctl round trip, so
@@ -534,19 +549,28 @@ Widget *menu_create(const char *title, char items[][ITEM_MAX], int n, int client
     if (MENU_VERTICAL) {
         const Font *f = &font_small;
         int vis = n < g->max_vis ? n : g->max_vis;
-        widget_set_size(w, g->width, g->hdr_h + rows_total_h(w, f, vis) + 2 * g->pad_y);
+        menu_size_surface(w, g->hdr_h + rows_total_h(w, f, vis) + 2 * g->pad_y);
         if (anchored) {
             /* Centered on the cell, kept fully on-screen. mode_w is physical;
-             * layer-shell margins are logical. */
+             * layer-shell margins are logical. Clamped against the BODY rect,
+             * then the margin gives back the shadow pad so the body lands
+             * where it would with no shadow — floored at 0, since a negative
+             * layer-shell margin would drag the body itself off-screen. */
             int ow = o->scale120 > 0 ? o->mode_w * 120 / o->scale120 : o->mode_w;
             int mx = a.x + a.w / 2 - g->width / 2;
             if (mx > ow - g->width) mx = ow - g->width;
             if (mx < 0) mx = 0;
+            int my = a.below + g->gap - g->pad_t;
+            mx -= g->pad_l;
+            if (mx < 0) mx = 0;
+            if (my < 0) my = 0;
             widget_set_anchor(w, LS_ANCHOR_TOP | LS_ANCHOR_LEFT);
-            widget_set_margin(w, a.below + g->gap, 0, 0, mx);
+            widget_set_margin(w, my, 0, 0, mx);
         } else {
+            int my = MENU_MARGIN - g->pad_t;
+            if (my < 0) my = 0;
             widget_set_anchor(w, LS_ANCHOR_TOP);   /* top-only anchor auto-centers */
-            widget_set_margin(w, MENU_MARGIN, 0, 0, 0);
+            widget_set_margin(w, my, 0, 0, 0);
         }
     } else {
         widget_set_size(w, 0, MENU_HEIGHT);

@@ -96,7 +96,10 @@ static inline double sd_rbox(double px, double py, double cx, double cy,
 /* Soft drop-shadow of a rounded rectangle, composed in one pass from the
  * signed distance to the (already offset+spread) rounded box. `blur` is the
  * softness band in px: alpha is full where d<=0 (inside the shape) and ramps
- * to 0 over `blur` px outside via a smoothstep. No temp buffer, no blur kernel
+ * to 0 over `blur` px outside via a smootherstep. Reach (alpha exactly 0) is
+ * blur px from the passed box — wispc's shadow_bump() pads buffers with
+ * blur+spread on that same definition (codegen_surface_life.c); they must
+ * match or the tail is cropped. No temp buffer, no blur kernel
  * — cheap enough to run on every redraw while staying idle at 0 CPU. */
 void fill_rounded_shadow(uint32_t *px, int sw, int sh,
                          int x, int y, int w, int h, int r, double blur, uint32_t c) {
@@ -128,7 +131,9 @@ void fill_rounded_shadow(uint32_t *px, int sw, int sh,
             double t = 1.0 - d / blur;
             if (t <= 0) continue;
             if (t > 1) t = 1;
-            t = t * t * (3.0 - 2.0 * t);     /* smoothstep */
+            /* smootherstep: zero 1st AND 2nd derivative at t=0, so the tail
+             * dies into the background with no visible terminating edge */
+            t = t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
             blend_over(&row[i], cr, cg, cb, (uint8_t)(ca * t + 0.5));
         }
     }
