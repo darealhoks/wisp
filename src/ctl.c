@@ -74,6 +74,13 @@ void ctl_reload_exec(void) {
         n += snprintf(arg + n, sizeof arg - n, "%u/%u+",
                       w->layer_surface, w->surface);
     }
+    /* power controls are exclusive per output in wlroots: leaking them across
+     * exec makes the new process's control fail and dpms a silent no-op */
+    for (int i = 0; i < MAX_OUTPUTS; i++)
+        if (outputs[i].active && outputs[i].power_ctrl) {
+            wl_req(outputs[i].power_ctrl, OUTPUT_POWER_REQ_DESTROY, NULL, 0, -1);
+            outputs[i].power_ctrl = 0;
+        }
     char *argv[] = { (char*)"wisp", (char*)"--reload-fds", arg, NULL };
     execvpe("wisp", argv, environ);
     msg("wisp: reload exec failed: %s", strerror(errno));

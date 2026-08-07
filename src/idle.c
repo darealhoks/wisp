@@ -4,7 +4,8 @@
  * (ext-idle-notify-v1, one notification object per declared timeout), logind
  * owns the suspend signal (PrepareForSleep on the system bus, held off by a
  * `delay` inhibitor fd), and `wispctl dpms` is a request on
- * zwlr_output_power_v1. Nothing here polls; idle stays 0 ticks/sec.
+ * zwlr_output_power_v1. Nothing here polls; idle stays 0 ticks/sec. The one
+ * timer is the dpms retry one-shot, armed only while a set_mode sits FAILED.
  *
  * We also own org.freedesktop.ScreenSaver (dbus.c routes it here): nothing else
  * on a wlroots box does, so a browser playing video would be blanked. An active
@@ -32,6 +33,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/timerfd.h>
 #include <sys/un.h>
 #include <unistd.h>
 
@@ -65,22 +67,66 @@ static void run_sh(const char *cmd) {
 
 uint32_t id_output_power_mgr;
 
+static int      dpms_want = 1;      /* last requested state; outputs appearing later match it */
+static uint32_t dpms_pending;       /* per-output bit: set_mode FAILED, retry on the timer */
+static int      dpms_retry_tfd = -1;
+static int      dpms_retry_s = 2;
+
+static void dpms_apply(Output *o, int on);
+
+/* One-shot, armed only while a set_mode sits FAILED (a panel that can't light
+ * yet — lid still closed — or a control held elsewhere); success leaves it
+ * disarmed, so idle stays timer-free. Backoff doubles to 60s. */
+static void dpms_retry_arm(void) {
+    if (dpms_retry_tfd < 0) {
+        dpms_retry_tfd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
+        if (dpms_retry_tfd < 0) return;
+        epoll_add_fd(dpms_retry_tfd);
+    }
+    struct itimerspec its = { .it_value.tv_sec = dpms_retry_s };
+    timerfd_settime(dpms_retry_tfd, 0, &its, NULL);
+    if (dpms_retry_s < 60) dpms_retry_s *= 2;
+}
+
+static void dpms_retry_fire(void) {
+    uint64_t junk;
+    if (read(dpms_retry_tfd, &junk, sizeof junk) < 0) { /* spurious wake */ }
+    uint32_t pend = dpms_pending;
+    dpms_pending = 0;
+    for (int i = 0; i < MAX_OUTPUTS; i++)
+        if ((pend & (1u << i)) && outputs[i].active)
+            dpms_apply(&outputs[i], dpms_want);
+}
+
+static void dpms_apply(Output *o, int on) {
+    if (!o->power_ctrl) {
+        o->power_ctrl = wl_new_id();
+        uint32_t a[2] = { o->power_ctrl, o->wl_output };
+        wl_req(id_output_power_mgr, OUTPUT_POWER_MGR_REQ_GET_OUTPUT_POWER, a, 2, -1);
+    }
+    uint32_t mode = on ? OUTPUT_POWER_MODE_ON : OUTPUT_POWER_MODE_OFF;
+    wl_req(o->power_ctrl, OUTPUT_POWER_REQ_SET_MODE, &mode, 1, -1);
+}
+
 void dpms_set(int on) {
     if (!id_output_power_mgr) {
         msg("dpms: wlr-output-power-management-unstable-v1 not advertised — ignoring");
         return;
     }
-    for (int i = 0; i < MAX_OUTPUTS; i++) {
-        Output *o = &outputs[i];
-        if (!o->active) continue;
-        if (!o->power_ctrl) {
-            o->power_ctrl = wl_new_id();
-            uint32_t a[2] = { o->power_ctrl, o->wl_output };
-            wl_req(id_output_power_mgr, OUTPUT_POWER_MGR_REQ_GET_OUTPUT_POWER, a, 2, -1);
-        }
-        uint32_t mode = on ? OUTPUT_POWER_MODE_ON : OUTPUT_POWER_MODE_OFF;
-        wl_req(o->power_ctrl, OUTPUT_POWER_REQ_SET_MODE, &mode, 1, -1);
+    dpms_want = on;
+    dpms_pending = 0;
+    dpms_retry_s = 2;
+    if (dpms_retry_tfd >= 0) {
+        struct itimerspec zero = {0};
+        timerfd_settime(dpms_retry_tfd, 0, &zero, NULL);
     }
+    for (int i = 0; i < MAX_OUTPUTS; i++)
+        if (outputs[i].active) dpms_apply(&outputs[i], on);
+}
+
+/* An output hotplugged back while blanked would otherwise come up lit. */
+void idle_on_output_added(Output *o) {
+    if (!dpms_want && id_output_power_mgr && o) dpms_apply(o, 0);
 }
 
 /* ============================================================ */
@@ -100,21 +146,30 @@ int idle_wl_event(uint32_t obj, uint16_t op) {
         Output *o = &outputs[i];
         if (!o->active || !o->power_ctrl || o->power_ctrl != obj) continue;
         if (op == OUTPUT_POWER_EV_FAILED) {
-            msg("dpms: output power control failed (another client holds it?) — will retry");
             wl_req(o->power_ctrl, OUTPUT_POWER_REQ_DESTROY, NULL, 0, -1);
             o->power_ctrl = 0;
+            dpms_pending |= 1u << i;
+            msg("dpms: output power set failed on %s (panel not ready, or control held elsewhere) — retrying in %ds",
+                o->name, dpms_retry_s);
+            dpms_retry_arm();
         }
         return 1;
     }
     return 0;
 }
 
+static int ss_inhibited(void);
+
 static void idle_notify_init(void) {
-    notifs_live = 1;                /* set even on failure, so ss_apply stops retrying */
-    if (IDLE_N_TIMEOUTS == 0) return;
+    if (notifs_live || IDLE_N_TIMEOUTS == 0) return;
+    if (ss_inhibited()) return;     /* an Inhibit landed before init (dbus_connect runs first) */
     if (!id_idle_notifier || !id_seat) {
-        msg("idle: ext-idle-notify-v1 unavailable — %d declared timeout(s) will never fire",
-            IDLE_N_TIMEOUTS);
+        static int warned;
+        if (!warned) {
+            warned = 1;
+            msg("idle: ext-idle-notify-v1 unavailable — %d declared timeout(s) will never fire",
+                IDLE_N_TIMEOUTS);
+        }
         return;
     }
     for (int i = 0; i < IDLE_N_TIMEOUTS; i++) {
@@ -122,6 +177,7 @@ static void idle_notify_init(void) {
         uint32_t a[3] = { notif_ids[i], (uint32_t)idle_timeouts[i].after_ms, id_seat };
         wl_req(id_idle_notifier, IDLE_NOTIFIER_REQ_GET_IDLE_NOTIFICATION, a, 3, -1);
     }
+    notifs_live = 1;
 }
 
 /* ============================================================ */
@@ -134,19 +190,27 @@ static void idle_notify_init(void) {
 static struct { uint32_t cookie; char owner[64]; } ss_cookies[SS_MAX];
 static uint32_t ss_next_cookie = 1;
 
+static int ss_inhibited(void) {
+    for (int i = 0; i < SS_MAX; i++) if (ss_cookies[i].cookie) return 1;
+    return 0;
+}
+
 static void ss_apply(void) {
-    int inhibited = 0;
-    for (int i = 0; i < SS_MAX; i++) if (ss_cookies[i].cookie) inhibited = 1;
-    if (inhibited && notifs_live) {
-        for (int i = 0; i < IDLE_N_TIMEOUTS; i++) {
-            if (!notif_ids[i]) continue;
-            wl_req(notif_ids[i], IDLE_NOTIF_REQ_DESTROY, NULL, 0, -1);
-            notif_ids[i] = 0;
-        }
-        notifs_live = 0;
-    } else if (!inhibited && !notifs_live) {
-        idle_notify_init();
+    if (!ss_inhibited()) { idle_notify_init(); return; }
+    if (!notifs_live) return;
+    for (int i = 0; i < IDLE_N_TIMEOUTS; i++) {
+        if (!notif_ids[i]) continue;
+        wl_req(notif_ids[i], IDLE_NOTIF_REQ_DESTROY, NULL, 0, -1);
+        notif_ids[i] = 0;
     }
+    notifs_live = 0;
+}
+
+/* Cookie holders are tracked by their bus name; a session-bus drop makes their
+ * NameOwnerChanged unreachable, so a stale cookie would inhibit forever. */
+void idle_ss_reset(void) {
+    memset(ss_cookies, 0, sizeof ss_cookies);
+    ss_apply();
 }
 
 static void ss_drop_owner(const char *name) {
@@ -434,11 +498,12 @@ static void sleep_init(void) {
 }
 
 int idle_owns_fd(int fd) {
-    return fd >= 0 && (fd == idle_bus_fd || fd == child_fd);
+    return fd >= 0 && (fd == idle_bus_fd || fd == child_fd || fd == dpms_retry_tfd);
 }
 
 void idle_dispatch(int fd) {
     if (fd == idle_bus_fd) { bus_dispatch(); return; }
+    if (fd == dpms_retry_tfd) { dpms_retry_fire(); return; }
     if (fd != child_fd) return;
     char c;
     ssize_t n = read(child_fd, &c, 1);
@@ -449,8 +514,8 @@ void idle_dispatch(int fd) {
 #else   /* no before_sleep declared */
 
 static void sleep_init(void) {}
-int  idle_owns_fd(int fd) { return fd >= 0 && fd == idle_bus_fd; }
-void idle_dispatch(int fd) { (void)fd; }
+int  idle_owns_fd(int fd) { return fd >= 0 && (fd == idle_bus_fd || fd == dpms_retry_tfd); }
+void idle_dispatch(int fd) { if (fd == dpms_retry_tfd) dpms_retry_fire(); }
 
 #endif
 

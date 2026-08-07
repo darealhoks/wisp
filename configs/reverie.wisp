@@ -643,13 +643,7 @@ wallpaper {
 media {
 }
 
-// swayidle's job; the caffeine guards stay shell (flag file, emerge, AC)
 idle {
-	timeout dim {
-		after  = 120s;
-		run    = "caffeine blank && exit; d=/sys/class/backlight/amdgpu_bl1; b=$(cat $d/brightness); echo $b > $XDG_RUNTIME_DIR/wisp-dim; echo $((b*4/5)) > $d/brightness";
-		resume = "f=$XDG_RUNTIME_DIR/wisp-dim; cat $f > /sys/class/backlight/amdgpu_bl1/brightness 2>/dev/null; rm -f $f";
-	}
 	timeout blank {
 		after  = 300s;
 		run    = "caffeine blank || wispctl dpms off";

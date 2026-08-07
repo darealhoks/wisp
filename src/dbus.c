@@ -431,6 +431,9 @@ static void dbus_drop(int delay_ms) {
     /* Serials restart per connection — replies can never arrive now. */
     memset(pending, 0, sizeof pending);
     rbuf_maybe_shrink();
+#ifdef WISP_HAS_IDLE
+    idle_ss_reset();
+#endif
     arm_reconnect(delay_ms);
 }
 

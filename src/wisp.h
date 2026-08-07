@@ -107,6 +107,8 @@ typedef struct { int after_ms; const char *run, *resume; } IdleTimeout;
 void idle_init(void);
 int  idle_wl_event(uint32_t obj, uint16_t op);   /* 1 = consumed */
 void dpms_set(int on);
+void idle_on_output_added(Output *o);
+void idle_ss_reset(void);        /* session bus died: drop ScreenSaver cookies */
 #endif
 extern uint32_t id_slock_mgr, id_slock;
 extern uint32_t id_extws_mgr;    /* ext_workspace_manager_v1; 0 = unsupported */

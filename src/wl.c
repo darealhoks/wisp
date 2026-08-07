@@ -558,6 +558,9 @@ static void handle_registry_global(uint32_t name, const char *iface, uint32_t ve
          * spawning per-output widgets (output_init_widgets). For post-sync
          * hotplugs, spawn immediately. */
         if (globals_synced) output_init_widgets(o);
+#ifdef WISP_HAS_IDLE
+        if (globals_synced) idle_on_output_added(o);
+#endif
     } else if (!id_layer_shell && !strcmp(iface, "zwlr_layer_shell_v1")) {
         id_layer_shell = wl_new_id();
         layer_shell_ver = ver < 4 ? ver : 4;
