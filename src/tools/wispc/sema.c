@@ -370,6 +370,9 @@ static void walk_expr(S *s, Expr *e) {
         if (bL == 4 && memcmp(bn, "anim", 4) == 0) return;
         /* `menu.query` / `.prompt` / `.count` inside a menu's body. */
         if (bL == 4 && memcmp(bn, "menu", 4) == 0) return;
+        /* `polkit.message` / `.prompt` / `.dots` / `.user` / `.error` /
+         * `.failed` inside the `spawned_by = polkit` template's body. */
+        if (bL == 6 && memcmp(bn, "polkit", 6) == 0) return;
         Decl *d = find_decl_in(s->s.src, s->s.nsrc, bn, bL);
         if (d) {
             /* Validate field against source schema. */
@@ -701,6 +704,11 @@ static void analyze_surface(S *s, Decl *d) {
                 if (v && v->kind == EX_IDENT && v->ident.n == 7
                     && memcmp(v->ident.s, "tooltip", 7) == 0)
                     s->r->has_tooltip = true;
+                /* same deal for src/polkit.c: the agent registers with polkitd
+                 * only when a config declares the prompt surface */
+                if (v && v->kind == EX_IDENT && v->ident.n == 6
+                    && memcmp(v->ident.s, "polkit", 6) == 0)
+                    s->r->has_polkit = true;
             }
             else if (strcmp(pn, "reveal_on_hover") == 0) has_hud = true;
             else if (strcmp(pn, "reveal_anim_ms") == 0)  s->r->has_anim = true;
@@ -729,6 +737,10 @@ static void analyze_surface(S *s, Decl *d) {
                 break;
             /* spawned_by names an engine (osd / osd_pill / menu), not a decl. */
             if (b->prop->nlen == 10 && memcmp(b->prop->name, "spawned_by", 10) == 0)
+                break;
+            /* keyboard's idents are checked against E_KBD by typecheck_prop;
+               walking them would only report on_demand/exclusive as undefined */
+            if (b->prop->nlen == 8 && memcmp(b->prop->name, "keyboard", 8) == 0)
                 break;
             walk_expr(s, b->prop->val);
             break;

@@ -373,10 +373,15 @@ int emit_spawned_osd_skeleton(FILE *o, Decl *sur, CGCtx *ctx, const char *nm, in
  * `tip` selects `spawned_by = tooltip`: the same single-body surface with one
  * $-binding instead of the `menu` self-local. Everything a tooltip needs —
  * body fill, border, one measure/draw pass, pool handling — is already this
- * function; tooltip.c owns the lifecycle the way menu.c owns a menu's. */
+ * function; tooltip.c owns the lifecycle the way menu.c owns a menu's.
+ *
+ * `tip` selects the flavour: 0 = menu, 1 = tooltip, 2 = `spawned_by = polkit`
+ * (no self-local at all — `polkit.*` lowers off the base ident, not a local). */
 int emit_menu_render(FILE *o, Decl *sur, Decl *tmpl, CGCtx *ctx, const char *nm, int tip) {
     BarItem items[64]; int err = 0;
-    if (tip) {
+    if (tip == 2) {
+        /* nothing to push */
+    } else if (tip) {
         push_local(ctx, "text", 4, LB_DOLLAR_BIND, "w->s.tip.text", "str");
     } else {
         /* `menu.prompt` falls back to the surface's declared prompt when the
@@ -546,7 +551,7 @@ int emit_menu_render(FILE *o, Decl *sur, Decl *tmpl, CGCtx *ctx, const char *nm,
     fputs("    widget_attach(w, sl, 0);\n", o);
     fputs("}\n\n", o);
 
-    pop_local(ctx);
+    if (tip != 2) pop_local(ctx);
     emit_surface_click_dispatch(o, items, nitems, ctx, ctx->r, nm);
     fprintf(o, "void %s_redraw(void) {\n"
                "    for (int i = 0; i < __%s_nw; i++) render_%s(__%s_widgets[i]);\n"

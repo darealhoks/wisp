@@ -756,6 +756,66 @@ surface menu {
 	shadow_blur = 6;
 }
 
+// no anchor: an axis with neither edge bitted is centred by layer-shell
+surface polkit {
+	spawned_by = polkit;
+	layer      = overlay;
+	keyboard   = exclusive;
+	exclusive_zone = -1;
+
+	axis   = vertical;
+	width  = 420;
+	height = 188;
+	gap    = 6;
+	pad_x  = 16;
+	pad_y  = 14;
+	font_size = 14;
+
+	bg = CRUST;
+	fg = TEXT;
+	border = BORD;
+	border_width = 2;
+	radius = 8;
+	shadow = #14000000;
+	shadow_y = 0;
+	shadow_blur = 6;
+
+	widget pk_title {
+		height = 22;
+		text   = "Authentication required";
+		fg     = TEXT;
+	}
+	widget pk_msg {
+		height = 40;
+		text   = polkit.message;
+		fg     = SUBTXT;
+		elide;
+	}
+	widget pk_user {
+		height = 20;
+		text   = polkit.user;
+		fg     = SUBTXT;
+	}
+	group pk_entry {
+		height = 34;
+		pad    = 0;
+		pad_x  = 10;
+		gap    = 0;
+		bg     = REST;
+		border = #00000000;
+		radius = 8;
+		cell { text = polkit.prompt; fg = SUBTXT; }
+		cell { text = polkit.dots;   fg = TEXT; }
+		cell { text = "_";           fg = TEXT; }
+	}
+	widget pk_err {
+		height  = 20;
+		text    = polkit.error;
+		fg      = RED;
+		visible = polkit.failed;
+	}
+}
+
 menu power {
 	hover;
 	item {

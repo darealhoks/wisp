@@ -649,6 +649,11 @@ int emit_surfaces(FILE *o, Unit *u, CGCtx *ctx) {
             int is_tip = sb && sb->kind == EX_IDENT
                       && sb->ident.n == 7 && memcmp(sb->ident.s, "tooltip", 7) == 0;
             if (is_tip && emit_menu_render(o, d, NULL, ctx, "tooltip", 1)) return 1;
+            /* `spawned_by = polkit` → render_polkit(): the same single-body
+             * surface again, reading polkit.* instead of a self-local. */
+            int is_pk = sb && sb->kind == EX_IDENT
+                     && sb->ident.n == 6 && memcmp(sb->ident.s, "polkit", 6) == 0;
+            if (is_pk && emit_menu_render(o, d, NULL, ctx, "polkit", 2)) return 1;
             continue;
         }
         if (d->is_menu) {

@@ -119,6 +119,9 @@ static void emit_main(FILE *o, SrcInst *srcs, int nsrc, SemaResult *r) {
     if (r->has_idle)
         fputs("void idle_init(void); int idle_owns_fd(int fd); void idle_dispatch(int fd);\n"
               "extern int idle_bus_fd;\n", o);
+    if (r->has_polkit)
+        fputs("void polkit_init(void); int polkit_owns_fd(int fd); void polkit_dispatch(int fd);\n"
+              "extern int pk_fd;\n", o);
 
     for (int i = 0; i < r->nsurfaces; i++) {
         const char *sn = r->surface_names[i];
@@ -225,6 +228,7 @@ static void emit_main(FILE *o, SrcInst *srcs, int nsrc, SemaResult *r) {
     if (r->has_power) fputs("    pp_connect();\n", o);
     if (r->has_bluez) fputs("    bz_connect();\n", o);
     if (r->has_idle)  fputs("    idle_init();\n", o);
+    if (r->has_polkit) fputs("    polkit_init();\n", o);
 
     fputs("    tags_init();\n", o);
     fputs("    ep_fd = epoll_create1(EPOLL_CLOEXEC);\n", o);
@@ -250,6 +254,8 @@ static void emit_main(FILE *o, SrcInst *srcs, int nsrc, SemaResult *r) {
         fputs("    if (bz_fd >= 0) epoll_add_fd(bz_fd);\n", o);
     if (r->has_idle)
         fputs("    if (idle_bus_fd >= 0) epoll_add_fd(idle_bus_fd);\n", o);
+    if (r->has_polkit)
+        fputs("    if (pk_fd >= 0) epoll_add_fd(pk_fd);\n", o);
     if (r->has_gamma && !has_poll)
         fputs("    epoll_add_fd(wispgen_gamma_tfd);\n", o);
     if (r->has_anim)
@@ -350,6 +356,10 @@ static void emit_main(FILE *o, SrcInst *srcs, int nsrc, SemaResult *r) {
     if (r->has_idle)
         fputs("            } else if (idle_owns_fd(fd)) {\n"
               "                idle_dispatch(fd);\n", o);
+    /* the system bus fd plus, while an auth is in flight, the helper's stdout */
+    if (r->has_polkit)
+        fputs("            } else if (polkit_owns_fd(fd)) {\n"
+              "                polkit_dispatch(fd);\n", o);
     if (r->has_anim)
         fputs("            } else if (fd == anim_fd()) {\n"
               "                anim_on_tfd();\n", o);
@@ -880,6 +890,31 @@ static void emit_overrides(FILE *o, Unit *u, CGCtx *ctx) {
                     map[i].macro, map[i].macro, (int)map[i].e->i);
         }
         emit_shadow_pad_macros(o, tipd, ctx, "TIP_SHADOW_PAD");
+        fputs("\n", o);
+    }
+
+    /* polkit template → the geometry polkit.c needs to create and place the
+     * prompt before render_polkit() paints into it. An absent `anchor` stays
+     * absent: layer-shell centres an axis with neither edge bitted. */
+    Decl *pkd = find_spawn_template(u, "polkit");
+    if (pkd) {
+        fputs("/* === polkit surface overrides === */\n", o);
+        struct { Expr *e; const char *macro; } map[] = {
+            {surface_prop(pkd, "width"),  "PK_W"},
+            {surface_prop(pkd, "height"), "PK_H"},
+        };
+        for (size_t i = 0; i < sizeof(map)/sizeof(map[0]); i++) {
+            if (!map[i].e || map[i].e->kind != EX_INT) continue;
+            fprintf(o, "#undef %s\n#define %s %d\n",
+                    map[i].macro, map[i].macro, (int)map[i].e->i);
+        }
+        int layer = eval_layer(surface_prop(pkd, "layer"));
+        int anch  = eval_anchor(surface_prop(pkd, "anchor"));
+        fprintf(o, "#undef PK_LAYER\n#define PK_LAYER %d\n", layer < 0 ? 3 : layer);
+        fprintf(o, "#undef PK_KBD\n#define PK_KBD (%s)\n", surface_kbd_mode(pkd));
+        /* 0 = no edge bitted on either axis, i.e. centred */
+        fprintf(o, "#undef PK_ANCHOR\n#define PK_ANCHOR %d\n", anch < 0 ? 0 : anch);
+        emit_shadow_pad_macros(o, pkd, ctx, "PK_SHADOW_PAD");
         fputs("\n", o);
     }
 

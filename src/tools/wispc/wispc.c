@@ -62,6 +62,7 @@ static void emit_features(FILE *o, SemaResult *r) {
     P(has_toplevel, "TOPLEVEL");
     P(has_tooltip, "TOOLTIP");
     P(has_idle, "IDLE");
+    P(has_polkit, "POLKIT");
     fprintf(o, "#define NOTIF_HIST_CAP %d\n", notif_hist_cap);
     fprintf(o, "#define NOTIF_IMAGE_PX %d\n", notif_image_px);
     #undef P
@@ -114,7 +115,7 @@ static void emit_objects_mk(FILE *o, SemaResult *r) {
     if (r->has_media)            fputs("    $(BUILD)/media.o \\\n", o);
     if (r->has_dbus)             fputs("    $(BUILD)/dbus.o \\\n    $(BUILD)/notify.o \\\n", o);
     /* Shared wire marshal: needed by the session transport and/or power.c. */
-    if (r->has_dbus || r->has_power || r->has_bluez) fputs("    $(BUILD)/dbus_wire.o \\\n", o);
+    if (r->has_dbus || r->has_power || r->has_bluez || r->has_polkit) fputs("    $(BUILD)/dbus_wire.o \\\n", o);
     if (r->has_power)            fputs("    $(BUILD)/power.o \\\n", o);
     if (r->has_bluez)            fputs("    $(BUILD)/bluez.o \\\n", o);
     if (r->has_mpris)            fputs("    $(BUILD)/mpris.o \\\n", o);
@@ -123,6 +124,7 @@ static void emit_objects_mk(FILE *o, SemaResult *r) {
     if (r->has_toplevel)         fputs("    $(BUILD)/wl_toplevel.o \\\n", o);
     if (r->has_anim)             fputs("    $(BUILD)/anim.o \\\n", o);
     if (r->has_idle)             fputs("    $(BUILD)/idle.o \\\n", o);
+    if (r->has_polkit)           fputs("    $(BUILD)/polkit.o \\\n", o);
     fputs("    $(BUILD)/gen_main.o \\\n", o);
     fputs("    $(BUILD)/gen_sources.o \\\n", o);
     fputs("    $(BUILD)/gen_surfaces.o \\\n", o);

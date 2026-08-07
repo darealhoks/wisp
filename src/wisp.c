@@ -60,8 +60,9 @@ uint32_t key_rep_key      = 0;
 int      key_rep_delay_ms = 400;
 int      key_rep_rate_ms  = 35;
 
-/* Only menu and lock consume held keys; without either, nothing arms it. */
-#if defined(WISP_HAS_MENU) || defined(WISP_HAS_LOCK)
+/* Only menu, lock and the polkit prompt consume held keys; without one of
+ * them, nothing arms it. */
+#if defined(WISP_HAS_MENU) || defined(WISP_HAS_LOCK) || defined(WISP_HAS_POLKIT)
 static void key_rep_arm(uint32_t key) {
     key_rep_key = key;
     if (key_rep_tfd < 0) return;
@@ -370,6 +371,14 @@ void on_keyboard_event(uint16_t op, uint8_t *body, uint32_t bodylen) {
          * `on_escape`; the generated dispatcher is a stub otherwise. */
         if (w->kind == W_BAR) { if (state == 1) bar_input_key(w, key); break; }
 #endif
+#ifdef WISP_HAS_POLKIT
+        if (w->kind == W_POLKIT) {
+            polkit_on_key(w, key, state);
+            if (state == 1) key_rep_arm(key);
+            else if (key == key_rep_key) key_rep_cancel();
+            break;
+        }
+#endif
 #ifdef WISP_HAS_LOCK
         if (w->kind == W_LOCK) {
             lock_on_key(w, key, state, 0);
@@ -416,6 +425,9 @@ void widget_repaint(Widget *w, int first_configure) {
 #endif
 #ifdef WISP_HAS_TOOLTIP
     if (w->kind == W_TIP) tooltip_render(w);
+#endif
+#ifdef WISP_HAS_POLKIT
+    if (w->kind == W_POLKIT) polkit_render(w);
 #endif
 #ifdef WISP_HAS_OSD
     if (w->kind == W_OSD) {

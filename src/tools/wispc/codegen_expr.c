@@ -224,6 +224,28 @@ CE lower_member(CGCtx *c, Expr *e) {
         }
         return r;
     }
+    /* `polkit.*` has no local to hang off — the prompt template pushes none,
+     * so it is recognised by base ident, after find_local has had its say. */
+    if (!L && b->ident.n == 6 && memcmp(b->ident.s, "polkit", 6) == 0) {
+        const char *wv = c->widget_var ? c->widget_var : "w";
+        CE r = { .type = T_UNK };
+        static const char *SFLD[] = { "message", "prompt", "dots", "user", "error", 0 };
+        int hit = 0;
+        for (int i = 0; SFLD[i]; i++) {
+            if (flen != strlen(SFLD[i]) || memcmp(fld, SFLD[i], flen) != 0) continue;
+            snprintf(r.text, sizeof r.text, "%s->s.polkit.%s", wv, SFLD[i]);
+            r.type = T_STR; hit = 1; break;
+        }
+        if (!hit && flen == 6 && memcmp(fld, "failed", 6) == 0) {
+            snprintf(r.text, sizeof r.text, "%s->s.polkit.failed", wv);
+            r.type = T_BOOL; hit = 1;
+        }
+        if (!hit) {
+            diag_error(e->loc, "codegen: polkit has no field '%.*s'", (int)flen, fld);
+            c->failed = 1;
+        }
+        return r;
+    }
     if (L && L->kind == LB_MENU_ROW) {
         const char *wv = c->widget_var ? c->widget_var : "w";
         const char *r0 = L->c_expr;
@@ -510,6 +532,9 @@ static int str_part_cap(CGCtx *c, Expr *e) {
             return FLD("query") ? 128 : FLD("prompt") ? 48 : 0;
         return 0;
     }
+    if (fld && b->ident.n == 6 && memcmp(b->ident.s, "polkit", 6) == 0)
+        return (FLD("message") || FLD("error")) ? 256 : FLD("dots") ? 128
+             : (FLD("prompt") || FLD("user")) ? 64 : 0;
     SrcInst *si = find_inst(c->srcs, c->nsrc, b->ident.s, b->ident.n);
     if (!si) return 0;
     if (si->drv->drv == DRV_EXEC || si->drv->drv == DRV_INOTIFY) return si->lines * 256;

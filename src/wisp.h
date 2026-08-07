@@ -110,6 +110,21 @@ void dpms_set(int on);
 void idle_on_output_added(Output *o);
 void idle_ss_reset(void);        /* session bus died: drop ScreenSaver cookies */
 #endif
+#ifdef WISP_HAS_POLKIT
+/* polkit authentication agent (polkit.c). Owns a second system-bus connection
+ * plus a helper-stdout pipe that comes and goes, hence owns_fd/dispatch. */
+extern int pk_fd;                       /* -1 = no system bus */
+/* What the DSL reads; the storage lives in Widget.s.polkit. */
+typedef struct {
+    const char *message, *prompt, *dots, *user, *error;
+    int failed;
+} PolkitView;
+void polkit_init(void);
+int  polkit_owns_fd(int fd);
+void polkit_dispatch(int fd);
+int  polkit_on_key(Widget *w, uint32_t key, uint32_t state);   /* 1 = consumed */
+void polkit_render(Widget *w);
+#endif
 extern uint32_t id_slock_mgr, id_slock;
 extern uint32_t id_extws_mgr;    /* ext_workspace_manager_v1; 0 = unsupported */
 extern uint32_t id_river_status_mgr, id_river_control;  /* river workspace source (river.c) */
@@ -145,7 +160,10 @@ void key_rep_cancel(void);
 /* Widget abstraction (widget.c)                                 */
 /* ============================================================ */
 
-typedef enum { W_NONE = 0, W_BAR, W_HUD, W_MENU, W_OSD, W_WALL, W_LOCK, W_TIP } WidgetKind;
+/* Appended only: ctl.c treats these values as the reload adoption contract
+ * between the old and the new binary. */
+typedef enum { W_NONE = 0, W_BAR, W_HUD, W_MENU, W_OSD, W_WALL, W_LOCK, W_TIP,
+               W_POLKIT } WidgetKind;
 
 typedef struct { int x, y, w, h; } Rect;
 
@@ -385,6 +403,19 @@ struct Widget {
         struct {
             char text[MAX_TEXT];   /* the $text binding the renderer draws */
         } tip;
+#ifdef WISP_HAS_POLKIT
+        /* Fixed arrays, not pointers: the DSL's `polkit.message` etc. read
+         * storage the widget owns. `dots` is the mask polkit.c builds — the
+         * password itself never lives here. */
+        struct {
+            char message[256];
+            char prompt[64];
+            char dots[128];
+            char user[64];
+            char error[256];
+            int  failed;
+        } polkit;
+#endif
         struct {
             int painted_w, painted_h;  /* last decoded+blitted size; 0 = never */
             /* crossfade (wispctl wall): heap frames blended per anim tick */

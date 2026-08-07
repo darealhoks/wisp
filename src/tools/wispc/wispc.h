@@ -325,7 +325,7 @@ typedef struct SemaResult {
     const char **spawned_names;
     const char ***spawned_args;
     /* feature set */
-    bool has_idle, has_dbus, has_mpris, has_tray, has_osd, has_menu, has_hud, has_bar, has_lock, has_gamma, has_wallpaper, has_media, has_anim, has_pipewire, has_toplevel, has_tooltip, has_image;
+    bool has_idle, has_dbus, has_mpris, has_tray, has_osd, has_menu, has_hud, has_bar, has_lock, has_gamma, has_wallpaper, has_media, has_anim, has_pipewire, has_toplevel, has_tooltip, has_image, has_polkit;
     bool has_src_cpu, has_src_mem, has_src_temp, has_src_bat, has_src_net, has_src_disk, has_src_vpn;
     bool has_src_exec, has_src_tags, has_src_backlight, has_power, has_bluez;
     bool net_rates_used;           /* a config reads net.rx_kbps/tx_kbps */
