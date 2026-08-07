@@ -222,6 +222,7 @@ static void menu_icons_free(void) {
 static uint32_t **menu_icons_load(int px, const char *icon_dir) {
     menu_icons_free();
     if (px <= 0) return NULL;
+    int bake = px * image_icon_oversample();
     char path[512];
     for (int i = 0; i < n_rows && i < DBM_ROWS; i++) {
         int w = 0, h = 0;
@@ -230,10 +231,10 @@ static uint32_t **menu_icons_load(int px, const char *icon_dir) {
             rgba = image_decode_png_max(icon_arena + rows[i].icon_off,
                                         rows[i].icon_len, &w, &h, DBM_ICON_MAX_DIM);
         else if (rows[i].icon_name[0] &&
-                 image_find_icon(rows[i].icon_name, icon_dir, path, sizeof path))
+                 image_find_icon(rows[i].icon_name, icon_dir, bake, path, sizeof path))
             rgba = image_load_max(path, &w, &h, DBM_ICON_MAX_DIM);
         if (!rgba) continue;
-        if (w > 0 && h > 0) menu_icons[i] = image_scale_square(rgba, w, h, px);
+        if (w > 0 && h > 0) menu_icons[i] = image_scale_square(rgba, w, h, bake);
         image_free(rgba);
     }
     for (int i = 0; i < DBM_ROWS; i++) if (menu_icons[i]) return menu_icons;

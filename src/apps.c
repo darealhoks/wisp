@@ -241,13 +241,14 @@ static void load_icons(void) {
     icons = calloc(APP_CAP, sizeof *icons);
     if (!icons) return;
     icon_sz = menu_icon_px();
+    int bake = icon_sz * image_icon_oversample();
     char path[512];
     for (int i = 0; i < n_apps; i++) {
-        if (!image_find_icon(apps[i].icon, NULL, path, sizeof path)) continue;
+        if (!image_find_icon(apps[i].icon, NULL, bake, path, sizeof path)) continue;
         int w, h;
         uint8_t *px = image_load(path, &w, &h);
         if (!px) continue;
-        icons[i] = image_scale_square(px, w, h, icon_sz);
+        icons[i] = image_scale_square(px, w, h, bake);
         image_free(px);
     }
 }

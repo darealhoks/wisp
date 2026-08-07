@@ -1,5 +1,6 @@
 /* Wayland wire I/O. */
 #include "wisp.h"
+#include "image.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -697,6 +698,13 @@ static void handle(uint32_t obj, uint16_t op, uint8_t *body, uint32_t bodylen) {
                 if (sc < 1) sc = 1; else if (sc > 4) sc = 4;
                 if (sc * 120 != mo->scale120) {
                     mo->scale120 = sc * 120;
+                    /* One icon square serves every output, so it must be baked
+                     * for the sharpest one. */
+                    int mx = 1;
+                    for (int i = 0; i < MAX_OUTPUTS; i++)
+                        if (outputs[i].active && outputs[i].scale120 / 120 > mx)
+                            mx = outputs[i].scale120 / 120;
+                    image_icon_oversample_set(mx);
                     if (mo->widgets_created) widget_rescale_output(mo);
                 }
             } else if (op == OUTPUT_EV_NAME && bodylen >= 4) {

@@ -38,7 +38,7 @@ typedef struct {
     char status[16];    /* "Passive" / "Active" / "NeedsAttention" */
     char icon_name[64]; /* IconName last attempted — refetches skip re-decode */
     char icon_dir[192]; /* IconThemePath: app-private icon dir, searched first */
-    uint32_t icon[TRAY_ICON_PX * TRAY_ICON_PX];
+    uint32_t icon[TRAY_ICON_PX * ICON_OVS_MAX * TRAY_ICON_PX * ICON_OVS_MAX];
     int has_icon;
     int is_menu;        /* ItemIsMenu: left-click means "open my menu" */
     int has_att_icon;   /* app supplied an AttentionIcon{Name,Pixmap} */
@@ -144,9 +144,13 @@ static void icon_scale(uint32_t *dst, int d, const uint8_t *src, int sw, int sh)
     }
 }
 
+/* Baked square side: logical size times the hidpi oversample. */
+static int tray_d(void)     { return TRAY_ICON_PX * image_icon_oversample(); }
+static int tray_ovr_d(void) { return TRAY_OVERLAY_PX * image_icon_oversample(); }
+
 /* Prefer the smallest strike at or above our target, else the largest one. */
-static int icon_better(int w, int bw) {
-    int ok = w >= TRAY_ICON_PX, bok = bw >= TRAY_ICON_PX;
+static int icon_better(int w, int bw, int d) {
+    int ok = w >= d, bok = bw >= d;
     if (ok != bok) return ok;
     return ok ? w < bw : w > bw;
 }
@@ -173,7 +177,7 @@ static int parse_pixmap(R *r, uint32_t *dst, int d) {
          * make us do; the size must match the byte count exactly. */
         if (w > 0 && h > 0 && w <= 512 && h <= 512 &&
             (int64_t)w * h * 4 == (int64_t)blen &&
-            (!best || icon_better(w, bw))) { best = px; bw = w; bh = h; }
+            (!best || icon_better(w, bw, d))) { best = px; bw = w; bh = h; }
     }
     r->pos = (int)end;
     if (!best) return 0;
@@ -189,7 +193,7 @@ static int parse_pixmap(R *r, uint32_t *dst, int d) {
  * Most GTK/Qt items ship only a name, so without this the row is all text. */
 static int load_named_icon(const char *name, const char *dir, uint32_t *dst, int d) {
     char path[512];
-    if (!image_find_icon(name, dir, path, sizeof path)) return 0;
+    if (!image_find_icon(name, dir, d, path, sizeof path)) return 0;
     int w = 0, h = 0;
     /* 512, the pixmap path's cap: bounds the swizzle+scale a hostile
      * IconThemePath can buy with a 16384² PNG. */
@@ -211,19 +215,19 @@ static int load_named_icon(const char *name, const char *dir, uint32_t *dst, int
  * time (parse_item_props runs to completion inside one reply callback), so a
  * single shared set of squares carries them from the dict pass to the
  * resolution below. */
-static uint32_t px_base[TRAY_ICON_PX * TRAY_ICON_PX];
-static uint32_t px_att[TRAY_ICON_PX * TRAY_ICON_PX];
-static uint32_t px_ovr[TRAY_OVERLAY_PX * TRAY_OVERLAY_PX];
+static uint32_t px_base[TRAY_ICON_PX * ICON_OVS_MAX * TRAY_ICON_PX * ICON_OVS_MAX];
+static uint32_t px_att[TRAY_ICON_PX * ICON_OVS_MAX * TRAY_ICON_PX * ICON_OVS_MAX];
+static uint32_t px_ovr[TRAY_OVERLAY_PX * ICON_OVS_MAX * TRAY_OVERLAY_PX * ICON_OVS_MAX];
 
 /* Premultiplied src-over of the badge into the bottom-right of the item's
- * square. Not blit_argb(): that one targets a screen buffer and applies the
- * output scale factor, while both sides here are logical-size squares. */
+ * square. Not blit_argb(): that one targets a screen buffer, while both sides
+ * here are already-baked squares at the same oversample. */
 static void overlay_composite(uint32_t *icon) {
-    int off = TRAY_ICON_PX - TRAY_OVERLAY_PX;
-    for (int y = 0; y < TRAY_OVERLAY_PX; y++) {
-        uint32_t *drow = icon + (size_t)(off + y) * TRAY_ICON_PX + off;
-        const uint32_t *srow = px_ovr + (size_t)y * TRAY_OVERLAY_PX;
-        for (int x = 0; x < TRAY_OVERLAY_PX; x++) {
+    int d = tray_d(), od = tray_ovr_d(), off = d - od;
+    for (int y = 0; y < od; y++) {
+        uint32_t *drow = icon + (size_t)(off + y) * d + off;
+        const uint32_t *srow = px_ovr + (size_t)y * od;
+        for (int x = 0; x < od; x++) {
             uint32_t sp = srow[x], a = sp >> 24;
             if (!a) continue;
             if (a == 255) { drow[x] = sp; continue; }
@@ -244,13 +248,14 @@ static void overlay_composite(uint32_t *icon) {
  * config decides whether to add its own urgent styling on top. */
 static void resolve_icon(Item *it, int got_base, int got_att, int got_ovr,
                          const char *name, const char *att, const char *ovr) {
+    int d = tray_d();
     int attn = !strcmp(it->status, "NeedsAttention") && (got_att || att[0]);
     const uint32_t *pm = attn ? (got_att ? px_att : NULL)
                               : (got_base ? px_base : NULL);
     const char *nm = attn ? att : name;
     int wrote_base = 0;          /* did this call actually (re)write it->icon? */
     if (pm) {
-        memcpy(it->icon, pm, sizeof it->icon);
+        memcpy(it->icon, pm, (size_t)d * d * 4);
         it->has_icon = 1;
         it->icon_name[0] = 0;    /* a later name must re-decode over us */
         wrote_base = 1;
@@ -258,11 +263,11 @@ static void resolve_icon(Item *it, int got_base, int got_att, int got_ovr,
         /* Record the attempt even if it fails, so a miss isn't re-stat'd on
          * every NewIcon and a stale name can never match a newly-set one. */
         snprintf(it->icon_name, sizeof it->icon_name, "%s", nm);
-        if (load_named_icon(nm, it->icon_dir, it->icon, TRAY_ICON_PX))
+        if (load_named_icon(nm, it->icon_dir, it->icon, d))
             it->has_icon = wrote_base = 1;
     }
     if (!got_ovr && ovr[0])
-        got_ovr = load_named_icon(ovr, it->icon_dir, px_ovr, TRAY_OVERLAY_PX);
+        got_ovr = load_named_icon(ovr, it->icon_dir, px_ovr, tray_ovr_d());
     /* Composite only onto a square this call produced: the badge is burnt in,
      * so re-badging a stale base darkens it further on every NewIcon. */
     if (!got_ovr || !wrote_base) return;
@@ -304,9 +309,9 @@ static void parse_item_props(R *r, Item *it) {
         else if (!strcmp(key, "IconThemePath") && !strcmp(vs, "s"))
             snprintf(it->icon_dir, sizeof it->icon_dir, "%s", rstr(r));
         else if (!strcmp(key, "IconPixmap") && !strcmp(vs, "a(iiay)"))
-            got_base = parse_pixmap(r, px_base, TRAY_ICON_PX);
+            got_base = parse_pixmap(r, px_base, tray_d());
         else if (!strcmp(key, "AttentionIconPixmap") && !strcmp(vs, "a(iiay)"))
-            got_att = parse_pixmap(r, px_att, TRAY_ICON_PX);
+            got_att = parse_pixmap(r, px_att, tray_d());
         else if (!strcmp(key, "OverlayIconPixmap") && !strcmp(vs, "a(iiay)"))
             got_ovr = parse_pixmap(r, px_ovr, TRAY_OVERLAY_PX);
         else { const char *s = vs; skip_val(r, &s, 0); }

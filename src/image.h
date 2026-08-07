@@ -27,7 +27,17 @@ uint8_t *image_load_max(const char *path, int *w, int *h, int max_dim);
 /* Resolve a freedesktop icon name (or absolute path) to an existing PNG file,
  * written to `out`. `extra` is an app-supplied theme dir searched first (SNI's
  * IconThemePath), or NULL. Returns non-zero on a hit. */
-int      image_find_icon(const char *name, const char *extra, char *out, size_t sz);
+int      image_find_icon(const char *name, const char *extra, int want, char *out, size_t sz);
+
+/* Icon squares are baked at logical_px * oversample so a hidpi surface gets a
+ * real 64px file instead of a point-doubled 32px one. Uniform across every icon
+ * producer — blit_argb relies on that to recover the source dimension. Set from
+ * the largest active output scale; changing it flushes the image_cell cache.
+ * Capped at ICON_OVS_MAX because tray.c sizes its static squares by it: a 3x
+ * output still gets 2x icons, which is the whole win anyway. */
+#define ICON_OVS_MAX 2
+int      image_icon_oversample(void);
+void     image_icon_oversample_set(int n);
 
 /* Non-zero if `path` starts with the PNG signature (the only format the
  * vendored stb decodes) — cheap synchronous validity check. */

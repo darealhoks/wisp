@@ -7,6 +7,7 @@
  * runs its raw color through premul() first. */
 #include "wisp.h"
 #include "render_px.h"
+#include "image.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -297,24 +298,26 @@ void draw_sparkline(uint32_t *px, int sw, int sh, int x, int y, int w, int h,
     }
 }
 
-/* Src-over blit of a premultiplied ARGB square, nearest-sampled from its
- * logical `s` to the physical size so a scaled output doesn't shrink it. */
+/* Src-over blit of a premultiplied ARGB square. `s` is the *logical* side; the
+ * buffer itself is s*image_icon_oversample() wide, so on a matching hidpi
+ * surface this is a 1:1 copy rather than a point-doubling upscale. */
 void blit_argb(uint32_t *px, int sw, int sh, int x, int y,
                const uint32_t *src, int s) {
     if (!src || s <= 0) return;
     int W = SC(sw), H = CLIP_Y1(SC(sh)), x0 = SC(x), y0 = SC(y), d = SC(s);
+    int ss = s * image_icon_oversample();
     int lo = CLIP_Y0(0);
     for (int j = 0; j < d; j++) {
         int dy = y0 + j;
         if (dy < lo || dy >= H) continue;
-        const uint32_t *srow = src + (j * s / d) * s;
+        const uint32_t *srow = src + (j * ss / d) * ss;
         uint32_t *drow = px + (size_t)dy * W;
         int xlo = 0, xhi = W;
         render_clip_row(dy, &xlo, &xhi);
         for (int i = 0; i < d; i++) {
             int dx = x0 + i;
             if (dx < xlo || dx >= xhi) continue;
-            uint32_t sp = srow[i * s / d], a = sp >> 24;
+            uint32_t sp = srow[i * ss / d], a = sp >> 24;
             if (!a) continue;
             if (a == 255) { drow[dx] = sp; continue; }
             uint32_t inv = 255 - a, dv = drow[dx];

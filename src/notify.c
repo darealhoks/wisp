@@ -165,7 +165,7 @@ static uint32_t *read_image_data(R *r) {
             dp[0] = sp[0]; dp[1] = sp[1]; dp[2] = sp[2];
             dp[3] = chan == 4 ? sp[3] : 255;
         }
-    uint32_t *pm = image_scale_square(rgba, w, h, OSD_IMAGE_PX);
+    uint32_t *pm = image_scale_square(rgba, w, h, OSD_IMAGE_PX * image_icon_oversample());
     free(rgba);
     return pm;
 }
@@ -177,12 +177,12 @@ static uint32_t *hints_image(Hints *hn) {
     if (!hn->img_path[0]) return NULL;
     unescape_path(hn->img_path);
     char path[512];
-    if (!image_find_icon(hn->img_path, NULL, path, sizeof path)) return NULL;
+    if (!image_find_icon(hn->img_path, NULL, OSD_IMAGE_PX * image_icon_oversample(), path, sizeof path)) return NULL;
     if (!image_is_png(path)) return NULL;
     int w, h;
     uint8_t *px = image_load(path, &w, &h);
     if (!px) return NULL;
-    uint32_t *pm = image_scale_square(px, w, h, OSD_IMAGE_PX);
+    uint32_t *pm = image_scale_square(px, w, h, OSD_IMAGE_PX * image_icon_oversample());
     image_free(px);
     return pm;
 }
@@ -320,7 +320,8 @@ void notif_push(const char *app, const char *summary, const char *body,
     memmove(&nhist[1], &nhist[0], (size_t)at * sizeof nhist[0]);
     NotifEntry *e = &nhist[0];
 #if NOTIF_IMG
-    e->image = image ? image_scale_pm(image, OSD_IMAGE_PX, NOTIF_IMAGE_PX) : NULL;
+    int ovs = image_icon_oversample();
+    e->image = image ? image_scale_pm(image, OSD_IMAGE_PX * ovs, NOTIF_IMAGE_PX * ovs) : NULL;
 #else
     (void)image;
 #endif

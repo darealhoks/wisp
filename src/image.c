@@ -72,10 +72,13 @@ uint8_t *image_load(const char *path, int *w, int *h) {
 /* Resolve a freedesktop icon *name* to a PNG path. Absolute paths pass
  * through; names are looked up under `extra` (an app-supplied theme dir, may
  * be NULL), then the XDG data dirs' hicolor apps/ dirs, loose icons/ root
- * files, and /usr/share/pixmaps.
+ * files, and /usr/share/pixmaps. `want` is the on-screen pixel size: the
+ * smallest available size >= want wins, then the largest below it — so a
+ * hidpi target never picks a 48px file it would have to upscale.
  * ponytail: no theme-index parsing, no SVG — hicolor+pixmaps PNGs cover the
  * installed apps here; extend to the full icon-theme spec if misses annoy. */
-int image_find_icon(const char *name, const char *extra, char *out, size_t sz) {
+int image_find_icon(const char *name, const char *extra, int want,
+                    char *out, size_t sz) {
     if (!name || !name[0]) return 0;
     struct stat st;
     if (name[0] == '/') {
@@ -83,11 +86,16 @@ int image_find_icon(const char *name, const char *extra, char *out, size_t sz) {
         snprintf(out, sz, "%s", name);
         return 1;
     }
-    static const int sizes[] = { 48, 64, 32, 128, 256, 24, 16 };
+    static const int all[] = { 16, 22, 24, 32, 36, 48, 64, 72, 96, 128, 192, 256, 512 };
+    enum { NSZ = sizeof all / sizeof *all };
+    int sizes[NSZ], ns = 0;
+    if (want <= 0) want = 48;
+    for (int i = 0; i < NSZ; i++) if (all[i] >= want) sizes[ns++] = all[i];
+    for (int i = NSZ - 1; i >= 0; i--) if (all[i] < want) sizes[ns++] = all[i];
     if (extra && extra[0]) {
         snprintf(out, sz, "%.200s/%.100s.png", extra, name);
         if (stat(out, &st) == 0) return 1;
-        for (size_t si = 0; si < sizeof sizes / sizeof *sizes; si++) {
+        for (int si = 0; si < ns; si++) {
             snprintf(out, sz, "%.160s/hicolor/%dx%d/apps/%.100s.png",
                      extra, sizes[si], sizes[si], name);
             if (stat(out, &st) == 0) return 1;
@@ -103,7 +111,7 @@ int image_find_icon(const char *name, const char *extra, char *out, size_t sz) {
     snprintf(buf, sizeof buf, "%s", dd && dd[0] ? dd : "/usr/local/share:/usr/share");
     for (char *p = buf, *tok; nd < 8 && (tok = strsep(&p, ":")); )
         if (tok[0]) snprintf(dirs[nd++], 256, "%.240s", tok);
-    for (size_t si = 0; si < sizeof sizes / sizeof *sizes; si++)
+    for (int si = 0; si < ns; si++)
         for (int d = 0; d < nd; d++) {
             snprintf(out, sz, "%.160s/icons/hicolor/%dx%d/apps/%.100s.png",
                      dirs[d], sizes[si], sizes[si], name);
@@ -335,6 +343,24 @@ void image_blit_cover(uint32_t *dst, int dw, int dh,
     image_blit_cover_dim(dst, dw, dh, src, sw, sh, 0, 0, 0);
 }
 
+/* --- icon oversampling -------------------------------------------------- */
+
+/* Icon squares are baked at logical_px * this, so blit_argb can hand a hidpi
+ * surface real pixels instead of point-doubling a 32px file. Every producer
+ * (apps, tray, dbusmenu, notify, image_cell) uses the same factor, which is
+ * what lets blit_argb recover the source dimension from the logical one. */
+static int icon_ovs = 1;
+static void imgcell_flush(void);
+
+int image_icon_oversample(void) { return icon_ovs; }
+
+void image_icon_oversample_set(int n) {
+    if (n < 1) n = 1; else if (n > ICON_OVS_MAX) n = ICON_OVS_MAX;
+    if (n == icon_ovs) return;
+    icon_ovs = n;
+    imgcell_flush();
+}
+
 /* --- decoded-square cache for the DSL `image` prop ---------------------- */
 
 /* ponytail: round-robin eviction, no mtime revalidation — a repaint must not
@@ -352,6 +378,15 @@ void image_blit_cover(uint32_t *dst, int dw, int dh,
 static struct { char *key; int px; uint32_t *pm; } imgcell[IMGCELL_N];
 static int imgcell_next;
 
+static void imgcell_flush(void) {
+    for (int i = 0; i < IMGCELL_N; i++) {
+        free(imgcell[i].pm);
+        free(imgcell[i].key);
+        imgcell[i].pm = NULL;
+        imgcell[i].key = NULL;
+    }
+}
+
 const uint32_t *image_cell(const char *spec, int px) {
     if (!spec || !spec[0] || px <= 0 || px > 512) return NULL;
     for (int i = 0; i < IMGCELL_N; i++)
@@ -359,16 +394,16 @@ const uint32_t *image_cell(const char *spec, int px) {
             return imgcell[i].pm;
 
     char path[512];
-    int w = 0, h = 0;
+    int w = 0, h = 0, bpx = px * icon_ovs;
     uint8_t *rgba = NULL;
     /* A '/' or '~' means "a file"; anything else is a freedesktop icon name. */
     if (spec[0] == '/' || spec[0] == '~' || strchr(spec, '/'))
         rgba = image_load_max(spec, &w, &h, 1 << 13);
-    else if (image_find_icon(spec, NULL, path, sizeof path))
+    else if (image_find_icon(spec, NULL, bpx, path, sizeof path))
         rgba = image_load_max(path, &w, &h, 1 << 13);
 
     uint32_t *pm = NULL;
-    if (rgba && w > 0 && h > 0) pm = image_scale_square(rgba, w, h, px);
+    if (rgba && w > 0 && h > 0) pm = image_scale_square(rgba, w, h, bpx);
     image_free(rgba);
 
     int slot = imgcell_next++ % IMGCELL_N;
