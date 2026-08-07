@@ -191,7 +191,7 @@ group {
 	gap = 14;
 } // no height → fills the bar row
 #bar group {
-	shadow = #26000000;
+	shadow = #14000000;
 	shadow_y = 0;
 	shadow_blur = 6; // 6 = bar top margin, keeps the even halo unclipped
 }
@@ -231,7 +231,7 @@ widget {
 	pad = 6;
 	width = 28;
 	height = 28;
-	shadow = #26000000;  // matches the `#bar group` pills
+	shadow = #14000000;  // matches the `#bar group` pills
 	shadow_y = 0;
 	shadow_blur = 6; // 6 = bar top margin, keeps the even halo unclipped
 	transition_size = 160ms;
@@ -279,7 +279,7 @@ surface hud {
 	reveal_gutter   = 3;
 	reveal_anim_ms  = 200;
 	reveal_easing   = ease_out;
-	shadow = #26000000;
+	shadow = #14000000;
 	shadow_y = 0;
 	shadow_blur = 6;
 	visible = hid.value == "0";
@@ -373,7 +373,7 @@ surface notifs {
 	bg = NOTIFBG;
 	radius = 8;
 	border = BORD;
-	shadow = #26000000;
+	shadow = #14000000;
 	shadow_y = 0;
 	shadow_blur = 6;
 	border_width = 2;
@@ -494,7 +494,7 @@ surface osd {
 	bg = CRUST;
 	border = BORD;
 	separator = REST;
-	shadow = #26000000;
+	shadow = #14000000;
 	shadow_y = 0;
 	shadow_blur = 6;
 
@@ -570,7 +570,7 @@ surface pill {
 	margin = 3;
 	radius = 8;
 	font_size = 20;
-	shadow = #26000000;
+	shadow = #14000000;
 	shadow_y = 0;
 	shadow_blur = 6;
 
@@ -677,7 +677,7 @@ surface tooltip {
 	border       = BORD;
 	border_width = 1;
 	radius       = 6;
-	shadow = #26000000;
+	shadow = #14000000;
 	shadow_y = 0;
 	shadow_blur = 6;
 
@@ -751,7 +751,7 @@ surface menu {
 	border = BORD;
 	border_width = 2;
 	radius = 8;
-	shadow = #26000000;
+	shadow = #14000000;
 	shadow_y = 0;
 	shadow_blur = 6;
 }
@@ -807,7 +807,7 @@ menu tray {
 	radius = 8;
 	pad_x = 6;
 	pad_y = 6;
-	shadow = #26000000;
+	shadow = #14000000;
 	shadow_y = 0;
 	shadow_blur = 6;
 
