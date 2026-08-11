@@ -376,6 +376,14 @@ static void submit(void) {
     ui_repaint();
 }
 
+/* Only text edits repeat: a held Enter would resubmit, a held Up/Tab would
+ * spin the session list. */
+int greet_key_repeats(uint32_t key) {
+    if (key == KEY_BS) return 1;
+    uint32_t cp = xkb_xlat(key, xkb_shift_on);
+    return cp >= 0x20 && cp != 0x7f;
+}
+
 int greet_on_key(Widget *w, uint32_t key, uint32_t state) {
     if (w->kind != W_GREET) return 0;
     if (state != 1) return 1;

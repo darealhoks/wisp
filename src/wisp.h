@@ -133,6 +133,7 @@ void greet_init(void);
 int  greet_owns_fd(int fd);
 void greet_dispatch(int fd);
 int  greet_on_key(Widget *w, uint32_t key, uint32_t state);   /* 1 = consumed */
+int  greet_key_repeats(uint32_t key);
 void greet_render(Widget *w);
 int  greet_session_count(void);
 const char *greet_session_name(int i);

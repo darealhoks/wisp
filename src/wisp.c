@@ -388,7 +388,7 @@ void on_keyboard_event(uint16_t op, uint8_t *body, uint32_t bodylen) {
 #ifdef WISP_HAS_GREET
         if (w->kind == W_GREET) {
             greet_on_key(w, key, state);
-            if (state == 1) key_rep_arm(key);
+            if (state == 1 && greet_key_repeats(key)) key_rep_arm(key);
             else if (key == key_rep_key) key_rep_cancel();
             break;
         }
