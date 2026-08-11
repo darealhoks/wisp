@@ -160,6 +160,23 @@ widget volume {
 }
 ```
 
+## polkit self-locals
+
+Seven read-only values, readable only inside a `spawned_by = polkit` surface
+body ([[modules#polkit]]). They cannot be shadowed by a local.
+
+| field | type | meaning |
+|---|---|---|
+| `polkit.message` | string | polkit's reason text for the action |
+| `polkit.prompt` | string | PAM's prompt, e.g. `"Password: "` |
+| `polkit.dots` | string | masked input, one `*` per codepoint |
+| `polkit.user` | string | username being authenticated |
+| `polkit.action` | string | polkit action id the request came from, e.g. `org.freedesktop.policykit.exec` |
+| `polkit.error` | string | last PAM error or info, `""` if none |
+| `polkit.failed` | bool | 1 after a failed attempt |
+
+The typed password itself is never exposed, same rule as the lock's `ls.input`.
+
 ## Tray click set
 
 The three click handlers together are what a working tray cell needs:

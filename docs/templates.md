@@ -235,6 +235,69 @@ surface pill {
 - A negative `margin` rests the pill that many pixels inside the bar row and rounds all four corners; 0 or less sits it flush with fillet claws.
 - No `pad_x` on a slab, so the leading gap is the first widget's own `width`. No cover art, `$image` is not wired here.
 
+## polkit
+
+```wisp
+surface polkit {
+	spawned_by = polkit;
+	layer      = overlay;
+	keyboard   = exclusive;
+	exclusive_zone = -1;
+
+	axis   = vertical;
+	width  = 420;
+	height = 150;   // 28 pad + 22 + 6 + 34 + 6 + 38 rows, then the origin at the far edge
+	pad_x  = 16;
+	pad_y  = 14;
+	font_size = 14;
+
+	bg = #ff0e131c;
+	fg = #ffdbe2ee;
+	border = #ff2e3a4e;
+	border_width = 2;
+	radius = 8;
+
+	widget pk_title {
+		height = 22;
+		pad    = 6;
+		text   = "Authentication required";
+		fg     = #ffdbe2ee;
+	}
+	group pk_entry {
+		height = 34;
+		pad    = 6;
+		pad_x  = 10;
+		gap    = 0;
+		bg     = #ff141a26;
+		radius = 8;
+		cell { text = polkit.prompt; fg = #ffa5adbb; }
+		cell { text = polkit.dots;   fg = #ffdbe2ee; }
+		cell { text = "_";           fg = #ffdbe2ee; }
+	}
+	widget pk_msg {
+		height     = 38;
+		text       = polkit.message;
+		fg         = #ffa5adbb;
+		body_lines = 2;
+		wrap;
+		text_align = start;
+	}
+	widget pk_user {
+		align  = end;
+		height = 18;
+		text   = polkit.failed ? polkit.error : "{polkit.user} · {polkit.action}";
+		fg     = polkit.failed ? #ffe0603f : #ff64799c;
+		elide;
+	}
+}
+```
+
+- Declaring the surface is the whole configuration; there is no `polkit { }` block, and without the surface no authentication prompt appears at all.
+- The body advances by each row's `height` + its own `pad`. The surface `gap` and `y_offset` are not applied, and `align` buckets rows start/center/end — start and center share the same origin, so a row in each overlaps.
+- `height` is a compile-time constant: a short message does not shrink the stack, so size the rows and let the last one carry the bottom edge with `align = end`.
+- Bindings: `polkit.message`, `.prompt`, `.dots`, `.user`, `.action`, `.error`, `.failed` ([[state#polkit-self-locals]]). The password is not readable.
+- `keyboard = exclusive` is load-bearing; anything else leaks keystrokes to the window behind the prompt.
+
 ## Notification centre
 
 ```wisp

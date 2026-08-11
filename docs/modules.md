@@ -1,6 +1,6 @@
 # Modules
 
-Eight things the runtime treats differently. The DSL picks between them by
+Nine things the runtime treats differently. The DSL picks between them by
 **which properties are present**, not by a keyword.
 
 | kind | selected by |
@@ -11,6 +11,7 @@ Eight things the runtime treats differently. The DSL picks between them by
 | OSD stack | `surface osd { spawned_by = osd; … }` |
 | OSD pill | `surface pill { spawned_by = osd_pill; … }` |
 | menu template | `surface menu { spawned_by = menu; … }` |
+| polkit prompt | `surface polkit { spawned_by = polkit; … }` |
 | compound | `compound NAME { region … }` |
 | blocks | `lock {}` `gamma {}` `wallpaper {}` `media {}` `idle {}` |
 
@@ -327,6 +328,35 @@ rows on screen, 8 declared menus.
 
 Skeletons: [[templates#generic-vertical-menu]] and
 [[templates#generic-horizontal-menu]].
+
+## polkit
+
+`surface polkit { spawned_by = polkit; … }` and no block: declaring the surface
+is the whole configuration, and it is what makes wisp register as the session's
+polkit authentication agent on the system bus. Without it an `auth_admin`
+action has no prompt. The surface is created per authentication and destroyed
+after, so nothing is mapped and no pool exists at idle.
+
+| property | default | note |
+|---|---|---|
+| `width` | — | modal width |
+| `height` | — | modal height; a compile-time constant, the body never resizes it |
+| `layer` | `overlay` | |
+| `keyboard` | — | use `exclusive`, or keystrokes leak to whatever is behind the prompt |
+| `anchor` | none | an axis with neither edge set is centred by layer-shell, which is what a modal wants |
+| `shadow`, `shadow_*` | off | same shadow props as any surface |
+
+The body is one vertical stack of widgets and groups that advances by each
+row's `height` **plus that row's own `pad`**: the surface `gap` and a widget's
+`y_offset` are not applied here, so row spacing is the trailing `pad`. `align`
+picks the start/center/end bucket, and start and center both originate at the
+top of the content area — declaring rows in both makes them overlap. `align =
+end` pins a row to the bottom edge.
+
+Body bindings are seven read-only self-locals, [[state#polkit-self-locals]].
+The typed password is never reachable from the DSL.
+
+Skeleton: [[templates#polkit]].
 
 ## Compound
 
