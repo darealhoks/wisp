@@ -339,7 +339,6 @@ surface login {
 		cell { icon = 0xf023; fg = greet.failed ? #ffe0603f : #ffa5adbb; }
 		cell { text = greet.prompt; fg = #ffa5adbb; }
 		cell { text = "{greet.dots}{greet.input}{greet.busy ? \"…\" : \"_\"}"; fg = #ffdbe2ee; }
-		cell { icon = 0xf071; fg = #ffe08d3f; visible = greet.caps; }
 	}
 	for s in greet.sessions {
 		cell {
@@ -357,8 +356,8 @@ surface login {
 	widget status {
 		height = 18;
 		pad_x  = 2;
-		text   = greet.error;
-		fg     = greet.failed ? #ffe0603f : #ff64799c;
+		text   = greet.caps ? "caps" : greet.error;
+		fg     = greet.caps ? #ffe08d3f : (greet.failed ? #ffe0603f : #ff64799c);
 	}
 }
 ```

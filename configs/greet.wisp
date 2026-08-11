@@ -112,11 +112,6 @@ surface login {
 			text = "{greet.dots}{greet.input}{greet.busy ? \"…\" : \"_\"}";
 			fg   = TEXT;
 		}
-		cell {
-			icon    = 0xf071;
-			fg      = ORANGE;
-			visible = greet.caps;
-		}
 	}
 
 	for s in greet.sessions {
@@ -137,7 +132,7 @@ surface login {
 	widget status {
 		height = 18;
 		pad_x  = 2;
-		text   = greet.error;
-		fg     = greet.failed ? RED : EMPTY;
+		text   = greet.caps ? "caps" : greet.error;
+		fg     = greet.caps ? ORANGE : (greet.failed ? RED : EMPTY);
 	}
 }
