@@ -97,7 +97,12 @@ static int surface_partial_ok(Decl *sur, BarItem *items, int nitems,
 }
 
 int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
-    int height        = eval_int   (surface_prop(sur, "height"),         24);
+    int anchor        = eval_anchor(surface_prop(sur, "anchor"));
+    if (anchor < 0) anchor = 1 | 4 | 8;
+    /* anchored top+bottom means "stretch": size 0 on that axis, same as width
+     * does for left+right — a nonzero height would center a band instead */
+    int height        = eval_int   (surface_prop(sur, "height"),
+                                    (anchor & 1) && (anchor & 2) ? 0 : 24);
     int width         = eval_int   (surface_prop(sur, "width"),          0);
     int margin        = eval_int   (surface_prop(sur, "margin"),         0);
     /* Horizontal inset, so a panel can clear the bar vertically while keeping
@@ -132,8 +137,6 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     uint32_t bg       = eval_color_ctx(ctx, surface_prop(sur, "bg"), 0xff000000);
     int layer         = eval_layer (surface_prop(sur, "layer"));
     if (layer < 0) layer = 2;
-    int anchor        = eval_anchor(surface_prop(sur, "anchor"));
-    if (anchor < 0) anchor = 1 | 4 | 8;
     int vertical      = surface_is_vertical(sur);
     SurShadow sh;
     sur_shadow_pad(sur, ctx, anchor, margin, margin_x, width, height, &sh);
