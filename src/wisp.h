@@ -123,6 +123,7 @@ void polkit_init(void);
 int  polkit_owns_fd(int fd);
 void polkit_dispatch(int fd);
 int  polkit_on_key(Widget *w, uint32_t key, uint32_t state);   /* 1 = consumed */
+int  polkit_key_repeats(uint32_t key);
 void polkit_render(Widget *w);
 #endif
 #ifdef WISP_HAS_GREET
