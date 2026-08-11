@@ -1,6 +1,6 @@
 # Modules
 
-Nine things the runtime treats differently. The DSL picks between them by
+Ten things the runtime treats differently. The DSL picks between them by
 **which properties are present**, not by a keyword.
 
 | kind | selected by |
@@ -12,6 +12,7 @@ Nine things the runtime treats differently. The DSL picks between them by
 | OSD pill | `surface pill { spawned_by = osd_pill; … }` |
 | menu template | `surface menu { spawned_by = menu; … }` |
 | polkit prompt | `surface polkit { spawned_by = polkit; … }` |
+| tooltip | `surface tooltip { spawned_by = tooltip; … }` |
 | compound | `compound NAME { region … }` |
 | blocks | `lock {}` `gamma {}` `wallpaper {}` `media {}` `idle {}` |
 
@@ -357,6 +358,33 @@ Body bindings are seven read-only self-locals, [[state#polkit-self-locals]].
 The typed password is never reachable from the DSL.
 
 Skeleton: [[templates#polkit]].
+
+## Tooltip
+
+`surface tooltip { spawned_by = tooltip; … }`. One transient layer surface,
+created on hover and destroyed on leave, so nothing is mapped at idle. A cell's
+`tooltip = "…"` arms it after `delay_ms`; `wispctl tooltip <x> <width> <below>
+<text>` and `wispctl tooltip hide` drive it by hand. Declaring `tooltip` on a
+cell with no such surface is a compile error.
+
+| property | default | note |
+|---|---|---|
+| `width` | — | clamp, not a fixed width; the surface auto-widths to `$text` and elides past it |
+| `height` | — | |
+| `pad_x` | 0 | horizontal inset of the label |
+| `anchor_gap` | 0 | vertical gap from the anchoring cell |
+| `delay_ms` | — | hover dwell before it appears |
+| `layer` | `overlay` | |
+| `exclusive_zone` | — | set `-1` |
+| `bg`, `border`, `border_width`, `radius`, `shadow*` | | as any surface |
+
+Body binding is `$text` only. It always hangs below the anchor, x-clamped to
+the output — there is no flip-above near a screen edge. `keyboard_interactivity`
+is 0 and the input region is zero-area, so it can never take focus or a click;
+a text change tears the surface down and re-shows it rather than swapping in
+place. No timer is armed unless a tooltip is pending.
+
+Skeleton: [[templates#tooltip]].
 
 ## Compound
 

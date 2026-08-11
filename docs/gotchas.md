@@ -53,7 +53,7 @@ fail to link.
 
 ## Naming traps
 
-- The OSD, pill and menu templates must be named `osd`, `pill` and `menu`. The `spawned_by` property alone is not enough; codegen looks the template up by name. Rename it and the engine silently drops out.
+- The OSD, pill, menu and tooltip templates must be named `osd`, `pill`, `menu` and `tooltip`. The `spawned_by` property alone is not enough; codegen looks the template up by name. Rename it and the engine silently drops out.
 - A surface named `bar` is the one panel the tag accumulator and lock-on-output path find. Other names are plain panels.
 - `bar.pill` is one node with a class; `bar .pill` is a descendant chain. One space changes the selector.
 - `surface NAME {` is a declaration but a bare `surface {` or `surface.cls {` is a style rule. Same for `menu NAME {` versus `menu {`.
