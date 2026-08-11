@@ -1,6 +1,6 @@
 # Modules
 
-Ten things the runtime treats differently. The DSL picks between them by
+Eleven things the runtime treats differently. The DSL picks between them by
 **which properties are present**, not by a keyword.
 
 | kind | selected by |
@@ -13,6 +13,7 @@ Ten things the runtime treats differently. The DSL picks between them by
 | menu template | `surface menu { spawned_by = menu; … }` |
 | polkit prompt | `surface polkit { spawned_by = polkit; … }` |
 | tooltip | `surface tooltip { spawned_by = tooltip; … }` |
+| greeter | `surface NAME { spawned_by = greet; … }` |
 | compound | `compound NAME { region … }` |
 | blocks | `lock {}` `gamma {}` `wallpaper {}` `media {}` `idle {}` |
 
@@ -385,6 +386,45 @@ a text change tears the surface down and re-shows it rather than swapping in
 place. No timer is armed unless a tooltip is pending.
 
 Skeleton: [[templates#tooltip]].
+
+## greet
+
+`surface NAME { spawned_by = greet; … }` and no block: declaring the surface
+is the whole configuration, and it is what makes the binary a greetd greeter.
+The name is free — this template is found by its `spawned_by` value, not by
+its name. The surface is created at startup and lives until the session
+starts, at which point wisp exits.
+
+greetd keeps everything privileged: PAM as root, the VT, exec'ing the session.
+wisp only speaks greetd's client protocol on `$GREETD_SOCK`. That variable
+being unset is fatal, not a degraded mode — a greet surface outside greetd is
+a config error.
+
+| property | default | note |
+|---|---|---|
+| `user` | `""` | username to log in; a compile-time string literal |
+| `sessions` | `/etc/greetd/environments` | one command line per session, blanks and `#` skipped, first 8 kept, first selected |
+| `width` | — | |
+| `height` | — | a compile-time constant, the body never resizes it |
+| `layer` | `overlay` | |
+| `keyboard` | `exclusive` | the one surface where exclusive is the default |
+| `anchor` | none | centred, as a modal wants |
+| `shadow`, `shadow_*` | off | same shadow props as any surface |
+
+The body is the same vertical stack polkit's is, advancing by each row's
+`height` plus that row's own `pad`, with the same start/center/end buckets.
+Body bindings are nine read-only self-locals, [[state#greet-self-locals]],
+plus the list `for s in greet.sessions`. The typed secret is never reachable
+from the DSL.
+
+Keys: printable characters append, Backspace deletes a codepoint, Enter
+submits, Escape clears the field, Up/Down (Tab = Down) cycle the session.
+A left click on a `for s in greet.sessions` row selects that session — those
+rows are the one place a `for` cell gets a hit rect without a declared
+`on_click`. Nothing else in the surface reacts to the pointer, and there are
+no timers, so the greeter idles at 0 ticks.
+
+Skeleton: [[templates#greet]].
 
 ## Compound
 

@@ -298,6 +298,78 @@ surface polkit {
 - Bindings: `polkit.message`, `.prompt`, `.dots`, `.user`, `.action`, `.error`, `.failed` ([[state#polkit-self-locals]]). The password is not readable.
 - `keyboard = exclusive` is load-bearing; anything else leaks keystrokes to the window behind the prompt.
 
+## greet
+
+```wisp
+surface login {
+	spawned_by = greet;
+	layer      = overlay;
+	user       = "hoks";
+	sessions   = "/etc/greetd/environments";
+
+	axis   = vertical;
+	width  = 420;
+	height = 198;
+	pad_x  = 14;
+	pad_y  = 14;
+	font_size = 14;
+
+	bg = #ff0e131c;
+	fg = #ffdbe2ee;
+	border = #ff2e3a4e;
+	border_width = 2;
+	radius = 8;
+
+	group who {
+		height = 30;
+		pad    = 8;
+		pad_x  = 12;
+		gap    = 8;
+		cell { icon = 0xf007;         fg = #ffa5adbb; }
+		cell { text = greet.user;     fg = #ffdbe2ee; }
+		cell { text = greet.session;  fg = #ff64799c; }
+	}
+	group field {
+		height = 38;
+		pad    = 8;
+		pad_x  = 12;
+		gap    = 10;
+		bg     = #ff141a26;
+		radius = 6;
+		cell { icon = 0xf023; fg = greet.failed ? #ffe0603f : #ffa5adbb; }
+		cell { text = greet.prompt; fg = #ffa5adbb; }
+		cell { text = "{greet.dots}{greet.input}{greet.busy ? \"…\" : \"_\"}"; fg = #ffdbe2ee; }
+		cell { icon = 0xf071; fg = #ffe08d3f; visible = greet.caps; }
+	}
+	for s in greet.sessions {
+		cell {
+			height = 30;
+			pad    = 4;
+			pad_x  = 8;
+			radius = 4;
+			icon   = s.name == "zsh" ? 0xf120 : 0xf144;
+			icon_gap = 8;
+			text   = s.name;
+			fg     = s.selected ? #ffdbe2ee : #ffa5adbb;
+			bg     = s.selected ? #ff141a26 : #00000000;
+		}
+	}
+	widget status {
+		height = 18;
+		pad_x  = 2;
+		text   = greet.error;
+		fg     = greet.failed ? #ffe0603f : #ff64799c;
+	}
+}
+```
+
+- Declaring the surface is the whole configuration; there is no `greet { }` block. The name is free, the template is found by its `spawned_by` value.
+- Row advance is polkit's: `height` + that row's own `pad`, no surface `gap`, no `y_offset`.
+- Bindings: `greet.prompt`, `.dots`, `.input`, `.user`, `.session`, `.error`, `.failed`, `.busy`, `.caps` ([[state#greet-self-locals]]) plus `for s in greet.sessions`. The typed secret is not readable.
+- `keyboard` defaults to `exclusive` here, unlike every other surface.
+- The session rows are clickable without an `on_click`: a left click selects that session, exactly what Up/Down does.
+- Only usable under greetd — `$GREETD_SOCK` unset is fatal, not a degraded mode.
+
 ## Notification centre
 
 ```wisp

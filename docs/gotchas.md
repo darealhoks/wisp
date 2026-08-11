@@ -54,6 +54,7 @@ fail to link.
 ## Naming traps
 
 - The OSD, pill, menu and tooltip templates must be named `osd`, `pill`, `menu` and `tooltip`. The `spawned_by` property alone is not enough; codegen looks the template up by name. Rename it and the engine silently drops out.
+- The polkit and greet templates are the exception: they are found by their `spawned_by` value, so their names are free.
 - A surface named `bar` is the one panel the tag accumulator and lock-on-output path find. Other names are plain panels.
 - `bar.pill` is one node with a class; `bar .pill` is a descendant chain. One space changes the selector.
 - `surface NAME {` is a declaration but a bare `surface {` or `surface.cls {` is a style rule. Same for `menu NAME {` versus `menu {`.
@@ -107,6 +108,8 @@ fail to link.
 - `make` alone is not enough. `wispctl reload` re-execs the installed binary, so use `make install`.
 - The daemon must start before your tray apps do; wisp owns the StatusNotifier watcher name.
 - `dismiss_on_unfocus` is an error without `on_escape`: it reuses that command rather than taking one of its own.
+- A `spawned_by = greet` surface needs `$GREETD_SOCK`: outside greetd it is fatal, not a degraded mode. Preview one with `fakegreet 'mango -c configs/... -s build/greet/wisp'`.
+- `keyboard` defaults to `exclusive` on a greet surface and to `on_demand` everywhere else.
 - `keyboard = exclusive` holds the session's keyboard for as long as the surface is mapped, so a panel that declares it eats every keystroke until dismissed. Panels want the default `on_demand`.
 - Without `output = active` a panel opens on every monitor at once, and a monitor plugged in later never gets a copy of one that has it.
 - Dismiss a notification by `note.id`, never by a row index; the history ring can shift while the click is still travelling over the socket.

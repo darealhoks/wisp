@@ -177,6 +177,28 @@ body ([[modules#polkit]]). They cannot be shadowed by a local.
 
 The typed password itself is never exposed, same rule as the lock's `ls.input`.
 
+## greet self-locals
+
+Nine read-only values, readable only inside a `spawned_by = greet` surface
+body ([[modules#greet]]). They cannot be shadowed by a local.
+
+| field | type | meaning |
+|---|---|---|
+| `greet.prompt` | string | current auth prompt, e.g. `"Password: "` |
+| `greet.dots` | string | masked input, one `*` per codepoint, for secret prompts |
+| `greet.input` | string | visible input text for echo-on prompts, `""` while a secret is typed |
+| `greet.user` | string | username being logged in |
+| `greet.session` | string | currently selected session line |
+| `greet.error` | string | last info or error message, `""` if none |
+| `greet.failed` | bool | 1 after a failed attempt |
+| `greet.busy` | bool | 1 while waiting for greetd's reply |
+| `greet.caps` | bool | 1 while Caps Lock is on |
+
+Plus the for-only list `for s in greet.sessions`, at most 8 entries, each with
+`s.name` (string), `s.index` (int, 0-based) and `s.selected` (bool).
+
+The typed secret itself is never exposed, same rule as polkit.
+
 ## Tray click set
 
 The three click handlers together are what a working tray cell needs:
