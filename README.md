@@ -3,6 +3,12 @@
 **W**idget **I**nterface, **S**ingle **P**rocess - one Wayland daemon that draws
 a whole desktop shell, from a file you write.
 
+Bar, notifications, app menu, hover panels, on-screen displays, lock screen,
+login greeter, wallpaper, night-light gamma, idle/dpms, media controls - plus
+any widget you can express: workspaces, battery, network, temps, clock, volume,
+backlight, CPU, disk, whatever a source exposes. Volume, backlight, gamma,
+brightness and power are controlled, not just displayed.
+
 ![wisp running the reverie config](desktop.png)
 
 A normal Wayland desktop runs a bar, a notification daemon, a locker, a gamma
