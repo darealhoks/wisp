@@ -187,7 +187,8 @@ static void emit_main(FILE *o, SrcInst *srcs, int nsrc, SemaResult *r) {
           "    }\n", o);
     fputs("    if (reload_ctl >= 0) ctl_adopt(reload_ctl); else ctl_open();\n", o);
     /* fresh start only: reloads must not clobber a level set by another tool */
-    fputs("    if (reload_ctl < 0) media_backlight_restore();\n", o);
+    if (r->has_media)
+        fputs("    if (reload_ctl < 0) media_backlight_restore();\n", o);
     fputs("    key_rep_tfd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);\n", o);
     if (has_status_src(srcs, nsrc)) fputs("    wispgen_status_setup();\n", o);
     if (has_poll) fputs("    wispgen_status_init();\n", o);
