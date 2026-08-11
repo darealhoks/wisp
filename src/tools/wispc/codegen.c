@@ -122,6 +122,11 @@ static void emit_main(FILE *o, SrcInst *srcs, int nsrc, SemaResult *r) {
     if (r->has_polkit)
         fputs("void polkit_init(void); int polkit_owns_fd(int fd); void polkit_dispatch(int fd);\n"
               "extern int pk_fd;\n", o);
+    if (r->has_greet)
+        fputs("void greet_init(void); int greet_owns_fd(int fd); void greet_dispatch(int fd);\n"
+              "int greet_session_count(void); const char *greet_session_name(int i);\n"
+              "int greet_session_is_selected(int i);\n"
+              "extern int greet_fd;\n", o);
 
     for (int i = 0; i < r->nsurfaces; i++) {
         const char *sn = r->surface_names[i];
@@ -230,6 +235,7 @@ static void emit_main(FILE *o, SrcInst *srcs, int nsrc, SemaResult *r) {
     if (r->has_bluez) fputs("    bz_connect();\n", o);
     if (r->has_idle)  fputs("    idle_init();\n", o);
     if (r->has_polkit) fputs("    polkit_init();\n", o);
+    if (r->has_greet)  fputs("    greet_init();\n", o);
 
     fputs("    tags_init();\n", o);
     fputs("    ep_fd = epoll_create1(EPOLL_CLOEXEC);\n", o);
@@ -257,6 +263,8 @@ static void emit_main(FILE *o, SrcInst *srcs, int nsrc, SemaResult *r) {
         fputs("    if (idle_bus_fd >= 0) epoll_add_fd(idle_bus_fd);\n", o);
     if (r->has_polkit)
         fputs("    if (pk_fd >= 0) epoll_add_fd(pk_fd);\n", o);
+    if (r->has_greet)
+        fputs("    if (greet_fd >= 0) epoll_add_fd(greet_fd);\n", o);
     if (r->has_gamma && !has_poll)
         fputs("    epoll_add_fd(wispgen_gamma_tfd);\n", o);
     if (r->has_anim)
@@ -361,6 +369,9 @@ static void emit_main(FILE *o, SrcInst *srcs, int nsrc, SemaResult *r) {
     if (r->has_polkit)
         fputs("            } else if (polkit_owns_fd(fd)) {\n"
               "                polkit_dispatch(fd);\n", o);
+    if (r->has_greet)
+        fputs("            } else if (greet_owns_fd(fd)) {\n"
+              "                greet_dispatch(fd);\n", o);
     if (r->has_anim)
         fputs("            } else if (fd == anim_fd()) {\n"
               "                anim_on_tfd();\n", o);
@@ -420,6 +431,20 @@ static Decl *find_spawn_template(Unit *u, const char *name) {
         if (d->kind != D_SURFACE) continue;
         if (!surface_prop(d, "spawned_by")) continue;
         if ((size_t)d->nlen == nlen && memcmp(d->name, name, nlen) == 0) return d;
+    }
+    return NULL;
+}
+
+/* Same, keyed on the `spawned_by` VALUE rather than the decl name: a greet
+ * surface is named by the config, not by its template. */
+static Decl *find_spawn_by(Unit *u, const char *name) {
+    size_t nlen = strlen(name);
+    for (int i = 0; i < u->n; i++) {
+        Decl *d = u->decls[i];
+        if (d->kind != D_SURFACE) continue;
+        Expr *v = surface_prop(d, "spawned_by");
+        if (v && v->kind == EX_IDENT && (size_t)v->ident.n == nlen
+            && memcmp(v->ident.s, name, nlen) == 0) return d;
     }
     return NULL;
 }
@@ -916,6 +941,49 @@ static void emit_overrides(FILE *o, Unit *u, CGCtx *ctx) {
         /* 0 = no edge bitted on either axis, i.e. centred */
         fprintf(o, "#undef PK_ANCHOR\n#define PK_ANCHOR %d\n", anch < 0 ? 0 : anch);
         emit_shadow_pad_macros(o, pkd, ctx, "PK_SHADOW_PAD");
+        fputs("\n", o);
+    }
+
+    /* greet template → the geometry + identity greet.c needs before
+     * render_greet() paints. `user`/`sessions` are compile-time literals: the
+     * greeter has no config file of its own. */
+    Decl *grd = find_spawn_by(u, "greet");
+    if (grd) {
+        fputs("/* === greet surface overrides === */\n", o);
+        struct { Expr *e; const char *macro; } gmap[] = {
+            {surface_prop(grd, "width"),  "GREET_W"},
+            {surface_prop(grd, "height"), "GREET_H"},
+        };
+        for (size_t i = 0; i < sizeof(gmap)/sizeof(gmap[0]); i++) {
+            if (!gmap[i].e || gmap[i].e->kind != EX_INT) continue;
+            fprintf(o, "#undef %s\n#define %s %d\n",
+                    gmap[i].macro, gmap[i].macro, (int)gmap[i].e->i);
+        }
+        int glayer = eval_layer(surface_prop(grd, "layer"));
+        int ganch  = eval_anchor(surface_prop(grd, "anchor"));
+        fprintf(o, "#undef GREET_LAYER\n#define GREET_LAYER %d\n", glayer < 0 ? 3 : glayer);
+        /* a greeter that cannot take keys is useless, so an omitted
+         * `keyboard` means exclusive here (surface_kbd_mode defaults to 0) */
+        fprintf(o, "#undef GREET_KBD\n#define GREET_KBD (%s)\n",
+                surface_prop(grd, "keyboard") ? surface_kbd_mode(grd) : "1");
+        fprintf(o, "#undef GREET_ANCHOR\n#define GREET_ANCHOR %d\n", ganch < 0 ? 0 : ganch);
+        struct { Expr *e; const char *macro; const char *dflt; } smap[] = {
+            {surface_prop(grd, "user"),     "GREET_USER",     ""},
+            {surface_prop(grd, "sessions"), "GREET_SESSIONS", "/etc/greetd/environments"},
+        };
+        for (size_t i = 0; i < sizeof(smap)/sizeof(smap[0]); i++) {
+            Expr *e = smap[i].e;
+            if (e && e->kind != EX_STRING) {
+                diag_error(e->loc, "greet: '%s' must be a string literal",
+                           i ? "sessions" : "user");
+                continue;
+            }
+            fprintf(o, "#undef %s\n#define %s \"", smap[i].macro, smap[i].macro);
+            if (e) fprintf(o, "%.*s", (int)e->str.n, e->str.s);
+            else   fputs(smap[i].dflt, o);
+            fputs("\"\n", o);
+        }
+        emit_shadow_pad_macros(o, grd, ctx, "GREET_SHADOW_PAD");
         fputs("\n", o);
     }
 

@@ -394,6 +394,7 @@ int emit_menu_render(FILE *o, Decl *sur, Decl *tmpl, CGCtx *ctx, const char *nm,
             snprintf(prompt_lit, sizeof prompt_lit, "\"\"");
         push_local(ctx, "menu", 4, LB_MENU_SELF, prompt_lit, NULL);
     }
+    ctx->greet_rows = tip == 2 && strcmp(nm, "greet") == 0;
     int nitems = collect_bar_items(sur->surface.items, sur->surface.n,
                                    items, 64, ctx, &err);
     if (err) return 1;
@@ -553,6 +554,7 @@ int emit_menu_render(FILE *o, Decl *sur, Decl *tmpl, CGCtx *ctx, const char *nm,
 
     if (tip != 2) pop_local(ctx);
     emit_surface_click_dispatch(o, items, nitems, ctx, ctx->r, nm);
+    ctx->greet_rows = 0;
     fprintf(o, "void %s_redraw(void) {\n"
                "    for (int i = 0; i < __%s_nw; i++) render_%s(__%s_widgets[i]);\n"
                "}\n\n", nm, nm, nm, nm);

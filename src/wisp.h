@@ -125,6 +125,22 @@ void polkit_dispatch(int fd);
 int  polkit_on_key(Widget *w, uint32_t key, uint32_t state);   /* 1 = consumed */
 void polkit_render(Widget *w);
 #endif
+#ifdef WISP_HAS_GREET
+/* greetd greeter client (greet.c). One unix socket, no timers; the surface is
+ * created at startup and lives until start_session succeeds. */
+extern int greet_fd;                    /* -1 = not connected */
+void greet_init(void);
+int  greet_owns_fd(int fd);
+void greet_dispatch(int fd);
+int  greet_on_key(Widget *w, uint32_t key, uint32_t state);   /* 1 = consumed */
+void greet_render(Widget *w);
+int  greet_session_count(void);
+const char *greet_session_name(int i);
+int  greet_session_is_selected(int i);
+void greet_select(int i);               /* session row clicked (generated dispatch) */
+void greet_on_click(Widget *w, int wx, int wy, int btn);   /* generated */
+void greet_on_caps_changed(void);       /* called from xkb */
+#endif
 extern uint32_t id_slock_mgr, id_slock;
 extern uint32_t id_extws_mgr;    /* ext_workspace_manager_v1; 0 = unsupported */
 extern uint32_t id_river_status_mgr, id_river_control;  /* river workspace source (river.c) */
@@ -163,7 +179,7 @@ void key_rep_cancel(void);
 /* Appended only: ctl.c treats these values as the reload adoption contract
  * between the old and the new binary. */
 typedef enum { W_NONE = 0, W_BAR, W_HUD, W_MENU, W_OSD, W_WALL, W_LOCK, W_TIP,
-               W_POLKIT } WidgetKind;
+               W_POLKIT, W_GREET } WidgetKind;
 
 typedef struct { int x, y, w, h; } Rect;
 
@@ -416,6 +432,21 @@ struct Widget {
             char error[256];
             int  failed;
         } polkit;
+#endif
+#ifdef WISP_HAS_GREET
+        /* Same shape as polkit's: fixed storage the DSL reads. `dots` is the
+         * mask greet.c builds — the secret itself never lives here. */
+        struct {
+            char prompt[64];
+            char dots[128];
+            char input[256];
+            char user[64];
+            char error[256];
+            char session[256];
+            int  failed;
+            int  busy;
+            int  caps;
+        } greet;
 #endif
         struct {
             int painted_w, painted_h;  /* last decoded+blitted size; 0 = never */

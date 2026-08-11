@@ -246,6 +246,51 @@ CE lower_member(CGCtx *c, Expr *e) {
         }
         return r;
     }
+    /* `greet.*` — same base-ident lowering as polkit's. */
+    if (!L && b->ident.n == 5 && memcmp(b->ident.s, "greet", 5) == 0) {
+        const char *wv = c->widget_var ? c->widget_var : "w";
+        CE r = { .type = T_UNK };
+        static const char *GFLD[] = { "prompt", "dots", "input", "user",
+                                      "error", "session", 0 };
+        int hit = 0;
+        for (int i = 0; GFLD[i]; i++) {
+            if (flen != strlen(GFLD[i]) || memcmp(fld, GFLD[i], flen) != 0) continue;
+            snprintf(r.text, sizeof r.text, "%s->s.greet.%s", wv, GFLD[i]);
+            r.type = T_STR; hit = 1; break;
+        }
+        if (!hit && flen == 6 && memcmp(fld, "failed", 6) == 0) {
+            snprintf(r.text, sizeof r.text, "%s->s.greet.failed", wv);
+            r.type = T_BOOL; hit = 1;
+        }
+        if (!hit && flen == 4 && memcmp(fld, "busy", 4) == 0) {
+            snprintf(r.text, sizeof r.text, "%s->s.greet.busy", wv);
+            r.type = T_BOOL; hit = 1;
+        }
+        if (!hit && flen == 4 && memcmp(fld, "caps", 4) == 0) {
+            snprintf(r.text, sizeof r.text, "%s->s.greet.caps", wv);
+            r.type = T_BOOL; hit = 1;
+        }
+        if (!hit) {
+            diag_error(e->loc, "codegen: greet has no field '%.*s'", (int)flen, fld);
+            c->failed = 1;
+        }
+        return r;
+    }
+    if (L && L->kind == LB_GREET_SESSION) {
+        const char *it = L->c_expr;
+        CE r = { .type = T_UNK };
+        if (flen == 4 && memcmp(fld, "name", 4) == 0) {
+            snprintf(r.text, sizeof r.text, "greet_session_name(%s)", it); r.type = T_STR;
+        } else if (flen == 5 && memcmp(fld, "index", 5) == 0) {
+            snprintf(r.text, sizeof r.text, "(%s)", it); r.type = T_INT;
+        } else if (flen == 8 && memcmp(fld, "selected", 8) == 0) {
+            snprintf(r.text, sizeof r.text, "greet_session_is_selected(%s)", it); r.type = T_BOOL;
+        } else {
+            diag_error(e->loc, "codegen: greet session has no field '%.*s'", (int)flen, fld);
+            c->failed = 1;
+        }
+        return r;
+    }
     if (L && L->kind == LB_MENU_ROW) {
         const char *wv = c->widget_var ? c->widget_var : "w";
         const char *r0 = L->c_expr;
@@ -530,11 +575,16 @@ static int str_part_cap(CGCtx *c, Expr *e) {
             return FLD("label") ? 160 : 0;   /* ITEM_MAX */
         if (L->kind == LB_MENU_SELF)
             return FLD("query") ? 128 : FLD("prompt") ? 48 : 0;
+        if (L->kind == LB_GREET_SESSION)   /* SESSION_MAX in greet.c */
+            return FLD("name") ? 256 : 0;
         return 0;
     }
     if (fld && b->ident.n == 6 && memcmp(b->ident.s, "polkit", 6) == 0)
         return (FLD("message") || FLD("error")) ? 256 : FLD("dots") ? 128
              : (FLD("prompt") || FLD("user")) ? 64 : 0;
+    if (fld && b->ident.n == 5 && memcmp(b->ident.s, "greet", 5) == 0)
+        return (FLD("error") || FLD("input") || FLD("session")) ? 256
+             : FLD("dots") ? 128 : (FLD("prompt") || FLD("user")) ? 64 : 0;
     SrcInst *si = find_inst(c->srcs, c->nsrc, b->ident.s, b->ident.n);
     if (!si) return 0;
     if (si->drv->drv == DRV_EXEC || si->drv->drv == DRV_INOTIFY) return si->lines * 256;

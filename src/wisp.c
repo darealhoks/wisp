@@ -60,9 +60,10 @@ uint32_t key_rep_key      = 0;
 int      key_rep_delay_ms = 400;
 int      key_rep_rate_ms  = 35;
 
-/* Only menu, lock and the polkit prompt consume held keys; without one of
- * them, nothing arms it. */
-#if defined(WISP_HAS_MENU) || defined(WISP_HAS_LOCK) || defined(WISP_HAS_POLKIT)
+/* Only menu, lock, the polkit prompt and the greeter consume held keys;
+ * without one of them, nothing arms it. */
+#if defined(WISP_HAS_MENU) || defined(WISP_HAS_LOCK) || defined(WISP_HAS_POLKIT) \
+ || defined(WISP_HAS_GREET)
 static void key_rep_arm(uint32_t key) {
     key_rep_key = key;
     if (key_rep_tfd < 0) return;
@@ -209,6 +210,11 @@ void on_pointer_event(uint16_t op, uint8_t *body, uint32_t bodylen) {
 #ifdef WISP_HAS_OSD
         if (w->kind == W_OSD && state == 1 && button == 0x110) {
             osd_on_click(w, ptr_x, ptr_y); break;
+        }
+#endif
+#ifdef WISP_HAS_GREET
+        if (w->kind == W_GREET && state == 1 && button == 0x110) {
+            greet_on_click(w, ptr_x, ptr_y, (int)button); break;
         }
 #endif
 #ifdef WISP_HAS_BAR
@@ -379,6 +385,14 @@ void on_keyboard_event(uint16_t op, uint8_t *body, uint32_t bodylen) {
             break;
         }
 #endif
+#ifdef WISP_HAS_GREET
+        if (w->kind == W_GREET) {
+            greet_on_key(w, key, state);
+            if (state == 1) key_rep_arm(key);
+            else if (key == key_rep_key) key_rep_cancel();
+            break;
+        }
+#endif
 #ifdef WISP_HAS_LOCK
         if (w->kind == W_LOCK) {
             lock_on_key(w, key, state, 0);
@@ -428,6 +442,9 @@ void widget_repaint(Widget *w, int first_configure) {
 #endif
 #ifdef WISP_HAS_POLKIT
     if (w->kind == W_POLKIT) polkit_render(w);
+#endif
+#ifdef WISP_HAS_GREET
+    if (w->kind == W_GREET) greet_render(w);
 #endif
 #ifdef WISP_HAS_OSD
     if (w->kind == W_OSD) {

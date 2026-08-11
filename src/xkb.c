@@ -405,6 +405,9 @@ void xkb_on_modifiers(uint32_t depressed, uint32_t latched, uint32_t locked,
 #ifdef WISP_HAS_LOCK
     lock_on_caps_changed();
 #endif
+#ifdef WISP_HAS_GREET
+    greet_on_caps_changed();
+#endif
 }
 
 /* UTF-8 encode `cp` into out (≥4 bytes). Returns byte count, 0 if cp invalid. */

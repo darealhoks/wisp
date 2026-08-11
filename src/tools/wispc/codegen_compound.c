@@ -654,6 +654,11 @@ int emit_surfaces(FILE *o, Unit *u, CGCtx *ctx) {
             int is_pk = sb && sb->kind == EX_IDENT
                      && sb->ident.n == 6 && memcmp(sb->ident.s, "polkit", 6) == 0;
             if (is_pk && emit_menu_render(o, d, NULL, ctx, "polkit", 2)) return 1;
+            /* `spawned_by = greet` → render_greet(): same flavour as polkit,
+             * reading greet.* off the base ident. */
+            int is_greet = sb && sb->kind == EX_IDENT
+                        && sb->ident.n == 5 && memcmp(sb->ident.s, "greet", 5) == 0;
+            if (is_greet && emit_menu_render(o, d, NULL, ctx, "greet", 2)) return 1;
             continue;
         }
         if (d->is_menu) {

@@ -92,7 +92,7 @@ static const PropSchema SCHEMAS[] = {
       " radius_tr reveal_anim_ms reveal_easing reveal_gutter reveal_on_hover"
       " shadow shadow_blur shadow_spread shadow_x shadow_y"
       " delay_ms dismiss_on_unfocus keyboard on_escape row_h scroll separator separator_frac separator_h size slide_ms sort sound spawned_by terminal"
-      " timeout timeout_low timeout_normal visible width " },
+      " timeout timeout_low timeout_normal user sessions visible width " },
     { "group", "group",
       " align bg border border_width gap height pad pad_x radius shadow"
       " shadow_blur shadow_spread shadow_x shadow_y sticky " },
@@ -373,6 +373,10 @@ static void walk_expr(S *s, Expr *e) {
         /* `polkit.message` / `.prompt` / `.dots` / `.user` / `.error` /
          * `.failed` inside the `spawned_by = polkit` template's body. */
         if (bL == 6 && memcmp(bn, "polkit", 6) == 0) return;
+        /* `greet.prompt` / `.dots` / `.input` / `.user` / `.error` /
+         * `.session` / `.failed` / `.busy` / `.caps`, and the `.sessions` for-list,
+         * inside the `spawned_by = greet` surface's body. */
+        if (bL == 5 && memcmp(bn, "greet", 5) == 0) return;
         Decl *d = find_decl_in(s->s.src, s->s.nsrc, bn, bL);
         if (d) {
             /* Validate field against source schema. */
@@ -495,10 +499,14 @@ static void walk_for(S *s, ForBlock *f) {
          find_decl_in(s->s.src, s->s.nsrc, it->member.base->ident.s, it->member.base->ident.n) &&
          (nameq(it->member.field, it->member.flen, "list") ||
           nameq(it->member.field, it->member.flen, "history") ||
-          nameq(it->member.field, it->member.flen, "items")));
+          nameq(it->member.field, it->member.flen, "items"))) ||
+        /* `<x>.sessions` — greeter session list, surface state like `rows` */
+        (it && it->kind == EX_MEMBER && it->member.base->kind == EX_IDENT &&
+         nameq(it->member.field, it->member.flen, "sessions"));
     if (it && !iter_ok)
         diag_error(it->loc, "for-iter must be `rows`, <tags-src>.list, "
-                   "<dbus_signal-src>.history or <tray-src>.items");
+                   "<dbus_signal-src>.history, <tray-src>.items or "
+                   "<greet-surface>.sessions");
     s->in_for_iter = true;
     walk_expr(s, f->iter);
     s->in_for_iter = false;
@@ -709,6 +717,11 @@ static void analyze_surface(S *s, Decl *d) {
                 if (v && v->kind == EX_IDENT && v->ident.n == 6
                     && memcmp(v->ident.s, "polkit", 6) == 0)
                     s->r->has_polkit = true;
+                /* and src/greet.c: the greetd client connects only when a
+                 * config declares the login surface */
+                if (v && v->kind == EX_IDENT && v->ident.n == 5
+                    && memcmp(v->ident.s, "greet", 5) == 0)
+                    s->r->has_greet = true;
             }
             else if (strcmp(pn, "reveal_on_hover") == 0) has_hud = true;
             else if (strcmp(pn, "reveal_anim_ms") == 0)  s->r->has_anim = true;

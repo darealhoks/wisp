@@ -173,6 +173,8 @@ typedef enum {
     /* tray item: c_expr is the 0-based index into tray.c's compacted list */
     LB_TRAY_IT,
     LB_NOTIF_IT,
+    /* greet session row: c_expr is the 0-based index into greet.c's list */
+    LB_GREET_SESSION,
     /* the menu itself (`menu.query` / `.prompt` / `.count`); c_expr is the
      * fallback prompt literal declared on the surface. */
     LB_MENU_SELF,
@@ -205,6 +207,10 @@ struct CGCtx {
      * scrolling + arrow-key selection walk it), and the input dispatch emits the
      * damage band + key handler. Cleared after the surface is done. */
     int   scroll_rows;
+    /* `spawned_by = greet`: session rows get a hit rect and a click branch even
+     * though the DSL declares no on_click — greet.c owns the selection the same
+     * way it owns Up/Down. Set only around that surface. */
+    int   greet_rows;
     /* Menu `separator_h`/`separator`/`separator_frac`: a flagged row gets its
      * own slot height and a hairline instead of the cell. 0 = plain rows. */
     int      menu_sep_h, menu_sep_frac;

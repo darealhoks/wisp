@@ -68,8 +68,15 @@ static int collect_for_items(ForBlock *f, BarItem *out, int n, int max,
                          strcmp(si->drv->name, "notifications") == 0)
                     notif_hist = 1;
             }
-            if (!tags_src && !dbus_src && !menu_rows && !tray_src && !notif_hist) {
-                diag_error(f->loc, "codegen: for-iter must be `rows`, <tags-src>.list, <dbus_signal-src>.history or <tray-src>.items");
+            /* `<x>.sessions` — the greeter's session list. Like `rows` it is
+             * surface state, not a declared source, so the base ident is
+             * whatever the config spells (`greet` or the surface's name). */
+            int greet_sessions = f->iter && f->iter->kind == EX_MEMBER &&
+                                 f->iter->member.flen == 8 &&
+                                 memcmp(f->iter->member.field, "sessions", 8) == 0;
+            if (!tags_src && !dbus_src && !menu_rows && !tray_src && !notif_hist
+                && !greet_sessions) {
+                diag_error(f->loc, "codegen: for-iter must be `rows`, <tags-src>.list, <dbus_signal-src>.history, <tray-src>.items or <greet-surface>.sessions");
                 *err = 1; return n;
             }
             if (f->ncells != 1) {
@@ -87,6 +94,17 @@ static int collect_for_items(ForBlock *f, BarItem *out, int n, int max,
                 out[n].runtime_for_iter = "(w->s.menu.view_top + it)";
                 out[n].runtime_for_kind = LB_MENU_ROW;
                 out[n].runtime_for_cap = MENU_ROWS_CAP;
+                out[n].for_var = f->var; out[n].for_var_n = f->vlen;
+                n++;
+            } else if (greet_sessions) {
+                if (n >= max) { *err = 1; return n; }
+                out[n] = (BarItem){0}; out[n].slider_idx = -1; out[n].graph_idx = -1; out[n].group_id = -1;
+                out[n].w = f->cells[0];
+                out[n].is_runtime_for_cell = true;
+                out[n].runtime_for_count = "greet_session_count()";
+                out[n].runtime_for_iter = "it";
+                out[n].runtime_for_kind = LB_GREET_SESSION;
+                out[n].runtime_for_cap = 8;   /* GREET_SESSIONS_CAP in greet.c */
                 out[n].for_var = f->var; out[n].for_var_n = f->vlen;
                 n++;
             } else if (notif_hist) {
@@ -1095,7 +1113,7 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
     /* A `tooltip`-only cell still needs a rect to hover-test against, but must
      * never match a click branch — kind -1 is matched by no dispatch case. */
     if (!clk && widget_prop(it->w, "tooltip")) kind = -1;
-    if (clk || kind == -1) {
+    if (clk || kind == -1 || (ctx->greet_rows && it->is_runtime_for_cell)) {
         int arg_val = it->is_for_cell ? it->cell_idx : it->handler_idx;
         /* Hit rect in compound/surface-local coords. For vertical (main=Y) the
          * cross-axis spans the region's X extent; for horizontal it spans the
@@ -1308,6 +1326,10 @@ int emit_surface_click_dispatch(FILE *o, BarItem *items, int nitems,
     /* Remember the clicked cell so a popup this handler opens (possibly via
      * exec → wispctl → ctl) can anchor under it. */
     fprintf(o, "        widget_note_click(w, __%s_hit[__wi][i].x, __%s_hit[__wi][i].w);\n", nm, nm);
+    /* A greet session row carries no declared handler: its arg is the index
+     * greet.c selects, the same one Up/Down walks. */
+    if (ctx->greet_rows)
+        fputs("        if (kind == 2) { greet_select(arg); return; }\n", o);
     /* Find each unique (widget, is_for) and emit a branch. */
     int handler_idx = 0;
     for (int it = 0; it < nitems; it++) {

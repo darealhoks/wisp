@@ -63,6 +63,7 @@ static void emit_features(FILE *o, SemaResult *r) {
     P(has_tooltip, "TOOLTIP");
     P(has_idle, "IDLE");
     P(has_polkit, "POLKIT");
+    P(has_greet, "GREET");
     fprintf(o, "#define NOTIF_HIST_CAP %d\n", notif_hist_cap);
     fprintf(o, "#define NOTIF_IMAGE_PX %d\n", notif_image_px);
     #undef P
@@ -125,6 +126,7 @@ static void emit_objects_mk(FILE *o, SemaResult *r) {
     if (r->has_anim)             fputs("    $(BUILD)/anim.o \\\n", o);
     if (r->has_idle)             fputs("    $(BUILD)/idle.o \\\n", o);
     if (r->has_polkit)           fputs("    $(BUILD)/polkit.o \\\n", o);
+    if (r->has_greet)            fputs("    $(BUILD)/greet.o \\\n", o);
     fputs("    $(BUILD)/gen_main.o \\\n", o);
     fputs("    $(BUILD)/gen_sources.o \\\n", o);
     fputs("    $(BUILD)/gen_surfaces.o \\\n", o);
