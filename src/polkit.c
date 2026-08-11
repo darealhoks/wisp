@@ -202,7 +202,7 @@ static void ui_show(void) {
     if (!w) { msg("polkit: no widget slot for the prompt"); return; }
     w->s.polkit.message[0] = w->s.polkit.prompt[0] = 0;
     w->s.polkit.dots[0] = w->s.polkit.error[0] = 0;
-    w->s.polkit.user[0] = 0;
+    w->s.polkit.user[0] = w->s.polkit.action[0] = 0;
     w->s.polkit.failed = 0;
     widget_setup_surface(w, PK_LAYER, "wisp-polkit", o);
     widget_set_size(w, PK_W + PK_SHADOW_PAD_L + PK_SHADOW_PAD_R,
@@ -469,7 +469,9 @@ static void begin_auth(R *r, uint32_t serial, const char *sender) {
                        "wisp: another authentication is already in progress");
         return;
     }
-    rstr(r);                                     /* action_id */
+    const char *action = rstr(r);
+    char actbuf[128];
+    snprintf(actbuf, sizeof actbuf, "%s", r->ok ? action : "");
     const char *message = rstr(r);
     char msgbuf[256];
     snprintf(msgbuf, sizeof msgbuf, "%s", r->ok ? message : "");
@@ -510,6 +512,7 @@ static void begin_auth(R *r, uint32_t serial, const char *sender) {
     if (w) {
         set_field(w->s.polkit.message, sizeof w->s.polkit.message, msgbuf);
         set_field(w->s.polkit.user, sizeof w->s.polkit.user, A.user);
+        set_field(w->s.polkit.action, sizeof w->s.polkit.action, actbuf);
     }
     if (helper_spawn() < 0) {
         auth_finish("org.freedesktop.PolicyKit1.Error.Failed",

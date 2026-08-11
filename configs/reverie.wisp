@@ -765,8 +765,7 @@ surface polkit {
 
 	axis   = vertical;
 	width  = 420;
-	height = 188;
-	gap    = 6;
+	height = 150;   // 28 pad + 22 + 6 + 34 + 6 + 38 rows, then the origin at the far edge
 	pad_x  = 16;
 	pad_y  = 14;
 	font_size = 14;
@@ -780,25 +779,17 @@ surface polkit {
 	shadow_y = 0;
 	shadow_blur = 6;
 
+	// this body advances by height+`pad` per row: the surface `gap` never
+	// reaches it, so the row spacing is each row's own trailing pad
 	widget pk_title {
 		height = 22;
+		pad    = 6;
 		text   = "Authentication required";
 		fg     = TEXT;
 	}
-	widget pk_msg {
-		height = 40;
-		text   = polkit.message;
-		fg     = SUBTXT;
-		elide;
-	}
-	widget pk_user {
-		height = 20;
-		text   = polkit.user;
-		fg     = SUBTXT;
-	}
 	group pk_entry {
 		height = 34;
-		pad    = 0;
+		pad    = 6;
 		pad_x  = 10;
 		gap    = 0;
 		bg     = REST;
@@ -808,11 +799,24 @@ surface polkit {
 		cell { text = polkit.dots;   fg = TEXT; }
 		cell { text = "_";           fg = TEXT; }
 	}
-	widget pk_err {
-		height  = 20;
-		text    = polkit.error;
-		fg      = RED;
-		visible = polkit.failed;
+	widget pk_msg {
+		// two fixed rows, not body_fit: the height above is constant, so a
+		// short message must not shrink the stack under the bottom row
+		height     = 38;
+		text       = polkit.message;
+		fg         = SUBTXT;
+		body_lines = 2;
+		wrap;
+		text_align = start;
+	}
+	// last row does double duty so the origin can sit flush at the bottom:
+	// a failed attempt swaps it for PAM's error instead of adding a row
+	widget pk_user {
+		align  = end;   // only row out of the start bucket, so it can't collide
+		height = 18;
+		text   = polkit.failed ? polkit.error : "{polkit.user} · {polkit.action}";
+		fg     = polkit.failed ? RED : EMPTY;
+		elide;
 	}
 }
 

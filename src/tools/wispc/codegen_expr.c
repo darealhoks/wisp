@@ -229,7 +229,7 @@ CE lower_member(CGCtx *c, Expr *e) {
     if (!L && b->ident.n == 6 && memcmp(b->ident.s, "polkit", 6) == 0) {
         const char *wv = c->widget_var ? c->widget_var : "w";
         CE r = { .type = T_UNK };
-        static const char *SFLD[] = { "message", "prompt", "dots", "user", "error", 0 };
+        static const char *SFLD[] = { "message", "prompt", "dots", "user", "error", "action", 0 };
         int hit = 0;
         for (int i = 0; SFLD[i]; i++) {
             if (flen != strlen(SFLD[i]) || memcmp(fld, SFLD[i], flen) != 0) continue;

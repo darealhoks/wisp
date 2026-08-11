@@ -116,7 +116,7 @@ void idle_ss_reset(void);        /* session bus died: drop ScreenSaver cookies *
 extern int pk_fd;                       /* -1 = no system bus */
 /* What the DSL reads; the storage lives in Widget.s.polkit. */
 typedef struct {
-    const char *message, *prompt, *dots, *user, *error;
+    const char *message, *prompt, *dots, *user, *error, *action;
     int failed;
 } PolkitView;
 void polkit_init(void);
@@ -412,6 +412,7 @@ struct Widget {
             char prompt[64];
             char dots[128];
             char user[64];
+            char action[128];
             char error[256];
             int  failed;
         } polkit;
