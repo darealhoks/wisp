@@ -424,7 +424,7 @@ rows are the one place a `for` cell gets a hit rect without a declared
 `on_click`. Nothing else in the surface reacts to the pointer, and there are
 no timers, so the greeter idles at 0 ticks.
 
-Skeleton: [[templates#greet]].
+Skeleton: [[templates#greet]]. End-to-end setup: [[greeter]].
 
 ## Compound
 

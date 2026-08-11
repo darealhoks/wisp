@@ -367,7 +367,7 @@ surface login {
 - Bindings: `greet.prompt`, `.dots`, `.input`, `.user`, `.session`, `.error`, `.failed`, `.busy`, `.caps` ([[state#greet-self-locals]]) plus `for s in greet.sessions`. The typed secret is not readable.
 - `keyboard` defaults to `exclusive` here, unlike every other surface.
 - The session rows are clickable without an `on_click`: a left click selects that session, exactly what Up/Down does.
-- Only usable under greetd — `$GREETD_SOCK` unset is fatal, not a degraded mode.
+- Only usable under greetd — `$GREETD_SOCK` unset is fatal, not a degraded mode. Wiring it up: [[greeter]].
 
 ## Notification centre
 

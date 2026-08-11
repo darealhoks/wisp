@@ -1,5 +1,5 @@
 [
-  {"section": "Start", "pages": ["index", "install", "first-config"]},
+  {"section": "Start", "pages": ["index", "install", "first-config", "greeter"]},
   {"section": "Language", "pages": ["syntax", "types", "builtins", "state"]},
   {"section": "Modules", "pages": ["modules"]},
   {"section": "Reference", "pages": ["wispctl", "gotchas"]},
