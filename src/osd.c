@@ -1,7 +1,7 @@
 /* OSD / notification stack — replaces both mako (app notifications) and
  * dwl-osd (volume / brightness / mic sliders).
  *
- * One W_OSD widget; surface sized to hold MAX_OSDS stacked slabs vertically.
+ * One W_OSD widget; surface sized to hold the live slabs stacked vertically.
  * Active items pack to the top, inactive rows render transparent so the
  * unused area below is click-through. Replacement-by-id is the same idea as
  * mako's x-canonical-private-synchronous: a fresh post with a matching
@@ -75,8 +75,8 @@
 /* Vertical padding inside a slab (top + bottom) around the text block. */
 #define OSD_SLAB_PAD_Y 24
 /* Worst-case slab height: 1 summary line + OSD_MAX_BODY_LINES body lines +
- * progress band + padding. Surface is sized for the worst case so we never
- * have to renegotiate size with the compositor at runtime. */
+ * progress band + padding. Every slab is budgeted at the worst case, so text
+ * changes never renegotiate the surface size — only the slab count does. */
 #define OSD_PROG_BAND  (OSD_PROG_H + 8)
 #define OSD_MAX_SLAB_H ((1 + OSD_MAX_BODY_LINES) * 17 + OSD_PROG_BAND + OSD_SLAB_PAD_Y)
 /* Layout: the OSD surface respects the bar's exclusive zone (so dwl positions
@@ -108,7 +108,10 @@
 #define OSD_SH_B 0
 #endif
 #define OSD_SH_X       (OSD_SH_L > OSD_SH_R ? OSD_SH_L : OSD_SH_R)
-#define OSD_TOTAL_H    (MAX_OSDS * OSD_MAX_SLAB_H + (MAX_OSDS - 1) * OSD_GAP)
+/* Surface height for a live stack of n slabs, worst-case slab height each: the
+ * buffer costs w·h·4·2, so sizing it for MAX_OSDS would pin ~4× what the usual
+ * single notification needs. osd_fit() re-sizes on every post. */
+#define OSD_CHAIN_H(n) ((n) * OSD_MAX_SLAB_H + ((n) - 1) * OSD_GAP)
 /* Surface extends UP into the bar's exclusive zone (exclusive_zone=-1) the
  * same way the HUD does — gives the OSD ownership of the bar-strip pixels
  * directly above the body so the fillets visually claw into the bar instead
@@ -116,6 +119,14 @@
  * at screen y=BAR_HEIGHT (buffer y=OSD_TOP_INSET); the bar-strip is left
  * transparent except for the fillet wedges. */
 #define OSD_TOP_INSET  BAR_HEIGHT
+#if OSD_ANCHOR_BR
+#define OSD_EXTRA_H    (OSD_FILLET_R + OSD_SH_T)
+#elif OSD_FLOAT
+#define OSD_EXTRA_H    (OSD_TOP_MARGIN + OSD_SH_B)
+#else
+#define OSD_EXTRA_H    (OSD_TOP_INSET + OSD_SH_B)
+#endif
+#define OSD_H_FOR(n)   (OSD_CHAIN_H(n) + OSD_EXTRA_H)
 /* Slide-in animation duration (ms). Matches HUD's reveal_anim_ms. DSL knob
  * `slide_ms` on the `osd` surface template (in the .wisp configs) overrides this via
  * gen_overrides.h. */
@@ -511,7 +522,7 @@ static Widget *osd_make_on(Output *o) {
     /* Buffer pads OSD_FILLET_R on the left and top for the armpit wedges;
      * body sits flush in the bottom-right corner. */
     w->w = OSD_W + OSD_FILLET_R + OSD_SH_L;
-    w->h = OSD_TOTAL_H + OSD_FILLET_R + OSD_SH_T;
+    w->h = OSD_H_FOR(1);
     widget_setup_surface(w, LAYER_OVERLAY, "wisp-osd", o);
     widget_set_size(w, w->w, w->h);
     widget_set_anchor(w, LS_ANCHOR_BOTTOM | LS_ANCHOR_RIGHT);
@@ -519,7 +530,7 @@ static Widget *osd_make_on(Output *o) {
     widget_set_exclusive_zone(w, 0);
 #elif OSD_FLOAT
     w->w = OSD_W + 2 * OSD_SH_X;
-    w->h = OSD_TOTAL_H + OSD_TOP_MARGIN + OSD_SH_B;
+    w->h = OSD_H_FOR(1);
     widget_setup_surface(w, LAYER_OVERLAY, "wisp-osd", o);
     widget_set_size(w, w->w, w->h);
     /* Anchor TOP only -> compositor centers horizontally. exclusive_zone=-1
@@ -532,7 +543,7 @@ static Widget *osd_make_on(Output *o) {
     widget_set_exclusive_zone(w, -1);
 #else
     w->w = OSD_W + 2 * OSD_SIDE_PAD + 2 * OSD_SH_X;
-    w->h = OSD_TOTAL_H + OSD_SH_B;
+    w->h = OSD_H_FOR(1);
     widget_setup_surface(w, LAYER_OVERLAY, "wisp-osd", o);
     widget_set_size(w, w->w, w->h);
     /* Anchor TOP only → compositor centers horizontally. exclusive_zone=-1
@@ -586,6 +597,22 @@ static Widget *osd_ensure(void) {
         return w;
     }
     return osd_make_on(target);
+}
+
+/* Re-size the surface to the live slab count. Applied locally as well as
+ * requested, so this post's render already draws into a right-sized pool
+ * (widget_ensure_pool reallocates on the size change); the compositor's
+ * configure just confirms it. */
+static void osd_fit(Widget *w) {
+    int n = 0;
+    while (n < MAX_OSDS && w->s.osd.items[n].active) n++;
+    if (n < 1) n = 1;
+    int h = OSD_H_FOR(n);
+    if (h == w->h) return;
+    w->h = h;
+    osd_band_n = -1;   /* pool realloc: next frame must be full */
+    widget_set_size(w, w->w, h);
+    wl_req(w->surface, SURFACE_REQ_COMMIT, NULL, 0, -1);
 }
 
 /* First-configure hook: a slab posted before the layer surface's initial
@@ -652,7 +679,8 @@ uint32_t osd_post(uint32_t replace_id, const char *summary, const char *body,
     }
 
     pack(w);
-    osd_gen++;      /* content changed: force one full frame (geometry may not move) */
+    osd_fit(w);
+    osd_gen++;     /* content changed: force one full frame (geometry may not move) */
     osd_render(w);  /* refreshes input region from computed heights */
     return o->replace_id;
 }
