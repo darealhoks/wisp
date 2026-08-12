@@ -1,5 +1,6 @@
 /* Widget abstraction: surface + layer-surface + SHM pool + ping-pong buffers. */
 #include "wisp.h"
+#include "render_px.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -317,6 +318,7 @@ void widget_ensure_pool(Widget *w, int n_slots) {
     w->shm_base = mmap(NULL, total, PROT_READ | PROT_WRITE, MAP_SHARED, w->pool_fd, 0);
     if (w->shm_base == MAP_FAILED) die("mmap: %s", strerror(errno));
     w->pool_size = total;
+    w->pool_gen++;
 
     w->id_pool = wl_new_id();
     uint32_t pa[2] = { w->id_pool, (uint32_t)total };
@@ -359,6 +361,44 @@ int widget_copy_forward(Widget *w, BufSlot *dst) {
     int i = w->last_attached;
     if (i < 0 || i >= w->n_slots || &w->slots[i] == dst) return 0;
     memcpy(dst->px, w->slots[i].px, (size_t)(w->pool_size / w->n_slots));
+    return 1;
+}
+
+void span_add(int *x0, int *x1, int *n, int cap, int a, int b, int wmax) {
+    if (a < 0) a = 0;
+    if (b > wmax) b = wmax;
+    if (b <= a) return;
+    int i = 0;
+    while (i < *n && x1[i] < a) i++;
+    int j = i;
+    while (j < *n && x0[j] <= b) {
+        if (x0[j] < a) a = x0[j];
+        if (x1[j] > b) b = x1[j];
+        j++;
+    }
+    int cnt = j - i;
+    if (cnt == 0 && *n >= cap) { x0[0] = 0; x1[0] = wmax; *n = 1; return; }
+    if (cnt != 1) {
+        memmove(x0 + i + 1, x0 + j, (size_t)(*n - j) * sizeof *x0);
+        memmove(x1 + i + 1, x1 + j, (size_t)(*n - j) * sizeof *x1);
+        *n = *n - cnt + 1;
+    }
+    x0[i] = a; x1[i] = b;
+}
+
+int widget_copy_forward_spans(Widget *w, BufSlot *dst,
+                              int *x0, int *x1, int *n, int cap) {
+    int i = w->last_attached;
+    int d = (int)(dst - w->slots);
+    if (i < 0 || i >= w->n_slots || i == d) return 0;
+    /* dst still holds ITS last frame's pixels, which src may not cover — zero
+     * those first, or a pill that has since moved stays behind as a ghost. */
+    clear_spans(dst->px, w->w, w->h, x0 + d * cap, x1 + d * cap, n[d]);
+    copy_spans(dst->px, w->slots[i].px, w->w, w->h,
+               x0 + i * cap, x1 + i * cap, n[i]);
+    memcpy(x0 + d * cap, x0 + i * cap, (size_t)n[i] * sizeof *x0);
+    memcpy(x1 + d * cap, x1 + i * cap, (size_t)n[i] * sizeof *x1);
+    n[d] = n[i];
     return 1;
 }
 
@@ -528,16 +568,21 @@ int cutout_apply(const char *self, Output *self_out, uint32_t *px, int sw, int s
         if (!cuts[i].active) continue;
         if (strncmp(cuts[i].target, self, CUTOUT_NAME_MAX) != 0) continue;
         if (cuts[i].scope && cuts[i].scope != self_out) continue;
-        int cw = cuts[i].w, ch = cuts[i].h;
-        int cx = cuts[i].x == CUTOUT_X_CENTER ? (sw - cw) / 2 : cuts[i].x;
-        int cy = cuts[i].y;
+        int lw = cuts[i].w, lh = cuts[i].h;
+        int lx = cuts[i].x == CUTOUT_X_CENTER ? (sw - lw) / 2 : cuts[i].x;
+        int ly = cuts[i].y;
+        /* px is a physical-pixel buffer (widget_pw x widget_ph); the rect and
+         * the surface extent arrive in logical coordinates. */
+        int pw = SC(sw), ph = SC(sh);
+        int cx = SC(lx), cy = SC(ly);
+        int cw = SC(lx + lw) - cx, ch = SC(ly + lh) - cy;
         if (cx < 0) { cw += cx; cx = 0; }
         if (cy < 0) { ch += cy; cy = 0; }
-        if (cx + cw > sw) cw = sw - cx;
-        if (cy + ch > sh) ch = sh - cy;
+        if (cx + cw > pw) cw = pw - cx;
+        if (cy + ch > ph) ch = ph - cy;
         if (cw <= 0 || ch <= 0) continue;
         for (int j = 0; j < ch; j++) {
-            uint32_t *row = px + (cy + j) * sw + cx;
+            uint32_t *row = px + (cy + j) * pw + cx;
             for (int k = 0; k < cw; k++) row[k] = 0;
         }
         applied++;

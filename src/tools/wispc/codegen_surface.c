@@ -59,24 +59,16 @@ static uint64_t item_dep_mask(CGCtx *ctx, const BarItem *it) {
 
 /* Partial repaint applies only to a plain, flat, horizontal bar: the SURFACE
  * body must be a flat fill (no rounded corners, border, fillets, armpit feet,
- * gradient, clip, or cutout-source) and carry no slider. Groups/items may still
- * draw their own pills — those repaint as whole units, restoring the flat
- * surface bg underneath. A non-flat surface can't restore a cell's backdrop, so
- * it always takes the full-render path. */
+ * gradient, clip, or cutout-source) and carry no slider. Inside the damage band
+ * the draw pass is byte-identical to a full render (bg fill included), so the
+ * only thing the flatness buys is that the band needs no per-corner chrome
+ * repaint. */
 static int surface_partial_ok(Decl *sur, BarItem *items, int nitems,
                               int vertical, int has_bord, int armpit,
-                              int armpit_any_outer, int reveal_g, int n_sliders,
-                              int any_shadow) {
+                              int armpit_any_outer, int reveal_g, int n_sliders) {
     (void)items; (void)nitems;
     if (vertical || has_bord || armpit || armpit_any_outer || reveal_g || n_sliders)
         return 0;
-    /* Any shadow anywhere kills partial repaint. A shadow spills past the box
-     * that owns it, so a dirty cell's restore rect has to be inflated by the
-     * shadow reach — and that inflated rect then wipes an idle NEIGHBOUR's
-     * shadow tail and body edge, which nothing redraws. Gaps between bar pills
-     * are routinely smaller than the blur, so this is the common case, not the
-     * corner one. */
-    if (any_shadow) return 0;
     static const char *round_props[] = {
         "radius", "radius_tl", "radius_tr", "radius_bl", "radius_br",
         "radius_inner", "radius_outer" };
@@ -255,7 +247,11 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     for (int i = 0; i < nitems; i++) items[i].dep_mask = item_dep_mask(ctx, &items[i]);
     int partial_cap = (ctx->nsrc <= 64) &&
         surface_partial_ok(sur, items, nitems, vertical, has_bord, armpit,
-                           armpit_any_outer, reveal_g, n_sliders, sh.any);
+                           armpit_any_outer, reveal_g, n_sliders);
+    /* Sparse pool: nothing paints full-width (partial_cap already rules out a
+     * border, bg_bottom, armpits, radii and clip_top), so only the columns the
+     * pills occupy are ever written and the gap pages never fault in. */
+    int sparse_ok = partial_cap && !(bg & 0xff000000u) && !(sh.col & 0xff000000u);
 
     /* `scroll = <px>` (pixel step) or `scroll = rows` (snap a notch to the next
      * row top). Both make this a scrollable container; the row table below is
@@ -338,6 +334,7 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
      * wins over hover on the same cell (the draw pass applies hover first). */
     fprintf(o, "static int __%s_hover_st __attribute__((unused)) = -1;\n", nm);
     fprintf(o, "static Widget *__%s_hover_w __attribute__((unused));\n", nm);
+    fprintf(o, "static int __%s_hover_dirty __attribute__((unused));\n", nm);
     /* Scrollable container: per-widget row table, rebuilt by every render. `rowy`
      * is each scrolled row's top in CONTENT coordinates (unscrolled, relative to
      * rowbase) with one trailing sentinel for the content end, `rowst` its st[]
@@ -365,13 +362,34 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     fputs("\n", o);
     reg_collect(nm);
 
-    /* Partial-repaint state: last frame's per-cell advance (-1 = hidden). A
-     * change anywhere shifts the layout, forcing a full render (phase B). Per-
-     * item source-dep masks live on BarItem.dep_mask and are emitted inline at
-     * each gated draw. masks_ok caps the mask at 64 sources. */
+    /* Partial-repaint state, per output slot: last frame's per-cell advance
+     * (-1 = hidden) and drawn x span. An advance change anywhere shifts the
+     * layout, forcing a full render (phase B); the spans are what the damage
+     * band is unioned from, and are only read on a frame the shift check has
+     * already proven has last frame's geometry. masks_ok caps the mask at 64
+     * sources. */
     int masks_ok = ctx->nsrc <= 64;
-    if (partial_cap)
-        fprintf(o, "static int %s_cell_adv[%d];\n\n", nm, n_arr);
+    if (partial_cap) {
+        fprintf(o, "static int %s_cell_adv[8][%d];\n", nm, n_arr);
+        fprintf(o, "static int %s_cell_x0[8][%d], %s_cell_x1[8][%d];\n", nm, n_arr, nm, n_arr);
+        fprintf(o, "static const uint64_t %s_cell_dep[%d] = {", nm, n_arr);
+        for (int i = 0; i < nitems; i++) {
+            int slots = items[i].is_runtime_for_cell ? items[i].runtime_for_cap : 1;
+            for (int k = 0; k < slots; k++)
+                fprintf(o, "%s0x%016llxull", (i || k) ? "," : "",
+                        (unsigned long long)items[i].dep_mask);
+        }
+        if (nitems == 0) fputs("0ull", o);
+        fputs("};\n\n", o);
+    }
+    /* Written-column spans, per output slot × per buffer slot. `span_gen`
+     * tracks Widget.pool_gen: a recreated pool is zero pages again, so both
+     * rows drop to "nothing written" instead of describing stale pixels. */
+    if (sparse_ok) {
+        fprintf(o, "static int %s_span_x0[8][2][%d], %s_span_x1[8][2][%d];\n", nm, n_arr, nm, n_arr);
+        fprintf(o, "static int %s_span_n[8][2];\n", nm);
+        fprintf(o, "static uint32_t %s_span_gen[8];\n\n", nm);
+    }
 
     ctx->widget_var = "w";
 
@@ -708,22 +726,73 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     }
     /* Partial-repaint decision (phase A). Snapshot + consume the source-dirty
      * mask; when this bar is eligible, no tween runs, no press is held, and the
-     * previous frame can be copied forward, only the cells whose sources ticked
-     * get repainted (see the gated draws + damage union below). __wds==0 means a
-     * forced/mut redraw with no source tick — always a full render. */
+     * previous frame can be copied forward, the draw pass runs in full but
+     * clipped to the column band the ticked sources' cells occupied last frame.
+     * __wds==0 means a forced/mut redraw with no source tick — always a full
+     * render. The band is unioned from last frame's spans, which phase B then
+     * proves still current; a shift there falls back to a full render. */
+    if (sparse_ok) {
+        fprintf(o, "    int __si = (int)(sl - w->slots);\n");
+        fprintf(o, "    if (%s_span_gen[__wi] != w->pool_gen) {\n", nm);
+        fprintf(o, "        %s_span_n[__wi][0] = 0;\n", nm);
+        fprintf(o, "        %s_span_n[__wi][1] = 0;\n", nm);
+        fprintf(o, "        %s_span_gen[__wi] = w->pool_gen;\n", nm);
+        fputs("    }\n", o);
+        fprintf(o, "    int __sp_x0[%d], __sp_x1[%d], __sp_n = 0;\n", n_arr, n_arr);
+    }
     if (masks_ok) {
         fprintf(o, "    uint64_t __wds = bar_dirty_srcs_%s;\n", nm);
         fprintf(o, "    bar_dirty_srcs_%s = 0;\n", nm);
         fputs("    int __partial = 0; (void)__wds; (void)__partial;\n", o);
     }
     if (partial_cap) {
-        fputs("    int __dmg_x0 = 1 << 30, __dmg_x1 = 0; (void)__dmg_x0; (void)__dmg_x1;\n", o);
-        fputs("    if (w->kind == W_BAR && __wds != 0ull && !__", o);
+        fputs("    int __dmg_x0 = 0, __dmg_x1 = 0; (void)__dmg_x0; (void)__dmg_x1;\n", o);
+        /* A hover change on the same tick as a source tick moves a cell the
+         * ticked sources' dep_mask doesn't cover; that cell falls outside the
+         * damage band, so this frame must render in full. */
+        fprintf(o, "    int __hovch = __%s_hover_dirty;\n", nm);
+        fprintf(o, "    __%s_hover_dirty = 0;\n", nm);
+        fputs("    if (w->kind == W_BAR && !__hovch && __wds != 0ull && !__", o);
         fprintf(o, "%s_pressed_w\n", nm);
         fputs("#ifdef WISP_HAS_ANIM\n        && anim_active() == 0\n#endif\n", o);
-        fputs("       ) { if (widget_copy_forward(w, sl)) __partial = 1; }\n", o);
+        if (sparse_ok)
+            fprintf(o, "       ) { if (widget_copy_forward_spans(w, sl, &%s_span_x0[__wi][0][0], &%s_span_x1[__wi][0][0], %s_span_n[__wi], %d)) __partial = 1; }\n",
+                    nm, nm, nm, n_arr);
+        else
+            fputs("       ) { if (widget_copy_forward(w, sl)) __partial = 1; }\n", o);
+        fputs("    if (__partial) {\n", o);
+        fputs("        int __b0 = 1 << 30, __b1 = 0;\n", o);
+        fprintf(o, "        for (int __k = 0; __k < %d; __k++) {\n", n_arr);
+        fprintf(o, "            if (!(%s_cell_dep[__k] & __wds)) continue;\n", nm);
+        fprintf(o, "            if (%s_cell_x0[__wi][__k] < __b0) __b0 = %s_cell_x0[__wi][__k];\n", nm, nm);
+        fprintf(o, "            if (%s_cell_x1[__wi][__k] > __b1) __b1 = %s_cell_x1[__wi][__k];\n", nm, nm);
+        fputs("        }\n", o);
+        fputs("        if (__b1 > __b0) { __dmg_x0 = __b0 < 0 ? 0 : __b0; __dmg_x1 = __b1 > (int)w->w ? (int)w->w : __b1; }\n", o);
+        /* An empty band still runs the whole draw pass — clipped to nothing, so
+         * it writes no pixel — rather than branching around it: the layout and
+         * the hit-rect rebuild must happen on every frame either way. */
+        fputs("        render_set_clip_x(__dmg_x0, __dmg_x1);\n", o);
+        if (sparse_ok) {
+            /* the band is a bounding box and pills sit at both edges — filling
+             * it whole writes every gap page and defeats the sparse pool. Clear
+             * only span∩band: every cell the clipped draw will rewrite is
+             * inside the slot's span list (copy-forward installed it). */
+            fprintf(o, "        for (int __i2 = 0; __i2 < %s_span_n[__wi][__si]; __i2++) {\n", nm);
+            fprintf(o, "            int __cx0 = %s_span_x0[__wi][__si][__i2];\n", nm);
+            fprintf(o, "            int __cx1 = %s_span_x1[__wi][__si][__i2];\n", nm);
+            fputs("            if (__cx0 < __dmg_x0) __cx0 = __dmg_x0;\n", o);
+            fputs("            if (__cx1 > __dmg_x1) __cx1 = __dmg_x1;\n", o);
+            fputs("            if (__cx1 > __cx0) fill_rect(sl->px, w->w, w->h, __cx0, 0, __cx1 - __cx0, w->h, 0);\n", o);
+            fputs("        }\n", o);
+        } else {
+            fputs("        fill_rect(sl->px, w->w, w->h, __dmg_x0, 0, __dmg_x1 - __dmg_x0, w->h, 0);\n", o);
+        }
+        fputs("    }\n", o);
     }
-    if (partial_cap)
+    if (sparse_ok)
+        fprintf(o, "    if (!__partial) clear_spans(sl->px, w->w, w->h, %s_span_x0[__wi][__si], %s_span_x1[__wi][__si], %s_span_n[__wi][__si]);\n",
+                nm, nm, nm);
+    else if (partial_cap)
         fputs("    if (!__partial) clear_buf(sl->px, w->w, w->h, 0);\n", o);
     else if (scroll_px > 0)
         fputs("    if (!__yp) clear_buf(sl->px, w->w, w->h, 0);\n", o);
@@ -811,9 +880,11 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
             if (bg_bot_e) {
                 uint32_t bg_bot = eval_color_ctx(ctx, bg_bot_e, bg);
                 fprintf(o, "    fill_rect_vgrad(sl->px, w->w, w->h, __cox, __coy, __cws, __chs, 0x%08xu, 0x%08xu, __clip_top);\n", bg, bg_bot);
-            } else {
-                fprintf(o, "    %sfill_rect_clipped(sl->px, w->w, w->h, __cox, __coy, __cws, __chs, 0x%08xu, __clip_top);\n",
-                        partial_cap ? "if (!__partial) " : "", bg);
+            } else if (!sparse_ok) {
+                /* sparse: bg is fully transparent, and filling it with zeros
+                 * would fault in every page of the pool for no pixel change */
+                fprintf(o, "    fill_rect_clipped(sl->px, w->w, w->h, __cox, __coy, __cws, __chs, 0x%08xu, __clip_top);\n",
+                        bg);
             }
         }
     }
@@ -1077,11 +1148,19 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
         fprintf(o, "    { int __shift = 0;\n");
         fprintf(o, "      for (int __k = 0; __k < %d; __k++) {\n", n_arr);
         fputs("          int __na = st[__k].vis ? (st[__k].h > 0 ? st[__k].h : st[__k].tw) : -1;\n", o);
-        fprintf(o, "          if (__na != %s_cell_adv[__k]) __shift = 1;\n", nm);
-        fprintf(o, "          %s_cell_adv[__k] = __na;\n", nm);
+        fprintf(o, "          if (__na != %s_cell_adv[__wi][__k]) __shift = 1;\n", nm);
+        fprintf(o, "          %s_cell_adv[__wi][__k] = __na;\n", nm);
         fputs("      }\n", o);
-        fprintf(o, "      if (__partial && __shift) { __partial = 0; clear_buf(sl->px, w->w, w->h, 0);\n");
-        fprintf(o, "          fill_rect_clipped(sl->px, w->w, w->h, __cox, __coy, __cws, __chs, 0x%08xu, 0); } }\n", bg);
+        if (sparse_ok) {
+            /* post-copy-forward this slot holds exactly src's spans, so those
+             * are the only pixels there are to undo */
+            fprintf(o, "      if (__partial && __shift) { __partial = 0; render_clip_reset();\n");
+            fprintf(o, "          clear_spans(sl->px, w->w, w->h, %s_span_x0[__wi][__si], %s_span_x1[__wi][__si], %s_span_n[__wi][__si]); } }\n",
+                    nm, nm, nm);
+        } else {
+            fprintf(o, "      if (__partial && __shift) { __partial = 0; render_clip_reset(); clear_buf(sl->px, w->w, w->h, 0);\n");
+            fprintf(o, "          fill_rect_clipped(sl->px, w->w, w->h, __cox, __coy, __cws, __chs, 0x%08xu, 0); } }\n", bg);
+        }
     }
     fputs("    /* --- draw pass --- */\n", o);
     /* `scroll`: the start-aligned stack below the sticky prefix is shifted up by
@@ -1106,6 +1185,7 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
         fprintf(o, "    __%s_rowbot[__wi] = __coy + __chs;\n", nm);
     }
     ctx->partial_ok = partial_cap;
+    ctx->sparse_cap = sparse_ok ? n_arr : 0;
     ctx->surface_bg = bg;
     ctx->scroll_rows = 0;      /* the sticky prefix is not a scrolled row */
     for (int i = 0; i < nitems; i++) {
@@ -1125,6 +1205,7 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
         emit_item_draw(o, &items[i], ctx, vertical, nm);
     }
     ctx->partial_ok = 0;
+    ctx->sparse_cap = 0;
     ctx->scroll_rows = scroll_px > 0;   /* the input emitters below still need it */
     if (scroll_px > 0) {
         if (n_sticky >= nitems) {
@@ -1145,6 +1226,17 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
         fputs("    w->scroll_max = start_pos + w->scroll_off - (__coy + __chs);\n", o);
         fputs("    if (w->scroll_max < 0) w->scroll_max = 0;\n", o);
         fputs("    if (w->scroll_off > w->scroll_max) w->scroll_off = w->scroll_max;\n", o);
+    }
+
+    /* The band must not outlive the draw pass: the cutout blit below and every
+     * renderer that runs after this one write straight into their own buffers. */
+    if (partial_cap) fputs("    render_clip_reset();\n", o);
+    /* This frame's written columns become the slot's span list — unconditional,
+     * since the draw pass rebuilds the layout on a partial frame too. */
+    if (sparse_ok) {
+        fprintf(o, "    memcpy(%s_span_x0[__wi][__si], __sp_x0, (size_t)__sp_n * sizeof(int));\n", nm);
+        fprintf(o, "    memcpy(%s_span_x1[__wi][__si], __sp_x1, (size_t)__sp_n * sizeof(int));\n", nm);
+        fprintf(o, "    %s_span_n[__wi][__si] = __sp_n;\n", nm);
     }
 
     /* Snapshot hits for click dispatch — into this widget's per-slot row. */

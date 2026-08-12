@@ -202,6 +202,11 @@ struct CGCtx {
      * cell is first overwritten with `surface_bg` before its content redraws.
      * Set only around an eligible plain bar surface's draw loop. */
     int   partial_ok;
+    /* Non-zero (= the span array capacity) while emitting a sparse-pool
+     * surface's draw loop: each visible top-level cell and each group pill
+     * records the columns it writes, so the clear/copy-forward paths can skip
+     * the gaps. Implies partial_ok. */
+    int   sparse_cap;
     /* Non-zero while emitting a `scroll`-able surface: the draw pass records each
      * top-level start-aligned row's top into the per-widget row table (row-snap
      * scrolling + arrow-key selection walk it), and the input dispatch emits the

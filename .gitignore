@@ -23,3 +23,6 @@ nohup.out
 CLAUDE.md
 
 /ttmetrics
+
+# local profiling harness
+bench/

@@ -26,6 +26,11 @@ int render_clip_y0 = 0, render_clip_y1 = 1 << 28;
 /* Logical row band; callers pass the container rect they are drawing into. */
 void render_set_clip(int y0, int y1) { render_clip_y0 = SC(y0); render_clip_y1 = SC(y1); }
 
+int render_clip_bx0 = 0, render_clip_bx1 = 1 << 28;
+
+/* Logical column band; the shadow primitive honours it too (see render_px.h). */
+void render_set_clip_x(int x0, int x1) { render_clip_bx0 = SC(x0); render_clip_bx1 = SC(x1); }
+
 int render_clip_shaped = 0;
 int render_clip_x0 = 0, render_clip_x1 = 1 << 28, render_clip_sy0 = 0, render_clip_sy1 = 0;
 int render_clip_rtl = 0, render_clip_rtr = 0, render_clip_rbr = 0, render_clip_rbl = 0;
@@ -50,6 +55,7 @@ void render_set_clip_shape(int x, int y, int w, int h,
 
 void render_clip_reset(void) {
     render_clip_y0 = 0; render_clip_y1 = 1 << 28;
+    render_clip_bx0 = 0; render_clip_bx1 = 1 << 28;
     render_clip_shaped = 0;
 }
 
@@ -76,6 +82,35 @@ void clear_band(uint32_t *px, int w, int h, int y0, int y1, uint32_t c) {
     if (y1 > h) y1 = h;
     c = premul(c);
     for (int i = y0 * w; i < y1 * w; i++) px[i] = c;
+}
+
+/* Zero full-height logical column spans. Everything between two spans is left
+ * untouched — on a fresh memfd that means the page never faults in. */
+void clear_spans(uint32_t *px, int w, int h, const int *x0, const int *x1, int n) {
+    int pw = SC(w), ph = SC(h);
+    for (int i = 0; i < n; i++) {
+        int a = SC(x0[i]), b = SC(x1[i]);
+        if (a < 0) a = 0;
+        if (b > pw) b = pw;
+        if (b <= a) continue;
+        for (int y = 0; y < ph; y++)
+            memset(px + (size_t)y * pw + a, 0, (size_t)(b - a) * 4);
+    }
+}
+
+void copy_spans(uint32_t *dst, const uint32_t *src, int w, int h,
+                const int *x0, const int *x1, int n) {
+    int pw = SC(w), ph = SC(h);
+    for (int i = 0; i < n; i++) {
+        int a = SC(x0[i]), b = SC(x1[i]);
+        if (a < 0) a = 0;
+        if (b > pw) b = pw;
+        if (b <= a) continue;
+        for (int y = 0; y < ph; y++) {
+            size_t off = (size_t)y * pw + a;
+            memcpy(dst + off, src + off, (size_t)(b - a) * 4);
+        }
+    }
 }
 
 /* Signed distance from (px,py) to a rounded box centered at (cx,cy) with
@@ -115,9 +150,9 @@ void fill_rounded_shadow(uint32_t *px, int sw, int sh,
     double bcx = x + w / 2.0, bcy = y + h / 2.0;
     double hx = w / 2.0, hy = h / 2.0;
     double rr = r; if (rr > hx) rr = hx; if (rr > hy) rr = hy; if (rr < 0) rr = 0;
-    int x0 = (int)(x - blur - 1); if (x0 < 0) x0 = 0;
+    int x0 = CLIP_X0((int)(x - blur - 1)); if (x0 < 0) x0 = 0;
     int y0 = (int)(y - blur - 1); if (y0 < 0) y0 = 0;
-    int x1 = (int)(x + w + blur + 2); if (x1 > sw) x1 = sw;
+    int x1 = CLIP_X1((int)(x + w + blur + 2)); if (x1 > sw) x1 = sw;
     int y1 = (int)(y + h + blur + 2); if (y1 > sh) y1 = sh;
     for (int j = y0; j < y1; j++) {
         uint32_t *row = px + j * sw;

@@ -211,6 +211,7 @@ int emit_generated_compound(FILE *o, Decl *cmp, CGCtx *ctx, const char *nm) {
         fprintf(o, "static Widget *__%s_pressed_w;\n", rnm);
         fprintf(o, "static int __%s_hover_st __attribute__((unused)) = -1;\n", rnm);
         fprintf(o, "static Widget *__%s_hover_w __attribute__((unused));\n", rnm);
+        fprintf(o, "static int __%s_hover_dirty __attribute__((unused));\n", rnm);
         fprintf(o, "static Widget *__%s_widgets[4]; static int __%s_nw;\n", rnm, rnm);
         emit_hit_store(o, rnm, 4);
         fputs("\n", o);

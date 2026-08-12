@@ -44,6 +44,7 @@ int emit_spawned_osd_skeleton(FILE *o, Decl *sur, CGCtx *ctx, const char *nm, in
     fprintf(o, "static Widget *__%s_pressed_w;\n", nm);
     fprintf(o, "static int __%s_hover_st __attribute__((unused)) = -1;\n", nm);
     fprintf(o, "static Widget *__%s_hover_w __attribute__((unused));\n", nm);
+    fprintf(o, "static int __%s_hover_dirty __attribute__((unused));\n", nm);
 
     /* Fallbacks only — a bg/border that is an expression (a `:warn` overlay)
      * lowers per-slab instead; evaluating it here would demand a literal. */
@@ -418,6 +419,7 @@ int emit_menu_render(FILE *o, Decl *sur, Decl *tmpl, CGCtx *ctx, const char *nm,
     fprintf(o, "static Widget *__%s_pressed_w;\n", nm);
     fprintf(o, "static int __%s_hover_st __attribute__((unused)) = -1;\n", nm);
     fprintf(o, "static Widget *__%s_hover_w __attribute__((unused));\n", nm);
+    fprintf(o, "static int __%s_hover_dirty __attribute__((unused));\n", nm);
     /* One menu widget exists at a time, but the hit store is per-slot, so the
      * widget registers itself on first render instead of via a create_on. */
     fprintf(o, "Widget *__%s_widgets[1]; int __%s_nw;\n", nm, nm);

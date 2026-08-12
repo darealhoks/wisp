@@ -31,6 +31,16 @@ extern int render_clip_y0, render_clip_y1;
 #define CLIP_Y0(v) ((v) > render_clip_y0 ? (v) : render_clip_y0)
 #define CLIP_Y1(v) ((v) < render_clip_y1 ? (v) : render_clip_y1)
 
+/* Physical column band, [x0, x1). Wide open by default, narrowed by
+ * render_set_clip_x() around a bar's partial repaint so a frame that only
+ * redraws a dirty cell writes nothing outside the damage it will attach. Unlike
+ * the row band above this one DOES bind the drop shadows: a shadow spills past
+ * the cell that owns it, and re-blending that tail over the copied-forward frame
+ * would darken it a notch per tick. */
+extern int render_clip_bx0, render_clip_bx1;
+#define CLIP_X0(v) ((v) > render_clip_bx0 ? (v) : render_clip_bx0)
+#define CLIP_X1(v) ((v) < render_clip_bx1 ? (v) : render_clip_bx1)
+
 /* Optional rounded SHAPE the same content primitives are confined to, set by
  * render_set_clip_shape() (physical coords, independent of the y band above so a
  * damage band can narrow rows without moving the corner arcs). A scrolled
@@ -54,6 +64,8 @@ static inline int rc_ins(int r, int t) {
 
 /* Narrow the half-open column span [*lo,*hi) to the clip shape on physical row j. */
 static inline void render_clip_row(int j, int *lo, int *hi) {
+    if (render_clip_bx0 > *lo) *lo = render_clip_bx0;
+    if (render_clip_bx1 < *hi) *hi = render_clip_bx1;
     if (!render_clip_shaped) return;
     int t = j - render_clip_sy0, b = render_clip_sy1 - 1 - j;
     int il = rc_ins(render_clip_rtl, t), i2 = rc_ins(render_clip_rbl, b);

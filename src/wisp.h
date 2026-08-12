@@ -308,6 +308,9 @@ struct Widget {
      * after buffer-release: a released shm buffer is still client-owned memory
      * we mapped, so its pixels remain the last frame until we overwrite them. */
     int        last_attached;
+    /* Bumped on every (re)creation of the pool: the memfd pages are zero again,
+       so a sparse surface's recorded spans no longer describe either slot. */
+    uint32_t   pool_gen;
 
     /* Frame callback for animation (NULL when idle). */
     uint32_t   frame_cb;
@@ -455,6 +458,8 @@ struct Widget {
             /* crossfade (wispctl wall): heap frames blended per anim tick */
             double    fade;                 /* 0..1, anim target */
             uint32_t *fade_from, *fade_to;  /* pw*ph ARGB; NULL = no fade */
+            /* frame came straight off the bg cache mmap: unmap, don't free */
+            int       fade_from_map, fade_to_map;
             int       fade_w, fade_h;       /* physical dims at fade start */
             int       fade_u_last;          /* last composed 0..255 step; -1 = none */
         } wall;
@@ -491,6 +496,17 @@ void    widget_attach(Widget *w, BufSlot *s, int request_frame);
 void    widget_attach_rect(Widget *w, BufSlot *s, int request_frame,
                            int x, int y, int dw, int dh);
 int     widget_copy_forward(Widget *w, BufSlot *dst);
+/* Sparse variant: instead of the whole slot, carry forward only the logical
+ * column spans the last-attached slot actually painted. `x0`/`x1`/`n` are the
+ * generated per-buffer-slot span tables (2 rows of `cap`, indexed by slot);
+ * dst's own stale spans are zeroed first, then src's are copied and dst's span
+ * row is set to src's. Same return semantics as widget_copy_forward. */
+int     widget_copy_forward_spans(Widget *w, BufSlot *dst,
+                                  int *x0, int *x1, int *n, int cap);
+/* Insertion-merge a logical span into a sorted, disjoint span list. On
+ * overflow the list collapses to [0,wmax) — degrades to a full-width repaint,
+ * never to missing coverage. */
+void    span_add(int *x0, int *x1, int *n, int cap, int a, int b, int wmax);
 /* Cutout registry: one surface can punch a transparent rect through another
  * surface's pixels (e.g. OSD body cuts the bar strip underneath so the
  * translucent stack doesn't double-blend). Target keyed by DSL surface name.
@@ -544,12 +560,18 @@ void render_set_scale(int scale120);   /* 120ths: 120 = 1x, 180 = 1.5x */
  * container's draw pass brackets itself with these. Must be reset before the
  * next surface renders; the clip is a global, not per-buffer state. */
 void render_set_clip(int y0, int y1);
+void render_set_clip_x(int x0, int x1);
 void render_set_clip_shape(int x, int y, int w, int h,
                            int r_tl, int r_tr, int r_br, int r_bl);
 void render_clip_reset(void);
 
 void clear_buf(uint32_t *px, int w, int h, uint32_t c);
 void clear_band(uint32_t *px, int w, int h, int y0, int y1, uint32_t c);
+/* Full-height logical column spans, zeroed / copied. The gap columns between
+ * them are never touched, so an untouched memfd page never faults in. */
+void clear_spans(uint32_t *px, int w, int h, const int *x0, const int *x1, int n);
+void copy_spans(uint32_t *dst, const uint32_t *src, int w, int h,
+                const int *x0, const int *x1, int n);
 void fill_rect(uint32_t *px, int sw, int sh, int x, int y, int w, int h, uint32_t c);
 /* Same rect, but src-over instead of overwrite — for a translucent wash that
  * has to keep what is already in the buffer (the lock's `dim` over wallpaper). */

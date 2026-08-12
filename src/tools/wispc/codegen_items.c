@@ -10,6 +10,16 @@
 
 /* BarItem is declared in codegen_internal.h. */
 
+/* How far past its box a cell's paint reaches sideways — the same
+ * blur+spread+offset the shadow pad uses (codegen_surface_life.c), plus a
+ * pixel of slack for SC() rounding at fractional scale. */
+static int span_reach(uint32_t col, int blur, int spread, int x) {
+    if (!(col & 0xff000000u)) return 1;
+    if (blur <= 0) blur = 8;
+    if (x < 0) x = -x;
+    return blur + spread + x + 1;
+}
+
 /* Walk items in collection order; for each static clickable widget, assign a
  * fresh handler_idx matching the discriminator emitted by
  * emit_surface_click_dispatch (`arg == handler_idx`). For-cell items dispatch
@@ -865,19 +875,6 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
                 indent, ctx->menu_sep_col);
         fprintf(o, "%s        continue;\n%s    }\n", indent, indent);
     }
-    /* Partial repaint gate: skip a cell whose sources didn't tick (its pixels
-     * survive in the copied-forward buffer); overwrite a dirty cell with the
-     * flat surface bg before its content redraws, and grow the damage span. The
-     * layout counters above always run so neighbours still get their positions.
-     * partial_ok is set only for flat horizontal bars — main axis is X here. */
-    if (ctx->partial_ok) {
-        fprintf(o, "%s    if (!__partial || (0x%016llxull & __wds)) {\n",
-                indent, (unsigned long long)it->dep_mask);
-        fprintf(o, "%s    if (__partial) { fill_rect(sl->px, w->w, w->h, __bs, __reg_y, __adv + pad, __reg_h, 0x%08xu);\n",
-                indent, ctx->surface_bg);
-        fprintf(o, "%s        if (__bs < __dmg_x0) __dmg_x0 = __bs;\n", indent);
-        fprintf(o, "%s        if (__bs + __adv + pad > __dmg_x1) __dmg_x1 = __bs + __adv + pad; }\n", indent);
-    }
     if (vertical) {
         /* main axis = Y; bg + border span the region cross-axis (__reg_w)
          * over the item's height (= __adv). */
@@ -1016,6 +1013,21 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
             fprintf(o, "%s    int __bx = x - 2;\n", indent);
             fprintf(o, "%s    int __bw = __adv + 4;\n", indent);
         }
+        /* Partial repaint: the columns this cell paints — the SLAB box, not the
+         * advance: it carries x_offset and the 4-px halo, and the shadow spills
+         * `reach` past it. A later frame sizes its damage band from this, and a
+         * sparse pool clears exactly these columns, so anything it misses is a
+         * ghost. The draw is never skipped, only clipped to the band. */
+        if (ctx->partial_ok || ctx->sparse_cap) {
+            int reach = span_reach(shc, shblur, shspread, shx);
+            if (ctx->partial_ok) {
+                fprintf(o, "%s    %s_cell_x0[__wi][%s] = __bx - %d;\n", indent, nm, idx_expr, reach);
+                fprintf(o, "%s    %s_cell_x1[__wi][%s] = __bx + __bw + %d;\n", indent, nm, idx_expr, reach);
+            }
+            if (ctx->sparse_cap)
+                fprintf(o, "%s    span_add(__sp_x0, __sp_x1, &__sp_n, %d, __bx - %d, __bx + __bw + %d, (int)w->w);\n",
+                        indent, ctx->sparse_cap, reach, reach);
+        }
         /* Free-width content sits inside the inner pad_x gutter. */
         if (pad_x > 0 && !has_fixed_w) fprintf(o, "%s    x += %d;\n", indent, pad_x);
         /* Soft drop shadow behind the slab (offset by shadow_x/y, grown by
@@ -1109,7 +1121,6 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
         fprintf(o, "%s        }\n", indent);
         fprintf(o, "%s    }\n", indent);
     }
-    if (ctx->partial_ok) fprintf(o, "%s    }\n", indent);  /* close partial gate */
     /* A `tooltip`-only cell still needs a rect to hover-test against, but must
      * never match a click branch — kind -1 is matched by no dispatch case. */
     if (!clk && widget_prop(it->w, "tooltip")) kind = -1;
@@ -1256,6 +1267,7 @@ int emit_surface_click_dispatch(FILE *o, BarItem *items, int nitems,
         /* Only the row losing the tint and the row gaining it change pixels, so
          * hand the render a damage band spanning exactly those two rects. */
         if (ctx->scroll_rows && any_hover) emit_hover_band(o, nm, "__hs", "          ");
+        fprintf(o, "          __%s_hover_dirty = 1;\n", nm);
         fprintf(o, "          __%s_hover_st = __hs;\n", nm);
         fprintf(o, "          __%s_hover_w = __hs >= 0 ? w : 0;\n", nm);
         if (any_tip) {
@@ -1306,6 +1318,7 @@ int emit_surface_click_dispatch(FILE *o, BarItem *items, int nitems,
             emit_hover_band(o, nm, "-1", "    ");
         }
         fprintf(o, "    __%s_hover_st = -1; __%s_hover_w = 0;\n", nm, nm);
+        fprintf(o, "    __%s_hover_dirty = 1;\n", nm);
         if (any_tip)   fputs("    tooltip_hide();\n", o);
         if (any_hover) fprintf(o, "    render_%s(w);\n", nm);
     } else {
@@ -1420,7 +1433,7 @@ Expr *group_prop(Group *g, const char *name) {
 /* One group member: read its measured st[] (dynamic fg/bg/text already
  * resolved), draw optional member bg then icon+text vertically centered in the
  * container height, push its click rect. Advances the local cursor __gx. */
-static void emit_group_member(FILE *o, BarItem *it, const char *nm, int gap) {
+static void emit_group_member(FILE *o, BarItem *it, const char *nm, int gap, int partial) {
     Widget *wd = it->w;
     char sbuf[32]; const char *sb = sbuf;
     /* A for-block member is one cell drawn N times: loop the runtime count and
@@ -1438,6 +1451,11 @@ static void emit_group_member(FILE *o, BarItem *it, const char *nm, int gap) {
     int clk = widget_clickable(wd);
     fprintf(o, "        if (st[%s].vis) {\n", sb);
     fprintf(o, "            int __ma = (st[%s].h>0?st[%s].h:st[%s].tw);\n", sb, sb, sb);
+    /* Partial repaint: the span this member paints — see emit_item_draw. */
+    if (partial) {
+        fprintf(o, "            %s_cell_x0[__wi][%s] = __gx;\n", nm, sb);
+        fprintf(o, "            %s_cell_x1[__wi][%s] = __gx + __ma;\n", nm, sb);
+    }
     /* Paint is gated (a partial frame may skip this group), but the hit rect
      * and cursor advance below are NOT: click regions must survive frames
      * that don't repaint the group, or the cell goes click-dead. */
@@ -1552,22 +1570,21 @@ int emit_group_draw(FILE *o, BarItem *items, int first, int nitems,
         fprintf(o, "        int __gy = __reg_y + (__reg_h - %d)/2, __gh = %d, __bx = pos, __bw = __gw; (void)__bw;\n", ch, ch);
     else
         fprintf(o, "        int __gy = __reg_y, __gh = __reg_h, __bx = pos, __bw = __gw; (void)__bw;\n");
-    /* Partial repaint gate at group granularity: a group's pill spans several
-     * cells (its corners are rounded at the ends), so it repaints as one unit —
-     * clear its whole box back to the flat surface bg, then redraw pill + every
-     * member. When no member's source ticked, only the PAINT is skipped
-     * (__gdraw=0): layout and hit-rect registration still run, so later groups
-     * keep their positions and skipped cells stay clickable. */
-    if (ctx->partial_ok) {
-        uint64_t gmask = 0;
-        for (int k = 0; k < cnt; k++) gmask |= items[first + k].dep_mask;
-        fprintf(o, "        int __gdraw = !__partial || (0x%016llxull & __wds);\n", (unsigned long long)gmask);
-        fprintf(o, "        if (__gdraw && __partial) { fill_rect(sl->px,w->w,w->h, __bx,__gy,__bw,__gh, 0x%08xu);\n",
-                ctx->surface_bg);
-        fprintf(o, "            if (__bx < __dmg_x0) __dmg_x0 = __bx;\n");
-        fprintf(o, "            if (__bx + __bw > __dmg_x1) __dmg_x1 = __bx + __bw; }\n");
-    } else {
-        fputs("        int __gdraw = 1; (void)__gdraw;\n", o);
+    fputs("        int __gdraw = 1; (void)__gdraw;\n", o);
+    /* The pill is one span; members paint inside it, so only a member shadow
+     * wider than the group's own can push the edge out. */
+    if (ctx->sparse_cap) {
+        int reach = span_reach(shc, shblur, shspread, shx);
+        for (int k = 0; k < cnt; k++) {
+            Widget *mw = items[first + k].w;
+            int mrch = span_reach(eval_color_ctx(ctx, widget_prop(mw, "shadow"), 0),
+                                  eval_int(widget_prop(mw, "shadow_blur"), 0),
+                                  eval_int(widget_prop(mw, "shadow_spread"), 0),
+                                  eval_int(widget_prop(mw, "shadow_x"), 0));
+            if (mrch > reach) reach = mrch;
+        }
+        fprintf(o, "        if (__bw > 0) span_add(__sp_x0, __sp_x1, &__sp_n, %d, __bx - %d, __bx + __bw + %d, (int)w->w);\n",
+                ctx->sparse_cap, reach, reach);
     }
     const char *gg = vertical ? "if (__gdraw) " : "if (__gdraw && __gn) ";
     if (shc & 0xff000000u)
@@ -1582,7 +1599,7 @@ int emit_group_draw(FILE *o, BarItem *items, int first, int nitems,
     }
     fprintf(o, "        int __gx = __bx + %d; (void)__gw;\n", padx);
     for (int k = 0; k < cnt; k++)
-        emit_group_member(o, &items[first + k], nm, gap);
+        emit_group_member(o, &items[first + k], nm, gap, ctx->partial_ok);
     fputs("    }\n", o);
     return cnt;
 }
