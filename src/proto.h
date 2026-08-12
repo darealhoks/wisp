@@ -154,6 +154,7 @@
 #define EXTWS_MGR_EV_DONE       2
 #define EXTWS_MGR_EV_FINISHED   3
 /* ext_workspace_group_handle_v1 */
+#define EXTWS_GRP_REQ_DESTROY     0
 #define EXTWS_GRP_EV_CAPABILITIES 0
 #define EXTWS_GRP_EV_OUTPUT_ENTER 1
 #define EXTWS_GRP_EV_OUTPUT_LEAVE 2
@@ -161,6 +162,7 @@
 #define EXTWS_GRP_EV_WS_LEAVE     4
 #define EXTWS_GRP_EV_REMOVED      5
 /* ext_workspace_handle_v1 */
+#define EXTWS_WS_REQ_DESTROY   0
 #define EXTWS_WS_REQ_ACTIVATE  1
 #define EXTWS_WS_EV_ID          0
 #define EXTWS_WS_EV_NAME        1

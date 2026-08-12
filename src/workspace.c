@@ -148,6 +148,7 @@ int extws_handle_event(uint32_t obj, uint16_t op, uint8_t *body, uint32_t bodyle
         if (op == EXTWS_GRP_EV_REMOVED) {
             for (int i = 0; i < MAX_WS; i++)
                 if (wss[i].group == g->id) wss[i].group = 0;
+            wl_req(g->id, EXTWS_GRP_REQ_DESTROY, NULL, 0, -1);
             g->id = 0; g->out = NULL;
         }
         return 1;
@@ -168,6 +169,10 @@ int extws_handle_event(uint32_t obj, uint16_t op, uint8_t *body, uint32_t bodyle
             if (bodylen >= 4) w->state = *(uint32_t *)body;
             break;
         case EXTWS_WS_EV_REMOVED:
+            /* the handle stays live server-side until we destroy it: on a
+             * dynamic-workspace compositor that is one leaked resource per
+             * workspace ever opened */
+            wl_req(w->id, EXTWS_WS_REQ_DESTROY, NULL, 0, -1);
             w->id = 0;
             break;
         default: break;   /* id, capabilities: unused */

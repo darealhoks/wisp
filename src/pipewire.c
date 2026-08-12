@@ -67,6 +67,7 @@ enum {
 #define CORE_EV_PING      2
 #define CORE_EV_ERROR     3
 #define CORE_EV_REMOVE_ID 4
+#define CORE_DESTROY      7
 #define CLIENT_UPDATE_PROPERTIES 2
 #define REGISTRY_BIND     1
 #define REGISTRY_EV_GLOBAL        0
@@ -103,6 +104,9 @@ static uint32_t next_id;             /* next free proxy id (starts at 3) */
 /* Resolved defaults. *_global = registry global id; *_proxy = our bound id. */
 static uint32_t meta_global, meta_proxy;
 static uint32_t sink_proxy, source_proxy;
+/* globals backing the binds above, so a bind can be released (Core::Destroy)
+ * on a default switch and dropped silently when its global disappears */
+static uint32_t sink_node_global, source_node_global;
 static char     sink_name[128], source_name[128];
 static int      sink_nchan = 2, source_nchan = 2;
 
@@ -115,6 +119,7 @@ static int      sink_nchan = 2, source_nchan = 2;
  * rnnoise source) has no device.id — dev_proxy stays 0 and writes fall back to
  * node-level Props. */
 static uint32_t sink_dev_proxy, source_dev_proxy;
+static uint32_t sink_dev_global, source_dev_global;
 static int      sink_card_device = -1, source_card_device = -1;
 #define ROUTES_MAX 16
 typedef struct { int device, index; } RouteEnt;
@@ -345,6 +350,13 @@ static void send_bind(uint32_t global, const char *type, uint32_t new_id) {
     pw_end(&p, st);
     pw_send(PW_ID_REGISTRY, REGISTRY_BIND, &p);
 }
+static void send_destroy(uint32_t proxy) {
+    POD p = {0};
+    int st = pw_begin(&p, SPA_Struct);
+    pw_wint(&p, (int32_t)proxy);
+    pw_end(&p, st);
+    pw_send(PW_ID_CORE, CORE_DESTROY, &p);
+}
 static void send_subscribe(uint32_t proxy, uint32_t param_id) {
     POD p = {0};
     int st = pw_begin(&p, SPA_Struct);
@@ -381,6 +393,23 @@ static int json_name(const char *json, char *out, int cap) {
     return i > 0;
 }
 
+/* Release a bind. Abandoning it leaves the proxy resident in pipewire with its
+ * SubscribeParams still firing at an id we no longer read — one node + one
+ * device per default switch, for the life of the process. */
+static void unbind_one(uint32_t *proxy, uint32_t *global) {
+    if (*proxy) send_destroy(*proxy);
+    *proxy = 0; *global = 0;
+}
+static void unbind_default(int is_sink) {
+    if (is_sink) {
+        unbind_one(&sink_proxy, &sink_node_global);
+        unbind_one(&sink_dev_proxy, &sink_dev_global);
+    } else {
+        unbind_one(&source_proxy, &source_node_global);
+        unbind_one(&source_dev_proxy, &source_dev_global);
+    }
+}
+
 /* Bind the desired default node once its global is known. Idempotent: a no-op
  * until the name is set (from metadata) AND its global is enumerated, so it's
  * safe to call from both the metadata-property and the node-global paths —
@@ -392,13 +421,14 @@ static void try_bind(int is_sink) {
     NodeEnt *e = node_by_name(name);
     if (!e) return;
     *proxy = next_id++;
+    *(is_sink ? &sink_node_global : &source_node_global) = e->global;
     send_bind(e->global, TYPE_NODE, *proxy);
     send_subscribe(*proxy, SPA_PARAM_Props);   /* reads: node channelVolumes+mute */
     /* Writes go to the card Device's route; virtual nodes have no device.id. */
     if (e->device_id >= 0) {
         uint32_t dev = next_id++;
-        if (is_sink) { sink_dev_proxy = dev; sink_nroutes = 0; }
-        else         { source_dev_proxy = dev; source_nroutes = 0; }
+        if (is_sink) { sink_dev_proxy = dev; sink_dev_global = (uint32_t)e->device_id; sink_nroutes = 0; }
+        else         { source_dev_proxy = dev; source_dev_global = (uint32_t)e->device_id; source_nroutes = 0; }
         send_bind((uint32_t)e->device_id, TYPE_DEVICE, dev);
         send_subscribe(dev, SPA_PARAM_Route);
     }
@@ -468,9 +498,16 @@ static void on_global(RD *r) {
 static void on_global_remove(RD *r) {
     RD s; if (!rd_struct(r, &s)) return;
     uint32_t id = (uint32_t)rd_int(&s);
-    if (!s.ok) return;
+    if (!s.ok || !id) return;   /* 0 is the core global, and our "unset" marker */
     for (int i = 0; i < node_n; i++)
         if (nodes[i].global == id) { nodes[i] = nodes[--node_n]; break; }
+    /* The server frees our proxy along with the global, so forget it without
+     * a Core::Destroy — destroying an id the server already dropped is an
+     * error, and leaving it set would block the rebind in try_bind. */
+    if (sink_node_global   == id) { sink_proxy = 0;     sink_node_global = 0; }
+    if (source_node_global == id) { source_proxy = 0;   source_node_global = 0; }
+    if (sink_dev_global    == id) { sink_dev_proxy = 0; sink_dev_global = 0; }
+    if (source_dev_global  == id) { source_dev_proxy = 0; source_dev_global = 0; }
 }
 
 /* Metadata::Property: Struct{ Int subject, String key, String type,
@@ -490,11 +527,11 @@ static void on_metadata_property(RD *r) {
     if (!json_name(val, name, sizeof name)) return;
     if (sink && strcmp(name, sink_name)) {
         snprintf(sink_name, sizeof sink_name, "%s", name);
-        sink_proxy = sink_dev_proxy = 0;   /* default switched: rebind (old abandoned) */
+        unbind_default(1);                 /* default switched: release, then rebind */
         try_bind(1);
     } else if (src && strcmp(name, source_name)) {
         snprintf(source_name, sizeof source_name, "%s", name);
-        source_proxy = source_dev_proxy = 0;
+        unbind_default(0);
         try_bind(0);
     }
 }

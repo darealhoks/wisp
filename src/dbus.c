@@ -188,7 +188,9 @@ int dbus_signal_first_str(const uint8_t *body, int body_len, const char *sig,
 
 /* Pending calls awaiting a reply. Fixed and lossy on purpose: a peer that
  * never answers must not pin a slot forever, and there is no timer here to
- * expire one (idle = 0 CPU). Slots are freed on reply and on disconnect. */
+ * expire one (idle = 0 CPU) — the table evicts its oldest entry instead.
+ * Slots are freed on reply, on eviction and on disconnect; all three run the
+ * callback with is_err, which is what frees the caller's `ud`. */
 #define DBUS_PENDING_CAP 32
 typedef struct {
     uint32_t      serial;      /* 0 = free */
@@ -197,13 +199,29 @@ typedef struct {
 } DbusPending;
 static DbusPending pending[DBUS_PENDING_CAP];
 
+/* Retire a slot as if the peer had answered with an error: the callback's
+ * is_err path is where every caller frees its `ud`. Cleared before the call —
+ * the callback may issue another dbus_call and reuse this slot. */
+static void pending_fail(int i) {
+    DbusPending p = pending[i];
+    pending[i].serial = 0;
+    if (p.cb) p.cb(NULL, NULL, NULL, 1, p.ud);
+}
+
 uint32_t dbus_call(const Msg *m, dbus_reply_cb cb, void *ud) {
     int slot = -1;
     for (int i = 0; i < DBUS_PENDING_CAP; i++)
         if (!pending[i].serial) { slot = i; break; }
-    /* ponytail: table full → drop the call; raise the cap if a real workload
-     * (many tray items registering at once) ever hits it. */
-    if (slot < 0) return 0;
+    /* Full: a peer that died mid-call never frees its slot, so evict the
+     * oldest (lowest serial — monotonic per connection) rather than let 32
+     * corpses wedge every future call. */
+    if (slot < 0) {
+        slot = 0;
+        for (int i = 1; i < DBUS_PENDING_CAP; i++)
+            if (pending[i].serial < pending[slot].serial) slot = i;
+        pending_fail(slot);
+        if (pending[slot].serial) return 0;   /* the callback re-took the slot */
+    }
     uint32_t s = send_msg(m);
     if (!s) return 0;
     pending[slot] = (DbusPending){ .serial = s, .cb = cb, .ud = ud };
@@ -428,8 +446,10 @@ static void arm_reconnect(int delay_ms) {
 static void dbus_drop(int delay_ms) {
     if (dbus_fd >= 0) { close(dbus_fd); dbus_fd = -1; }
     rlen = 0; rskip = 0;
-    /* Serials restart per connection — replies can never arrive now. */
-    memset(pending, 0, sizeof pending);
+    /* Serials restart per connection — replies can never arrive now. Fail the
+     * slots rather than memset them: the callback owns `ud`. */
+    for (int i = 0; i < DBUS_PENDING_CAP; i++)
+        if (pending[i].serial) pending_fail(i);
     rbuf_maybe_shrink();
 #ifdef WISP_HAS_IDLE
     idle_ss_reset();

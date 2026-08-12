@@ -26,9 +26,9 @@ int    reload_pending = 0;
  * and gamma controls (exclusive per output) never released. The new process
  * allocates above the id high-water mark, reuses the adoptable objects, and
  * reaps only unclaimed leftovers (`old=` + unmatched adopts) after its own
- * are up. Transient widgets (menu/osd/lock) just get reaped. Other old
- * sub-objects (pools, regions, seat devices) leak until exit — one reload's
- * worth.
+ * are up. Transient widgets (menu/osd/lock) just get reaped. Pools are destroyed
+ * explicitly below; other old sub-objects (regions, seat devices) leak until
+ * exit — one reload's worth.
  *
  * We exec by PATH ("wisp"), NOT /proc/self/exe — `install -m 755 …` unlinks
  * the destination before creating the new inode, so /proc/self/exe of the
@@ -81,6 +81,14 @@ void ctl_reload_exec(void) {
             wl_req(outputs[i].power_ctrl, OUTPUT_POWER_REQ_DESTROY, NULL, 0, -1);
             outputs[i].power_ctrl = 0;
         }
+    /* Pools must die here: the new process re-renders from scratch, and no
+     * deferred free (want_pool_free, buffer.release) can ever fire across exec
+     * — a surviving wall pool is 70 MB of compositor-resident memfd per reload.
+     * Safe while attached: the compositor holds a texture, as wall.c relies on. */
+    for (int i = 0; i < MAX_WIDGETS; i++)
+        if (widgets[i].id_pool)   /* never-allocated slots are zeroed: pool_fd 0 is stdin */
+            widget_free_pool(&widgets[i]);
+
     char *argv[] = { (char*)"wisp", (char*)"--reload-fds", arg, NULL };
     execvpe("wisp", argv, environ);
     msg("wisp: reload exec failed: %s", strerror(errno));
