@@ -153,6 +153,10 @@
 #ifndef WALL_WIPE_SOFT
 #define WALL_WIPE_SOFT 160
 #endif
+/* 0 = never touch ~/.cache/wisp: every switch re-decodes, nothing is written. */
+#ifndef WALL_CACHE
+#define WALL_CACHE 1
+#endif
 
 /* ---------- OSD / notifications (mako + dwl-osd replacement) ----------
  * Top-center stack. Each slab fixed-size, rendered into one tall surface;

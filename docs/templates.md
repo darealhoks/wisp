@@ -830,6 +830,7 @@ wallpaper {
 	wipe_dir = down_right;
 	wipe_soft = 200;
 	fade_ms = 300;
+	cache = true;
 }
 
 media { }
@@ -838,6 +839,7 @@ media { }
 - PNG only, decoded once at first configure; a missing file falls back to the solid `bg`.
 - `wipe_dir` names where the edge travels **to**, so `right` reveals the new wallpaper from the left. Diagonals sweep on x+y.
 - `wipe_soft` is the lerp band width in px; 1 is a hard line. `dither_px` (default 16) is the block size for `transition = dither`.
+- `cache = false` disables the `~/.cache/wisp` scaled-wallpaper cache entirely — no reads, no writes, a full decode on every switch. See [modules](modules.md#wallpaper).
 - `media { }` must be empty; any property inside is an error. It enables both the media keys and PipeWire.
 
 ## Idle

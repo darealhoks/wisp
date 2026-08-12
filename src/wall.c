@@ -13,6 +13,20 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if WALL_CACHE
+#define wall_cache_map   image_bgcache_map
+#define wall_cache_store image_bgcache_store
+#else
+/* `cache = false`: every switch re-decodes and the disk is never touched, so
+ * wisp-lock loses its seeded background too and decodes on its own. */
+static const uint32_t *wall_cache_map(const char *p, int W, int H) {
+    (void)p; (void)W; (void)H; return NULL;
+}
+static void wall_cache_store(const char *p, int W, int H, const uint32_t *px) {
+    (void)p; (void)W; (void)H; (void)px;
+}
+#endif
+
 /* Runtime override from `wispctl wall <path>`; empty = the .wisp WALL_PATH. */
 static char wall_path_rt[512];
 static const char *wall_path(void) {
@@ -38,7 +52,7 @@ void wall_render(Widget *w) {
     int pw = widget_pw(w), ph = widget_ph(w);
     /* The disk cache keys on dst size, so a scaled output just caches the
      * physical variant — no separate key needed. */
-    const uint32_t *cached = image_bgcache_map(wall_path(), pw, ph);
+    const uint32_t *cached = wall_cache_map(wall_path(), pw, ph);
     if (cached) {
         memcpy(s->px, cached, (size_t)pw * ph * 4);
         image_bgcache_unmap(cached, pw, ph);
@@ -59,7 +73,7 @@ void wall_render(Widget *w) {
          * the lock shows the same unmodified wallpaper, so its first load
          * becomes a plain read() instead of a decode + scale. No-op when the
          * cache is already current. */
-        image_bgcache_store(wall_path(), pw, ph, s->px);
+        wall_cache_store(wall_path(), pw, ph, s->px);
         w->s.wall.painted_w = w->w;
         w->s.wall.painted_h = w->h;
     } else {
@@ -263,7 +277,7 @@ static void wall_fade_done(void *user) {
 static uint32_t *wall_frame_of(const char *path, int pw, int ph, int store,
                                int *mapped) {
     *mapped = 0;
-    const uint32_t *m = image_bgcache_map(path, pw, ph);
+    const uint32_t *m = wall_cache_map(path, pw, ph);
     if (m) { *mapped = 1; return (uint32_t *)m; }
     uint32_t *px = NULL;
     int sw = 0, sh = 0;
@@ -272,7 +286,7 @@ static uint32_t *wall_frame_of(const char *path, int pw, int ph, int store,
         px = malloc((size_t)pw * ph * 4);
         if (px) {
             image_blit_cover(px, pw, ph, src, sw, sh);
-            if (store) image_bgcache_store(path, pw, ph, px);
+            if (store) wall_cache_store(path, pw, ph, px);
         }
     }
     image_free(src);

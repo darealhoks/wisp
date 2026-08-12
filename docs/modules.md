@@ -596,9 +596,18 @@ rejected file falls back to a solid `bg`.
 | `dither_px` | 16 | block size for the pseudo-random reveal |
 | `wipe_dir` | `right` | names where the **edge travels to**, so `right` reveals from the left. Diagonals sweep on x+y |
 | `wipe_soft` | 160 | lerp band at the edge in px; 1 is a hard line |
+| `cache` | `true` | keep a scaled copy under `~/.cache/wisp`; `false` never reads or writes it |
 
 `wispctl wall <path.png>` switches at runtime over `fade_ms`; the override lasts
 until reload.
+
+`cache = false` costs nothing but time: wisp keeps a finished, output-sized copy
+of the wallpaper in `~/.cache/wisp/bg-<hash>-<w>x<h>.bin` (37 MB each at 4K,
+under a 200 MB LRU cap) so a switch, a reload and the lock screen skip the PNG
+decode. Turn it off and wisp touches no disk at all, at the price of a full
+decode + cover-fit every time: roughly 80 ms for a 1080p source scaled to 4K and
+430 ms for a 5920x3330 one, against 35-50 ms warm. Worth it if you care more
+about SSD writes or disk space than about a hitch before each fade.
 
 ## media
 

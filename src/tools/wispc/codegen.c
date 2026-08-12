@@ -767,6 +767,7 @@ static void emit_overrides(FILE *o, Unit *u, CGCtx *ctx) {
         {"dither_px",  "WALL_DITHER_PX",   0},
         {"wipe_dir",   "WALL_WIPE_DIR",    4},
         {"wipe_soft",  "WALL_WIPE_SOFT",   0},
+        {"cache",      "WALL_CACHE",       3},
     };
     Decl *wallb = find_block(u, D_WALLPAPER);
     emit_block_overrides(o, wallb, "wallpaper", wallmap,

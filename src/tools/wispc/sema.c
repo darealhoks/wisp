@@ -109,7 +109,7 @@ static const PropSchema SCHEMAS[] = {
     { "gamma", "gamma block",
       " day_k night_k flat_k day_hour night_hour fade_min transition_ms " },
     { "wallpaper", "wallpaper block",
-      " path bg fade_ms transition dither_px wipe_dir wipe_soft " },
+      " path bg fade_ms transition dither_px wipe_dir wipe_soft cache " },
     { "media", "media block", " " },
     { "idle", "idle block", " before_sleep " },
     { "idle_timeout", "idle timeout", " after run resume " },
