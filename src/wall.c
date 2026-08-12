@@ -38,10 +38,10 @@ void wall_render(Widget *w) {
     int pw = widget_pw(w), ph = widget_ph(w);
     /* The disk cache keys on dst size, so a scaled output just caches the
      * physical variant — no separate key needed. */
-    uint32_t *cached = image_bgcache_load(wall_path(), pw, ph);
+    const uint32_t *cached = image_bgcache_map(wall_path(), pw, ph);
     if (cached) {
         memcpy(s->px, cached, (size_t)pw * ph * 4);
-        free(cached);
+        image_bgcache_unmap(cached, pw, ph);
         w->s.wall.painted_w = w->w;
         w->s.wall.painted_h = w->h;
         widget_attach(w, s, 1);
@@ -190,13 +190,26 @@ static void wall_compose(uint32_t *dst, const uint32_t *a, const uint32_t *b,
     else wall_blend(dst, a, b, (size_t)w * h, u);
 }
 
+static void wall_frame_free(uint32_t *px, int mapped, int pw, int ph) {
+    if (mapped) image_bgcache_unmap(px, pw, ph);
+    else free(px);
+}
+
+static void wall_frames_free(Widget *w) {
+    wall_frame_free(w->s.wall.fade_from, w->s.wall.fade_from_map,
+                    w->s.wall.fade_w, w->s.wall.fade_h);
+    wall_frame_free(w->s.wall.fade_to, w->s.wall.fade_to_map,
+                    w->s.wall.fade_w, w->s.wall.fade_h);
+    w->s.wall.fade_from = w->s.wall.fade_to = NULL;
+    w->s.wall.fade_from_map = w->s.wall.fade_to_map = 0;
+}
+
 void wall_fade_cancel(Widget *w) {
     if (!w->s.wall.fade_from && !w->s.wall.fade_to) return;
 #if WALL_FADE_MS > 0
     anim_cancel_for(&w->s.wall.fade);
 #endif
-    free(w->s.wall.fade_from); free(w->s.wall.fade_to);
-    w->s.wall.fade_from = w->s.wall.fade_to = NULL;
+    wall_frames_free(w);
 }
 
 int wall_fade_active(void) {
@@ -236,8 +249,7 @@ static void wall_fade_done(void *user) {
                (size_t)w->s.wall.fade_w * w->s.wall.fade_h * 4);
         widget_attach(w, s, 1);
     }
-    free(w->s.wall.fade_from); free(w->s.wall.fade_to);
-    w->s.wall.fade_from = w->s.wall.fade_to = NULL;
+    wall_frames_free(w);
     w->s.wall.painted_w = w->w;
     w->s.wall.painted_h = w->h;
     w->want_pool_free = 1;   /* frame.done from the last attach frees the pool */
@@ -245,10 +257,15 @@ static void wall_fade_done(void *user) {
 }
 
 /* Build a finished pw*ph frame of `path`: disk cache first, else decode +
- * cover-fit (and seed the cache so the lock/restart path stays cheap). */
-static uint32_t *wall_frame_of(const char *path, int pw, int ph, int store) {
-    uint32_t *px = image_bgcache_load(path, pw, ph);
-    if (px) return px;
+ * cover-fit (and seed the cache so the lock/restart path stays cheap). On a
+ * cache hit the frame is the mmap itself (read-only, *mapped = 1) — no
+ * output-sized anonymous copy, which is the whole warm-switch peak. */
+static uint32_t *wall_frame_of(const char *path, int pw, int ph, int store,
+                               int *mapped) {
+    *mapped = 0;
+    const uint32_t *m = image_bgcache_map(path, pw, ph);
+    if (m) { *mapped = 1; return (uint32_t *)m; }
+    uint32_t *px = NULL;
     int sw = 0, sh = 0;
     uint8_t *src = image_load(path, &sw, &sh);
     if (src && sw > 1 && sh > 1) {
@@ -269,37 +286,50 @@ static void wall_fade_prepare(Widget *w, const char *oldpath) {
     if (!w->configured || w->w <= 0 || w->h <= 0) { w->s.wall.painted_w = 0; return; }
     int pw = widget_pw(w), ph = widget_ph(w);
 
-    uint32_t *from;
-    if (w->s.wall.fade_to) {
-        /* Retarget mid-fade: freeze the current blend as the new start. */
-        wall_compose(w->s.wall.fade_from, w->s.wall.fade_from, w->s.wall.fade_to,
-                     pw, ph, fade_u(w->s.wall.fade));
-        from = w->s.wall.fade_from;
-        free(w->s.wall.fade_to); w->s.wall.fade_to = NULL;
+    uint32_t *from = NULL;
+    int from_map = 0;
+    if (w->s.wall.fade_to && w->s.wall.fade_w == pw && w->s.wall.fade_h == ph) {
+        /* Retarget mid-fade: freeze the current blend as the new start. The
+         * cache mmap is read-only, so a mapped `from` needs a writable copy. */
+        int u = fade_u(w->s.wall.fade);
+        if (w->s.wall.fade_from_map) {
+            from = malloc((size_t)pw * ph * 4);
+            if (from)
+                wall_compose(from, w->s.wall.fade_from, w->s.wall.fade_to, pw, ph, u);
+        } else {
+            from = w->s.wall.fade_from;
+            if (from) wall_compose(from, from, w->s.wall.fade_to, pw, ph, u);
+            w->s.wall.fade_from = NULL;
+        }
+        wall_frames_free(w);
     } else {
+        wall_fade_cancel(w);
         /* Load `from` BEFORE the new frame is built: the bg disk cache is a
          * single file, so building the new frame evicts the old one. */
-        from = wall_frame_of(oldpath, pw, ph, 0);
+        from = wall_frame_of(oldpath, pw, ph, 0, &from_map);
     }
 
-    uint32_t *to = wall_frame_of(wall_path(), pw, ph, 1);
+    int to_map = 0;
+    uint32_t *to = wall_frame_of(wall_path(), pw, ph, 1, &to_map);
     malloc_trim(0);
     if (!to) {   /* validated in wall_set, so only a truly corrupt file */
         msg("wisp: wallpaper decode failed (%s)", wall_path());
-        free(from); w->s.wall.fade_from = NULL;
+        wall_frame_free(from, from_map, pw, ph);
 #if WALL_FADE_MS > 0
         anim_cancel_for(&w->s.wall.fade);
 #endif
         return;
     }
     if (!from) {   /* nothing to fade from: hard cut via the normal path */
-        free(to);
+        wall_frame_free(to, to_map, pw, ph);
         w->s.wall.painted_w = 0;
         wall_render(w);
         return;
     }
     w->s.wall.fade_from = from;
     w->s.wall.fade_to = to;
+    w->s.wall.fade_from_map = from_map;
+    w->s.wall.fade_to_map = to_map;
     w->s.wall.fade_w = pw;
     w->s.wall.fade_h = ph;
 }

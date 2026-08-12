@@ -4,6 +4,7 @@
 
 #include "image.h"
 
+#include <dirent.h>
 #include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -200,6 +201,55 @@ static int bgcache_path(char *out, size_t n, const char *img_path, int W, int H)
     return 0;
 }
 
+/* LRU cap over the whole bg-* set: one 4K wall is ~33 MB, so this keeps a
+ * handful of live sizes and lets old themes and transient resize sizes fall
+ * out. Eviction cost is one re-decode. */
+#define BGCACHE_CAP_BYTES ((unsigned long long)200 << 20)
+#define BGCACHE_SCAN_MAX  64
+
+/* `path` is the file just written; it is never evicted. */
+static void bgcache_prune(const char *path) {
+    char dir[768];
+    snprintf(dir, sizeof dir, "%s", path);
+    char *slash = strrchr(dir, '/');
+    if (!slash) return;
+    *slash = 0;
+    const char *keep = slash + 1;
+
+    DIR *d = opendir(dir);
+    if (!d) return;
+    struct { char name[64]; long long size; long long mtime; } e[BGCACHE_SCAN_MAX];
+    int n = 0;
+    unsigned long long total = 0;
+    /* ponytail: a dir with more than BGCACHE_SCAN_MAX entries prunes what it
+     * saw and catches up on the next store */
+    for (struct dirent *de; n < BGCACHE_SCAN_MAX && (de = readdir(d)); ) {
+        if (strncmp(de->d_name, "bg-", 3) || strlen(de->d_name) >= sizeof e[0].name)
+            continue;
+        struct stat st;
+        if (fstatat(dirfd(d), de->d_name, &st, 0) < 0 || !S_ISREG(st.st_mode))
+            continue;
+        snprintf(e[n].name, sizeof e[n].name, "%s", de->d_name);
+        e[n].size = st.st_size;
+        e[n].mtime = st.st_mtime;
+        total += (unsigned long long)st.st_size;
+        n++;
+    }
+
+    while (total > BGCACHE_CAP_BYTES) {
+        int old = -1;
+        for (int i = 0; i < n; i++) {
+            if (e[i].size < 0 || !strcmp(e[i].name, keep)) continue;
+            if (old < 0 || e[i].mtime < e[old].mtime) old = i;
+        }
+        if (old < 0) break;
+        if (unlinkat(dirfd(d), e[old].name, 0) == 0)
+            total -= (unsigned long long)e[old].size;
+        e[old].size = -1;
+    }
+    closedir(d);
+}
+
 /* Read the header only; 1 if the cached copy matches (W,H,mtime). */
 static int bgcache_hdr_ok(const char *path, int W, int H, int64_t mt) {
     int fd = open(path, O_RDONLY | O_CLOEXEC);
@@ -228,22 +278,13 @@ const uint32_t *image_bgcache_map(const char *img_path, int W, int H) {
         m = mmap(NULL, len, PROT_READ, MAP_SHARED, fd, 0);
     close(fd);
     if (m == MAP_FAILED) return NULL;
+    utimensat(AT_FDCWD, path, NULL, 0);   /* mtime is the LRU stamp */
     return (const uint32_t *)((const char *)m + sizeof(BgHdr));
 }
 
 void image_bgcache_unmap(const uint32_t *px, int W, int H) {
     if (!px) return;
     munmap((char *)px - sizeof(BgHdr), sizeof(BgHdr) + (size_t)W * H * 4);
-}
-
-uint32_t *image_bgcache_load(const char *img_path, int W, int H) {
-    const uint32_t *m = image_bgcache_map(img_path, W, H);
-    if (!m) return NULL;
-    size_t bytes = (size_t)W * H * 4;
-    uint32_t *bg = malloc(bytes);
-    if (bg) memcpy(bg, m, bytes);
-    image_bgcache_unmap(m, W, H);
-    return bg;
 }
 
 void image_bgcache_store(const char *img_path, int W, int H, const uint32_t *px) {
@@ -266,7 +307,9 @@ void image_bgcache_store(const char *img_path, int W, int H, const uint32_t *px)
         put += r;
     }
     close(fd);
-    if (ok) rename(tmp, path); else unlink(tmp);   /* atomic swap on success */
+    if (!ok) { unlink(tmp); return; }
+    rename(tmp, path);                             /* atomic swap on success */
+    bgcache_prune(path);
 }
 
 /* Bilinear cover-fit. src is RGBA (stbi); dst is ARGB8888 little-endian
