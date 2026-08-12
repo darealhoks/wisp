@@ -16,6 +16,7 @@ static char cpu_temp_path[320];
 static char net_iface[64];         /* "" = any iface (wireless: first entry) */
 static char backlight_dev[256];    /* "" = first entry in /sys/class/backlight */
 static char disk_path[256] = "/";
+static int bat_raw;                /* bat(raw=true): skip charge-limit scaling */
 static long long prev_busy, prev_total;
 
 void status_set_arg(const char *kind, const char *val) {
@@ -25,6 +26,7 @@ void status_set_arg(const char *kind, const char *val) {
         if (val[0] == '/') snprintf(cpu_temp_path, sizeof cpu_temp_path, "%s", val);
         else snprintf(cpu_temp_path, sizeof cpu_temp_path, "/sys/class/thermal/%s/temp", val);
     } else if (!strcmp(kind, "bat"))  snprintf(bat_dev, sizeof bat_dev, "%s", val);
+    else if (!strcmp(kind, "bat_raw")) bat_raw = 1;
     else if (!strcmp(kind, "net"))    snprintf(net_iface, sizeof net_iface, "%s", val);
     else if (!strcmp(kind, "backlight")) snprintf(backlight_dev, sizeof backlight_dev, "%s", val);
     else if (!strcmp(kind, "disk"))   snprintf(disk_path, sizeof disk_path, "%s", val);
@@ -161,6 +163,15 @@ static void sample_bat(void) {
     snprintf(path, sizeof path, "/sys/class/power_supply/%s/capacity", bat_dev);
     int pct = read_int_file(path);
     if (pct < 0) { status.bat_pct = -1; return; }
+    /* scale by the charge limit so a capped battery reads 100% when full */
+    if (!bat_raw) {
+        snprintf(path, sizeof path, "/sys/class/power_supply/%s/charge_control_end_threshold", bat_dev);
+        int limit = read_int_file(path);
+        if (limit > 0 && limit < 100) {
+            pct = (pct * 100 + limit / 2) / limit;
+            if (pct > 100) pct = 100;
+        }
+    }
     status.bat_pct = pct;
     snprintf(path, sizeof path, "/sys/class/power_supply/%s/status", bat_dev);
     FILE *f = fopen(path, "r");

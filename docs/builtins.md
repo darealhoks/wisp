@@ -63,7 +63,9 @@ source temp_s = temp(every="2s");
 
 **`bat([name])`** takes the battery name, `"BAT0"` by default behaviour of the
 driver. It runs on uevents with a 60 s fallback, not a 1 Hz tick. `charging` is
-a bool.
+a bool. When a charge limit is set (`charge_control_end_threshold` below 100),
+`pct` is rescaled so a capped-full battery reads 100%; `bat(raw=true)` turns
+that off and reports the kernel's capacity unchanged.
 
 **`backlight([name])`** is pure uevent, zero timers.
 

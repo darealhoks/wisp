@@ -273,6 +273,14 @@ int collect_srcs(Unit *u, SrcInst *out, int max) {
             for (int k = 0; k < c->call.nargs; k++) {
                 const char *kn = c->call.argnames ? c->call.argnames[k] : NULL;
                 size_t kl = c->call.anlen ? c->call.anlen[k] : 0;
+                if (kn && kl == 3 && memcmp(kn, "raw", 3) == 0) {
+                    if (strcmp(drv->name, "bat") || c->call.args[k]->kind != EX_BOOL) {
+                        diag_error(d->loc, "codegen: raw= is bat() only and takes true/false");
+                        return -1;
+                    }
+                    if (c->call.args[k]->b) { out[n].arg2 = "1"; out[n].a2len = 1; }
+                    continue;
+                }
                 if (c->call.args[k]->kind != EX_STRING) {
                     diag_error(d->loc, "codegen: %s() args must be strings", drv->name);
                     return -1;
@@ -705,10 +713,14 @@ void emit_sources(FILE *o, SrcInst *srcs, int nsrc) {
      * runs no shared tick. */
     if (has_status_src(srcs, nsrc)) {
         fputs("void wispgen_status_setup(void) {\n", o);
-        for (int i = 0; i < nsrc; i++)
-            if (srcs[i].drv->drv == DRV_STATUS && srcs[i].fmt)
+        for (int i = 0; i < nsrc; i++) {
+            if (srcs[i].drv->drv != DRV_STATUS) continue;
+            if (srcs[i].fmt)
                 fprintf(o, "    status_set_arg(\"%s\", \"%.*s\");\n",
                         srcs[i].drv->name, (int)srcs[i].flen, srcs[i].fmt);
+            if (srcs[i].arg2 && !strcmp(srcs[i].drv->name, "bat"))
+                fputs("    status_set_arg(\"bat_raw\", \"1\");\n", o);
+        }
         fputs("    status_init(); status_sample_all();\n", o);
         fputs("}\n", o);
     }
