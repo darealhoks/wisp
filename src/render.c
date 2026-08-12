@@ -84,35 +84,6 @@ void clear_band(uint32_t *px, int w, int h, int y0, int y1, uint32_t c) {
     for (int i = y0 * w; i < y1 * w; i++) px[i] = c;
 }
 
-/* Zero full-height logical column spans. Everything between two spans is left
- * untouched — on a fresh memfd that means the page never faults in. */
-void clear_spans(uint32_t *px, int w, int h, const int *x0, const int *x1, int n) {
-    int pw = SC(w), ph = SC(h);
-    for (int i = 0; i < n; i++) {
-        int a = SC(x0[i]), b = SC(x1[i]);
-        if (a < 0) a = 0;
-        if (b > pw) b = pw;
-        if (b <= a) continue;
-        for (int y = 0; y < ph; y++)
-            memset(px + (size_t)y * pw + a, 0, (size_t)(b - a) * 4);
-    }
-}
-
-void copy_spans(uint32_t *dst, const uint32_t *src, int w, int h,
-                const int *x0, const int *x1, int n) {
-    int pw = SC(w), ph = SC(h);
-    for (int i = 0; i < n; i++) {
-        int a = SC(x0[i]), b = SC(x1[i]);
-        if (a < 0) a = 0;
-        if (b > pw) b = pw;
-        if (b <= a) continue;
-        for (int y = 0; y < ph; y++) {
-            size_t off = (size_t)y * pw + a;
-            memcpy(dst + off, src + off, (size_t)(b - a) * 4);
-        }
-    }
-}
-
 /* Signed distance from (px,py) to a rounded box centered at (cx,cy) with
  * half-extents (hx,hy) and per-corner radii. Each radius must already be
  * clamped to <= min(hx,hy). Negative inside the box, positive outside. */

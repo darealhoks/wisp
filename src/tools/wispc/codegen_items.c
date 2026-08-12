@@ -13,7 +13,7 @@
 /* How far past its box a cell's paint reaches sideways — the same
  * blur+spread+offset the shadow pad uses (codegen_surface_life.c), plus a
  * pixel of slack for SC() rounding at fractional scale. */
-static int span_reach(uint32_t col, int blur, int spread, int x) {
+static int shadow_reach(uint32_t col, int blur, int spread, int x) {
     if (!(col & 0xff000000u)) return 1;
     if (blur <= 0) blur = 8;
     if (x < 0) x = -x;
@@ -1015,18 +1015,13 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
         }
         /* Partial repaint: the columns this cell paints — the SLAB box, not the
          * advance: it carries x_offset and the 4-px halo, and the shadow spills
-         * `reach` past it. A later frame sizes its damage band from this, and a
-         * sparse pool clears exactly these columns, so anything it misses is a
-         * ghost. The draw is never skipped, only clipped to the band. */
-        if (ctx->partial_ok || ctx->sparse_cap) {
-            int reach = span_reach(shc, shblur, shspread, shx);
-            if (ctx->partial_ok) {
-                fprintf(o, "%s    %s_cell_x0[__wi][%s] = __bx - %d;\n", indent, nm, idx_expr, reach);
-                fprintf(o, "%s    %s_cell_x1[__wi][%s] = __bx + __bw + %d;\n", indent, nm, idx_expr, reach);
-            }
-            if (ctx->sparse_cap)
-                fprintf(o, "%s    span_add(__sp_x0, __sp_x1, &__sp_n, %d, __bx - %d, __bx + __bw + %d, (int)w->w);\n",
-                        indent, ctx->sparse_cap, reach, reach);
+         * `reach` past it. A later frame sizes its damage band from this, so
+         * anything it misses is a ghost. The draw is never skipped, only
+         * clipped to the band. */
+        if (ctx->partial_ok) {
+            int reach = shadow_reach(shc, shblur, shspread, shx);
+            fprintf(o, "%s    %s_cell_x0[__wi][%s] = __bx - %d;\n", indent, nm, idx_expr, reach);
+            fprintf(o, "%s    %s_cell_x1[__wi][%s] = __bx + __bw + %d;\n", indent, nm, idx_expr, reach);
         }
         /* Free-width content sits inside the inner pad_x gutter. */
         if (pad_x > 0 && !has_fixed_w) fprintf(o, "%s    x += %d;\n", indent, pad_x);
@@ -1571,21 +1566,6 @@ int emit_group_draw(FILE *o, BarItem *items, int first, int nitems,
     else
         fprintf(o, "        int __gy = __reg_y, __gh = __reg_h, __bx = pos, __bw = __gw; (void)__bw;\n");
     fputs("        int __gdraw = 1; (void)__gdraw;\n", o);
-    /* The pill is one span; members paint inside it, so only a member shadow
-     * wider than the group's own can push the edge out. */
-    if (ctx->sparse_cap) {
-        int reach = span_reach(shc, shblur, shspread, shx);
-        for (int k = 0; k < cnt; k++) {
-            Widget *mw = items[first + k].w;
-            int mrch = span_reach(eval_color_ctx(ctx, widget_prop(mw, "shadow"), 0),
-                                  eval_int(widget_prop(mw, "shadow_blur"), 0),
-                                  eval_int(widget_prop(mw, "shadow_spread"), 0),
-                                  eval_int(widget_prop(mw, "shadow_x"), 0));
-            if (mrch > reach) reach = mrch;
-        }
-        fprintf(o, "        if (__bw > 0) span_add(__sp_x0, __sp_x1, &__sp_n, %d, __bx - %d, __bx + __bw + %d, (int)w->w);\n",
-                ctx->sparse_cap, reach, reach);
-    }
     const char *gg = vertical ? "if (__gdraw) " : "if (__gdraw && __gn) ";
     if (shc & 0xff000000u)
         fprintf(o, "        %sfill_rounded_shadow(sl->px,w->w,w->h, __bx + %d, __gy + %d, __bw + %d, __gh + %d, %d, %d, 0x%08xu);\n",

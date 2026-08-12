@@ -248,10 +248,6 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     int partial_cap = (ctx->nsrc <= 64) &&
         surface_partial_ok(sur, items, nitems, vertical, has_bord, armpit,
                            armpit_any_outer, reveal_g, n_sliders);
-    /* Sparse pool: nothing paints full-width (partial_cap already rules out a
-     * border, bg_bottom, armpits, radii and clip_top), so only the columns the
-     * pills occupy are ever written and the gap pages never fault in. */
-    int sparse_ok = partial_cap && !(bg & 0xff000000u) && !(sh.col & 0xff000000u);
 
     /* `scroll = <px>` (pixel step) or `scroll = rows` (snap a notch to the next
      * row top). Both make this a scrollable container; the row table below is
@@ -382,15 +378,6 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
         if (nitems == 0) fputs("0ull", o);
         fputs("};\n\n", o);
     }
-    /* Written-column spans, per output slot × per buffer slot. `span_gen`
-     * tracks Widget.pool_gen: a recreated pool is zero pages again, so both
-     * rows drop to "nothing written" instead of describing stale pixels. */
-    if (sparse_ok) {
-        fprintf(o, "static int %s_span_x0[8][2][%d], %s_span_x1[8][2][%d];\n", nm, n_arr, nm, n_arr);
-        fprintf(o, "static int %s_span_n[8][2];\n", nm);
-        fprintf(o, "static uint32_t %s_span_gen[8];\n\n", nm);
-    }
-
     ctx->widget_var = "w";
 
     /* Step 6.1: per-(item,prop) transition slot storage. Sized 8 for runtime-for
@@ -731,15 +718,6 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
      * __wds==0 means a forced/mut redraw with no source tick — always a full
      * render. The band is unioned from last frame's spans, which phase B then
      * proves still current; a shift there falls back to a full render. */
-    if (sparse_ok) {
-        fprintf(o, "    int __si = (int)(sl - w->slots);\n");
-        fprintf(o, "    if (%s_span_gen[__wi] != w->pool_gen) {\n", nm);
-        fprintf(o, "        %s_span_n[__wi][0] = 0;\n", nm);
-        fprintf(o, "        %s_span_n[__wi][1] = 0;\n", nm);
-        fprintf(o, "        %s_span_gen[__wi] = w->pool_gen;\n", nm);
-        fputs("    }\n", o);
-        fprintf(o, "    int __sp_x0[%d], __sp_x1[%d], __sp_n = 0;\n", n_arr, n_arr);
-    }
     if (masks_ok) {
         fprintf(o, "    uint64_t __wds = bar_dirty_srcs_%s;\n", nm);
         fprintf(o, "    bar_dirty_srcs_%s = 0;\n", nm);
@@ -755,11 +733,7 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
         fputs("    if (w->kind == W_BAR && !__hovch && __wds != 0ull && !__", o);
         fprintf(o, "%s_pressed_w\n", nm);
         fputs("#ifdef WISP_HAS_ANIM\n        && anim_active() == 0\n#endif\n", o);
-        if (sparse_ok)
-            fprintf(o, "       ) { if (widget_copy_forward_spans(w, sl, &%s_span_x0[__wi][0][0], &%s_span_x1[__wi][0][0], %s_span_n[__wi], %d)) __partial = 1; }\n",
-                    nm, nm, nm, n_arr);
-        else
-            fputs("       ) { if (widget_copy_forward(w, sl)) __partial = 1; }\n", o);
+        fputs("       ) { if (widget_copy_forward(w, sl)) __partial = 1; }\n", o);
         fputs("    if (__partial) {\n", o);
         fputs("        int __b0 = 1 << 30, __b1 = 0;\n", o);
         fprintf(o, "        for (int __k = 0; __k < %d; __k++) {\n", n_arr);
@@ -772,27 +746,10 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
          * it writes no pixel — rather than branching around it: the layout and
          * the hit-rect rebuild must happen on every frame either way. */
         fputs("        render_set_clip_x(__dmg_x0, __dmg_x1);\n", o);
-        if (sparse_ok) {
-            /* the band is a bounding box and pills sit at both edges — filling
-             * it whole writes every gap page and defeats the sparse pool. Clear
-             * only span∩band: every cell the clipped draw will rewrite is
-             * inside the slot's span list (copy-forward installed it). */
-            fprintf(o, "        for (int __i2 = 0; __i2 < %s_span_n[__wi][__si]; __i2++) {\n", nm);
-            fprintf(o, "            int __cx0 = %s_span_x0[__wi][__si][__i2];\n", nm);
-            fprintf(o, "            int __cx1 = %s_span_x1[__wi][__si][__i2];\n", nm);
-            fputs("            if (__cx0 < __dmg_x0) __cx0 = __dmg_x0;\n", o);
-            fputs("            if (__cx1 > __dmg_x1) __cx1 = __dmg_x1;\n", o);
-            fputs("            if (__cx1 > __cx0) fill_rect(sl->px, w->w, w->h, __cx0, 0, __cx1 - __cx0, w->h, 0);\n", o);
-            fputs("        }\n", o);
-        } else {
-            fputs("        fill_rect(sl->px, w->w, w->h, __dmg_x0, 0, __dmg_x1 - __dmg_x0, w->h, 0);\n", o);
-        }
+        fputs("        fill_rect(sl->px, w->w, w->h, __dmg_x0, 0, __dmg_x1 - __dmg_x0, w->h, 0);\n", o);
         fputs("    }\n", o);
     }
-    if (sparse_ok)
-        fprintf(o, "    if (!__partial) clear_spans(sl->px, w->w, w->h, %s_span_x0[__wi][__si], %s_span_x1[__wi][__si], %s_span_n[__wi][__si]);\n",
-                nm, nm, nm);
-    else if (partial_cap)
+    if (partial_cap)
         fputs("    if (!__partial) clear_buf(sl->px, w->w, w->h, 0);\n", o);
     else if (scroll_px > 0)
         fputs("    if (!__yp) clear_buf(sl->px, w->w, w->h, 0);\n", o);
@@ -880,9 +837,7 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
             if (bg_bot_e) {
                 uint32_t bg_bot = eval_color_ctx(ctx, bg_bot_e, bg);
                 fprintf(o, "    fill_rect_vgrad(sl->px, w->w, w->h, __cox, __coy, __cws, __chs, 0x%08xu, 0x%08xu, __clip_top);\n", bg, bg_bot);
-            } else if (!sparse_ok) {
-                /* sparse: bg is fully transparent, and filling it with zeros
-                 * would fault in every page of the pool for no pixel change */
+            } else {
                 fprintf(o, "    fill_rect_clipped(sl->px, w->w, w->h, __cox, __coy, __cws, __chs, 0x%08xu, __clip_top);\n",
                         bg);
             }
@@ -1151,16 +1106,8 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
         fprintf(o, "          if (__na != %s_cell_adv[__wi][__k]) __shift = 1;\n", nm);
         fprintf(o, "          %s_cell_adv[__wi][__k] = __na;\n", nm);
         fputs("      }\n", o);
-        if (sparse_ok) {
-            /* post-copy-forward this slot holds exactly src's spans, so those
-             * are the only pixels there are to undo */
-            fprintf(o, "      if (__partial && __shift) { __partial = 0; render_clip_reset();\n");
-            fprintf(o, "          clear_spans(sl->px, w->w, w->h, %s_span_x0[__wi][__si], %s_span_x1[__wi][__si], %s_span_n[__wi][__si]); } }\n",
-                    nm, nm, nm);
-        } else {
-            fprintf(o, "      if (__partial && __shift) { __partial = 0; render_clip_reset(); clear_buf(sl->px, w->w, w->h, 0);\n");
-            fprintf(o, "          fill_rect_clipped(sl->px, w->w, w->h, __cox, __coy, __cws, __chs, 0x%08xu, 0); } }\n", bg);
-        }
+        fprintf(o, "      if (__partial && __shift) { __partial = 0; render_clip_reset(); clear_buf(sl->px, w->w, w->h, 0);\n");
+        fprintf(o, "          fill_rect_clipped(sl->px, w->w, w->h, __cox, __coy, __cws, __chs, 0x%08xu, 0); } }\n", bg);
     }
     fputs("    /* --- draw pass --- */\n", o);
     /* `scroll`: the start-aligned stack below the sticky prefix is shifted up by
@@ -1185,7 +1132,6 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
         fprintf(o, "    __%s_rowbot[__wi] = __coy + __chs;\n", nm);
     }
     ctx->partial_ok = partial_cap;
-    ctx->sparse_cap = sparse_ok ? n_arr : 0;
     ctx->surface_bg = bg;
     ctx->scroll_rows = 0;      /* the sticky prefix is not a scrolled row */
     for (int i = 0; i < nitems; i++) {
@@ -1205,7 +1151,6 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
         emit_item_draw(o, &items[i], ctx, vertical, nm);
     }
     ctx->partial_ok = 0;
-    ctx->sparse_cap = 0;
     ctx->scroll_rows = scroll_px > 0;   /* the input emitters below still need it */
     if (scroll_px > 0) {
         if (n_sticky >= nitems) {
@@ -1231,13 +1176,6 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
     /* The band must not outlive the draw pass: the cutout blit below and every
      * renderer that runs after this one write straight into their own buffers. */
     if (partial_cap) fputs("    render_clip_reset();\n", o);
-    /* This frame's written columns become the slot's span list — unconditional,
-     * since the draw pass rebuilds the layout on a partial frame too. */
-    if (sparse_ok) {
-        fprintf(o, "    memcpy(%s_span_x0[__wi][__si], __sp_x0, (size_t)__sp_n * sizeof(int));\n", nm);
-        fprintf(o, "    memcpy(%s_span_x1[__wi][__si], __sp_x1, (size_t)__sp_n * sizeof(int));\n", nm);
-        fprintf(o, "    %s_span_n[__wi][__si] = __sp_n;\n", nm);
-    }
 
     /* Snapshot hits for click dispatch — into this widget's per-slot row. */
     emit_hit_snapshot(o, nm);

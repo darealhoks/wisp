@@ -308,9 +308,6 @@ struct Widget {
      * after buffer-release: a released shm buffer is still client-owned memory
      * we mapped, so its pixels remain the last frame until we overwrite them. */
     int        last_attached;
-    /* Bumped on every (re)creation of the pool: the memfd pages are zero again,
-       so a sparse surface's recorded spans no longer describe either slot. */
-    uint32_t   pool_gen;
 
     /* Frame callback for animation (NULL when idle). */
     uint32_t   frame_cb;
@@ -496,17 +493,6 @@ void    widget_attach(Widget *w, BufSlot *s, int request_frame);
 void    widget_attach_rect(Widget *w, BufSlot *s, int request_frame,
                            int x, int y, int dw, int dh);
 int     widget_copy_forward(Widget *w, BufSlot *dst);
-/* Sparse variant: instead of the whole slot, carry forward only the logical
- * column spans the last-attached slot actually painted. `x0`/`x1`/`n` are the
- * generated per-buffer-slot span tables (2 rows of `cap`, indexed by slot);
- * dst's own stale spans are zeroed first, then src's are copied and dst's span
- * row is set to src's. Same return semantics as widget_copy_forward. */
-int     widget_copy_forward_spans(Widget *w, BufSlot *dst,
-                                  int *x0, int *x1, int *n, int cap);
-/* Insertion-merge a logical span into a sorted, disjoint span list. On
- * overflow the list collapses to [0,wmax) — degrades to a full-width repaint,
- * never to missing coverage. */
-void    span_add(int *x0, int *x1, int *n, int cap, int a, int b, int wmax);
 /* Cutout registry: one surface can punch a transparent rect through another
  * surface's pixels (e.g. OSD body cuts the bar strip underneath so the
  * translucent stack doesn't double-blend). Target keyed by DSL surface name.
@@ -567,11 +553,6 @@ void render_clip_reset(void);
 
 void clear_buf(uint32_t *px, int w, int h, uint32_t c);
 void clear_band(uint32_t *px, int w, int h, int y0, int y1, uint32_t c);
-/* Full-height logical column spans, zeroed / copied. The gap columns between
- * them are never touched, so an untouched memfd page never faults in. */
-void clear_spans(uint32_t *px, int w, int h, const int *x0, const int *x1, int n);
-void copy_spans(uint32_t *dst, const uint32_t *src, int w, int h,
-                const int *x0, const int *x1, int n);
 void fill_rect(uint32_t *px, int sw, int sh, int x, int y, int w, int h, uint32_t c);
 /* Same rect, but src-over instead of overwrite — for a translucent wash that
  * has to keep what is already in the buffer (the lock's `dim` over wallpaper). */
@@ -1297,6 +1278,9 @@ void     anim_cancel_owner(Widget *w);
  * ownerless tweens that drive something other than a widget's pixels. */
 void     anim_on_frame(uint32_t id, AnimDone cb, void *user);
 void     anim_tick(int64_t now);
+/* Drop the batch start timestamp — main loop calls it once per epoll wakeup so
+ * every tween started while handling that batch shares one start_ms. */
+void     anim_batch_begin(void);
 int      anim_fd(void);
 int      anim_active(void);       /* >0 while any tween runs */
 void     anim_on_tfd(void);
