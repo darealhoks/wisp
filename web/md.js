@@ -7,20 +7,34 @@ function esc(s) {
 	return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-function inline(s) {
-	s = esc(s);
-	s = s.replace(/`([^`]+)`/g, (_, c) => "<code>" + c + "</code>");
+function text(s) {
+	// backslash escapes only apply outside code spans (CommonMark 6.1); the
+	// escaped char is parked as \0<code>\0 so emphasis/links can't see it
+	s = esc(s.replace(/\\([!-\/:-@\[-`{-~])/g,   // any ASCII punctuation
+		(_, c) => "\0" + c.charCodeAt(0) + "\0"));
 	s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
 	s = s.replace(/\*([^*]+)\*/g, "<em>$1</em>");
 	// wikilinks [[page]] / [[page#slug]] route in-site; names are docs basenames
 	s = s.replace(/\[\[([\w.-]+)(?:#([\w-]+))?\]\]/g, (_, p, h) =>
 		`<a href="#${p}${h ? "/" + h : ""}">${p}</a>`);
 	s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, t, url) => {
-		const m = url.match(/^([a-z]+)\.md$/);
-		if (m) return `<a href="#${m[1]}">${t}</a>`;
+		const m = url.match(/^([a-z-]+)\.md(?:#([\w-]+))?$/);
+		if (m) return `<a href="#${m[1]}${m[2] ? "/" + m[2] : ""}">${t}</a>`;
 		return `<a href="${url}" target="_blank" rel="noopener">${t}</a>`;
 	});
-	return s;
+	return s.replace(/\0(\d+)\0/g, (_, n) => esc(String.fromCharCode(+n)));
+}
+
+function inline(s) {
+	let out = "";
+	// split on code spans first so emphasis/link syntax inside them stays literal
+	const re = /(`+)([^]*?)\1/g;
+	let last = 0, m;
+	while ((m = re.exec(s))) {
+		out += text(s.slice(last, m.index)) + "<code>" + esc(m[2].trim()) + "</code>";
+		last = re.lastIndex;
+	}
+	return out + text(s.slice(last));
 }
 
 function slug(s) {
@@ -67,13 +81,24 @@ export function render(md) {
 		if (/^\|/.test(line)) {
 			const rows = [];
 			while (i < lines.length && /^\|/.test(lines[i])) rows.push(lines[i++]);
-			const cells = r => r.replace(/^\||\|$/g, "").split("|").map(c => inline(c.trim()));
-			let html = "<table><thead><tr>";
-			html += cells(rows[0]).map(c => `<th>${c}</th>`).join("");
+			// split on unescaped pipes only; \| survives into the cell as a literal
+			const cells = r => r.replace(/^\|/, "").replace(/(?<!\\)\|\s*$/, "")
+				// GFM unescapes \| in a table cell even inside a code span
+				.split(/(?<!\\)\|/).map(c => inline(c.trim().replace(/\\\|/g, "|")));
+			const head = cells(rows[0]);
+			const align = cells(rows[1]).map(c =>  // rows[1] is the |---| separator
+				/^:-+:$/.test(c) ? " style=\"text-align:center\"" :
+				/-+:$/.test(c) ? " style=\"text-align:right\"" : "");
+			let html = "<div class=\"tw\"><table><thead><tr>";
+			html += head.map((c, n) => `<th${align[n] || ""}>${c}</th>`).join("");
 			html += "</tr></thead><tbody>";
-			for (const r of rows.slice(2))  // rows[1] is the |---| separator
-				html += "<tr>" + cells(r).map(c => `<td>${c}</td>`).join("") + "</tr>";
-			out.push(html + "</tbody></table>");
+			for (const r of rows.slice(2)) {
+				const cs = cells(r);
+				while (cs.length < head.length) cs.push("");
+				html += "<tr>" + cs.slice(0, head.length)
+					.map((c, n) => `<td${align[n] || ""}>${c}</td>`).join("") + "</tr>";
+			}
+			out.push(html + "</tbody></table></div>");
 			continue;
 		}
 

@@ -38,12 +38,14 @@
 	article h2 { font-size: 1.5rem; }
 	article h3 { font-size: 1.2rem; }
 	article p, article ul, article ol { margin-bottom: 1.25em; }
-	article pre, article table { margin-bottom: 1.4em; }
+	article pre, article .tw { margin-bottom: 1.4em; }
 	article pre { background: #181b1f; padding: 1em 1.1em; line-height: 1.45; overflow-x: auto; }
 	article p code, article li code, article td code, article th code {
 		background: #181b1f; padding: .1em .3em; }
-	table { border-collapse: collapse; display: block; overflow-x: auto; }
-	th, td { padding: .6em .9em; text-align: left; }
+	.tw { overflow-x: auto; }
+	table { border-collapse: collapse; width: 100%; }
+	th, td { padding: .6em .9em; text-align: left; vertical-align: top; }
+	td:first-child { white-space: nowrap; }
 	th { border-bottom: 2px solid rgba(255,255,255,.18); font-weight: 600; }
 	tbody tr + tr td { border-top: 1px solid rgba(255,255,255,.07); }
 	tbody tr:nth-child(even) { background: rgba(255,255,255,.03); }

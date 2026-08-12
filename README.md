@@ -40,11 +40,9 @@ widget bat {
 }
 ```
 
-That is the whole battery block: a source, a widget, and expressions over the
-source. No polling loop, no format string mini-language, no shell script piping
-`acpi` into a JSON blob. When `bat_s.pct` changes, wisp recomputes exactly the
-widgets whose expressions read it and repaints exactly the damaged rectangle. The
-rest of the frame is not touched, and when nothing changes no timer fires at all.
+That is the whole battery block. When `bat_s.pct` changes, wisp recomputes only
+the widgets that read it and repaints only the damaged rectangle; when nothing
+changes, no timer fires at all.
 
 Surfaces are declared the same way, so `radius`, `anchor`, animations and
 visibility conditions are all just fields - see the
