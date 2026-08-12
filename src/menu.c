@@ -414,6 +414,7 @@ int menu_toggle(const char *tag) {
     for (int i = 0; i < MAX_WIDGETS; i++)
         if (widgets[i].kind == W_MENU && !strcmp(widgets[i].s.menu.tag, tag)) {
             menu_cancel_all();
+            click_anchor_spend();   /* a bar click that toggled shut must not anchor the next menu */
             return 1;
         }
     return 0;

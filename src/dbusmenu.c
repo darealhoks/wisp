@@ -402,9 +402,11 @@ static void on_menu_changed(const char *sender, const char *path,
 void tray_menu(int i) {
     const char *service = tray_service(i);
     if (!service[0]) return;
-    if (open_item == i) { menu_cancel_all(); return; }              /* toggle */
+    /* Both toggle-shut paths: the closing click's stamp is still live, and the
+     * next menu would anchor under this cell and land where the popup was. */
+    if (open_item == i) { menu_cancel_all(); click_anchor_spend(); return; }
     if (closed_item == i && now_ms() - closed_ms < 400) {           /* toggle, click-off ran first */
-        closed_item = -1; return;
+        closed_item = -1; click_anchor_spend(); return;
     }
     const char *path = tray_menu_path(i);
     if (!path[0]) { tray_click(i, "SecondaryActivate"); return; }
