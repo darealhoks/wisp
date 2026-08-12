@@ -25,6 +25,16 @@ int anim_active(void) { return anim_active_count; }
 static int     anim_tfd = -1;
 static int     anim_armed = 0;
 
+/* One start timestamp per event-loop batch. Complementary tweens (a pill
+ * growing 28->34 while its neighbour shrinks 34->28) only keep the row width
+ * constant while they share a phase; sampling now_ms() per anim_start_*
+ * desynced them by 1 ms whenever the two calls straddled a millisecond, which
+ * is enough for anim_px to stop cancelling and shift everything laid out
+ * after them by a pixel for a few frames. Reset from the main loop. */
+static int64_t batch_ms = 0;
+void anim_batch_begin(void) { batch_ms = 0; }
+static int64_t anim_now(void) { if (!batch_ms) batch_ms = now_ms(); return batch_ms; }
+
 static void anim_tfd_arm(void) {
     if (anim_tfd < 0) {
         anim_tfd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
@@ -109,7 +119,7 @@ uint32_t anim_start_num(void *target, AnimType type, double from, double to,
     a->type = type;
     a->from = from;
     a->to = to;
-    a->start_ms = now_ms();
+    a->start_ms = anim_now();
     a->duration_ms = duration_ms > 0 ? duration_ms : 1;
     a->easing = e;
     if (bez) memcpy(a->bez, bez, sizeof a->bez);
@@ -141,7 +151,7 @@ uint32_t anim_start_color(uint32_t *target, uint32_t from, uint32_t to,
     a->type = ANIM_T_COLOR;
     a->from_c = from;
     a->to_c = to;
-    a->start_ms = now_ms();
+    a->start_ms = anim_now();
     a->duration_ms = duration_ms > 0 ? duration_ms : 1;
     a->easing = e;
     if (bez) memcpy(a->bez, bez, sizeof a->bez);

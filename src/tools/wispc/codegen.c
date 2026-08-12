@@ -291,6 +291,8 @@ static void emit_main(FILE *o, SrcInst *srcs, int nsrc, SemaResult *r) {
     fputs("        struct epoll_event evs[16];\n", o);
     fputs("        int n = epoll_wait(ep_fd, evs, 16, __timeout);\n", o);
     fputs("        if (n < 0) { if (errno == EINTR) continue; die(\"epoll_wait: %s\", strerror(errno)); }\n", o);
+    if (r->has_anim)
+        fputs("        anim_batch_begin();\n", o);
     fputs("        for (int i = 0; i < n; i++) {\n", o);
     fputs("            int fd = evs[i].data.fd;\n", o);
     fputs("            if (fd == wl_fd) {\n"
