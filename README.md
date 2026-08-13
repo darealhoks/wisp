@@ -1,26 +1,24 @@
 # wisp <img src="wisp.png" width="32" height="32" align="absmiddle" alt="">
 
-**W**idget **I**nterface, **S**ingle **P**rocess - one Wayland daemon that draws
-a whole desktop shell, from a file you write.
+Tiny Wayland daemon that draws a whole
+desktop shell, from a file you write.
 
 Bar, notifications, app menu, hover panels, on-screen displays, lock screen,
 login greeter, wallpaper, night-light gamma, idle/dpms, media controls - plus
 any widget you can express: workspaces, battery, network, temps, clock, volume,
 backlight, CPU, disk, whatever a source exposes. Volume, backlight, gamma,
-brightness and power are controlled, not just displayed.
+brightness and power are controlled.
 
 ![wisp running the reverie config](desktop.png)
 
 A normal Wayland desktop runs a bar, a notification daemon, a locker, a gamma
 tool, an idle watcher and a wallpaper setter: six daemons, six config formats,
-six sets of dependencies. wisp is one process that does all of it - because a bar, a hover
-panel, a notification slab, an app menu and a lock screen are the same thing, a
-layer-shell surface, configured differently.
+six sets of dependencies. wisp is one process that does all of it for a smaller
+price than each of those cost individually.
 
-And you configure it in its own language: a `.wisp` file that the bundled
+You configure it in its own language: a `.wisp` file that the bundled
 compiler `wispc` lowers to C and links into the daemon. Writing `tags()` links the workspace client. Declaring an `osd` surface
-links the D-Bus client. A config that mentions neither produces a binary
-containing neither - you don't disable features, you never build them.
+links the D-Bus client. You only build what you declare.
 
 **0 CPU ticks idle · 3.1 MB RSS · 250 KB binary · links libc and libm, nothing
 else.** Wayland and D-Bus are spoken as raw wire.
@@ -40,7 +38,7 @@ widget bat {
 }
 ```
 
-That is the whole battery block. When `bat_s.pct` changes, wisp recomputes only
+This is the whole battery block. When `bat_s.pct` changes, wisp recomputes only
 the widgets that read it and repaints only the damaged rectangle; when nothing
 changes, no timer fires at all.
 
@@ -56,10 +54,12 @@ visibility conditions are all just fields - see the
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/darealhoks/wisp/main/install.sh | sh
-wispctl rebuild reverie  # compile an example config, install, run
-wisp                     # or: autostart = wisp
+wispctl rebuild reverie  # compile an example config and install it
+wisp
+```
 
-# from a checkout instead:
+**From a checkout instead:**
+```sh
 make install             # → ~/.local/bin (override with PREFIX=)
 ```
 
@@ -72,7 +72,7 @@ separate `wisp-lock` binary does.
 ## Docs
 
 Everything is at **[darealhoks.github.io/wisp](https://darealhoks.github.io/wisp/)** -
-install, a first-config tutorial, the complete language reference, and a
+install, the complete language reference, and a
 template library.
 
 ## Compositor support
