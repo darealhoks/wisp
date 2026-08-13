@@ -370,6 +370,7 @@ static const char USAGE[] =
 "  dnd on|off|toggle|status  do not disturb\n"
 "  notif open|close|toggle|status    show/hide the notification center panel\n"
 "  notif dismiss <id> | notif clear  drop one history row (note.id) or all\n"
+"  notif invoke <id>                 fire its default action, then dismiss\n"
 "\n"
 "media\n"
 "  volume up|down|mute       also shows the OSD\n"

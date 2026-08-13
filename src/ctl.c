@@ -426,7 +426,7 @@ static int dispatch(Client *c, char *cmd) {
         if (argc - s >= 5) parse_hex(argv[s + 4], &icon);
         int timeout = argc - s >= 6 ? atoi(argv[s + 5]) : -1;
 #ifdef WISP_HAS_DBUS
-        if (!transient) notif_push("wispctl", summary, body, icon, NULL, urgency, 0);
+        if (!transient) notif_push("wispctl", summary, body, icon, NULL, urgency, 0, "");
 #else
         (void)transient;
 #endif
@@ -565,7 +565,7 @@ static int dispatch(Client *c, char *cmd) {
      * `id` is the entry serial the cell's on_click(p) hands back (`note.id`) —
      * an index would race the ring shifting under the click. */
     if (!strcmp(op, "notif")) {
-        if (argc < 2) return fail(c, "usage: notif open|close|toggle|status|dismiss <id>|clear");
+        if (argc < 2) return fail(c, "usage: notif open|close|toggle|status|dismiss <id>|invoke <id>|clear");
         const char *sub = argv[1];
         if (!strcmp(sub, "open"))        notif_open = 1;
         else if (!strcmp(sub, "close"))  notif_open = 0;
@@ -578,6 +578,10 @@ static int dispatch(Client *c, char *cmd) {
         else if (!strcmp(sub, "dismiss")) {
             if (argc < 3) return fail(c, "usage: notif dismiss <id>");
             notif_dismiss((uint32_t)strtoul(argv[2], NULL, 10));
+        }
+        else if (!strcmp(sub, "invoke")) {
+            if (argc < 3) return fail(c, "usage: notif invoke <id>");
+            notif_invoke((uint32_t)strtoul(argv[2], NULL, 10));
         }
         else return fail(c, "unknown notif subcommand: %s", sub);
         {

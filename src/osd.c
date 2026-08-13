@@ -695,6 +695,16 @@ static void start_close(Osd *o, uint32_t reason) {
     o->expires_at_ms = 0;  /* don't double-expire mid-slide */
 }
 
+/* Set after osd_post, which memsets the slab — a replace with no actions
+ * therefore drops the previous key instead of inheriting it. */
+void osd_set_action(uint32_t id, const char *key) {
+    Widget *w = osd_stack();
+    if (!w || !key) return;
+    int slot = find_replace(w, id);
+    if (slot < 0) return;
+    snprintf(w->s.osd.items[slot].action, sizeof w->s.osd.items[slot].action, "%s", key);
+}
+
 void osd_close(uint32_t id) {
     Widget *w = osd_stack();
     if (!w) return;
@@ -853,7 +863,9 @@ static void update_input_region(Widget *w) {
 #endif
 }
 
-void osd_on_click(Widget *w, int x, int y) {
+/* Left click invokes the notification's default action then closes; the other
+ * buttons only close. */
+void osd_on_click(Widget *w, int x, int y, int button) {
     (void)x;
     if (!OSD_DISMISS_ON_CLICK) return;
 #if OSD_PILL_W > 0
@@ -868,8 +880,13 @@ void osd_on_click(Widget *w, int x, int y) {
     int idx = slab_at(w, y);
     if (idx < 0) return;
     if (!w->s.osd.items[idx].active) return;
-    uint32_t id = w->s.osd.items[idx].replace_id;
-    osd_close(id);
+    Osd *o = &w->s.osd.items[idx];
+#ifdef WISP_HAS_DBUS
+    if (button == 0x110 && o->action[0]) dbus_emit_action(o->replace_id, o->action);
+#else
+    (void)button;
+#endif
+    osd_close(o->replace_id);
 }
 
 /* Pct pill lives in its own file (file-size rule); same TU — osd.c itself is

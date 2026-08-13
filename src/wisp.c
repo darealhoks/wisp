@@ -208,8 +208,9 @@ void on_pointer_event(uint16_t op, uint8_t *body, uint32_t bodylen) {
         }
 #endif
 #ifdef WISP_HAS_OSD
-        if (w->kind == W_OSD && state == 1 && button == 0x110) {
-            osd_on_click(w, ptr_x, ptr_y); break;
+        if (w->kind == W_OSD && state == 1 &&
+            (button == 0x110 || button == 0x111 || button == 0x112)) {
+            osd_on_click(w, ptr_x, ptr_y, (int)button); break;
         }
 #endif
 #ifdef WISP_HAS_GREET

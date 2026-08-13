@@ -169,6 +169,8 @@ CE lower_member(CGCtx *c, Expr *e) {
             /* The entry's serial, not its row: feeds `wispctl notif dismiss`
                without racing the ring shifting between render and click. */
             snprintf(r.text, sizeof r.text, "notif_id(%s)", it); r.type = T_INT;
+        } else if (flen == 6 && memcmp(fld, "action", 6) == 0) {
+            snprintf(r.text, sizeof r.text, "notif_action(%s)", it); r.type = T_STR;
         } else {
             diag_error(e->loc, "codegen: notification has no field '%.*s'", (int)flen, fld);
             c->failed = 1;

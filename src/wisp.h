@@ -262,6 +262,7 @@ typedef struct {
     int64_t  closing_at_ms;      /* 0 = not closing; otherwise slide-out anim start */
     uint32_t close_reason;       /* dbus-spec close reason, deferred until slide-out done */
     int      h;                  /* rendered slab height; filled by osd_render */
+    char     action[32];         /* default action key, "" = none */
 } Osd;
 
 typedef struct {
@@ -928,11 +929,14 @@ int         notif_urgent(int i);
 uint32_t    notif_icon(int i);
 const uint32_t *notif_image(int i);  /* NOTIF_IMAGE_PX² thumbnail, NULL = none */
 uint32_t    notif_id(int i);
+const char *notif_action(int i);    /* default action key, "" = none */
 /* `image` (OSD_IMAGE_PX² premultiplied ARGB, or NULL) is only borrowed — the
  * ring keeps its own downscaled copy; the caller still owns the pointer. */
 void        notif_push(const char *app, const char *summary, const char *body,
                        uint32_t icon_cp, const uint32_t *image, int urgency,
-                       uint32_t replaces_id);
+                       uint32_t replaces_id, const char *action);
+void        notif_bind_rid(uint32_t rid);
+void        notif_invoke(uint32_t id);   /* ActionInvoked + dismiss */
 void        notif_dismiss(uint32_t id);
 void        notif_clear(void);
 
@@ -950,7 +954,8 @@ void     osd_close_all(void);
 int      osd_check_expiry(int64_t now);  /* returns ms-until-next or -1 */
 void     osd_tick(Widget *w);            /* compositor frame callback hook */
 void     osd_on_first_configure(Widget *w); /* restart spawn tweens pending on initial configure */
-void     osd_on_click(Widget *w, int x, int y);
+void     osd_on_click(Widget *w, int x, int y, int button);
+void     osd_set_action(uint32_t id, const char *key);
 
 /* Runtime owns time, DSL owns layout: a generated slab renderer asks here for
  * per-slab geometry instead of re-deriving the slide. `y` is relative to the
@@ -1068,6 +1073,8 @@ int      dbus_connect(void);                              /* fd or -1 */
 extern int dbus_fd;
 void     dbus_dispatch(void);
 void     dbus_emit_closed(uint32_t id, uint32_t reason);  /* signal NotificationClosed */
+/* signal ActionInvoked; `id` is the id the app got back from Notify */
+void     dbus_emit_action(uint32_t id, const char *key);
 
 /* Reconnect plumbing — timerfd fires on a backoff while dbus_fd is closed.
  * Generated main loop adds dbus_reconnect_fd to epoll and routes events here. */

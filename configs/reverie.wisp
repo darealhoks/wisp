@@ -421,7 +421,8 @@ surface notifs {
 			body_fg = SUBTXT;
 			icon_fg = note.urgent ? RED : TERT;
 			border  = note.urgent ? RED : #00000000;
-			on_click() = exec("wispctl notif dismiss {note.id}");
+			on_click()       = exec("wispctl notif invoke {note.id}");
+			on_right_click() = exec("wispctl notif dismiss {note.id}");
 		}
 	}
 }

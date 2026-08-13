@@ -77,6 +77,23 @@ int dbus_signal_decode_notify(const uint8_t *body, int body_len,
     return r.ok ? 0 : -1;
 }
 
+/* `id` must be the id the app got back from Notify, not a ring serial. */
+void dbus_emit_action(uint32_t id, const char *key) {
+    if (dbus_fd < 0 || !key || !*key) return;
+    W b = {0};
+    wu32(&b, id);
+    wstr(&b, key);
+    Msg m = { .type = DBUS_TYPE_SIGNAL,
+              .flags = 1,
+              .path = "/org/freedesktop/Notifications",
+              .interface = "org.freedesktop.Notifications",
+              .member = "ActionInvoked",
+              .signature = "us",
+              .body = b.b, .body_len = b.pos };
+    send_msg(&m);
+    free(b.b);
+}
+
 void dbus_emit_closed(uint32_t id, uint32_t reason) {
     if (dbus_fd < 0) return;
     W b = {0};
@@ -255,6 +272,7 @@ typedef struct {
 #endif
     uint32_t id;      /* monotonic; the only stable dismiss key */
     uint32_t rid;     /* app replaces_id / sync-hint hash, 0 = never replaces */
+    char     action[32];  /* default action key, "" = none */
     uint8_t  urgency;
 } NotifEntry;
 static NotifEntry nhist[NOTIF_CAP];
@@ -285,6 +303,18 @@ const char *notif_body(int i)      { const NotifEntry *e = nent(i); return e ? e
 int         notif_urgent(int i)    { const NotifEntry *e = nent(i); return e && e->urgency >= 2; }
 uint32_t    notif_icon(int i)      { const NotifEntry *e = nent(i); return e ? e->icon : 0; }
 uint32_t    notif_id(int i)        { const NotifEntry *e = nent(i); return e ? e->id : 0; }
+const char *notif_action(int i)    { const NotifEntry *e = nent(i); return e ? e->action : ""; }
+
+/* The id the app must see in ActionInvoked: its own replaces_id when it sent
+ * one, else whatever the OSD assigned — which only exists after osd_post. */
+void notif_invoke(uint32_t id) {
+    const NotifEntry *e = NULL;
+    for (int i = 0; i < nhist_n; i++)
+        if (nhist[i].id == id) { e = &nhist[i]; break; }
+    if (!e) return;
+    if (e->rid && e->action[0]) dbus_emit_action(e->rid, e->action);
+    notif_dismiss(id);
+}
 #if NOTIF_IMG
 const uint32_t *notif_image(int i) { const NotifEntry *e = nent(i); return e ? e->image : NULL; }
 static void nimg_drop(int i)       { free(nhist[i].image); nhist[i].image = NULL; }
@@ -297,7 +327,7 @@ const uint32_t *notif_image(int i) { (void)i; return NULL; }
  * The row keeps its serial id so a click already in flight still hits it. */
 void notif_push(const char *app, const char *summary, const char *body,
                 uint32_t icon_cp, const uint32_t *image, int urgency,
-                uint32_t rid) {
+                uint32_t rid, const char *action) {
     int at = -1;
     if (rid)
         for (int i = 0; i < nhist_n; i++)
@@ -332,7 +362,13 @@ void notif_push(const char *app, const char *summary, const char *body,
     snprintf(e->body,    sizeof e->body,    "%s", body    ? body    : "");
     e->icon    = icon_cp;
     e->urgency = (uint8_t)(urgency < 0 ? 0 : urgency > 255 ? 255 : urgency);
+    snprintf(e->action, sizeof e->action, "%s", action ? action : "");
     notif_repaint();
+}
+
+/* Post-hoc because the OSD only mints an id after the row is already pushed. */
+void notif_bind_rid(uint32_t rid) {
+    if (nhist_n > 0 && !nhist[0].rid) nhist[0].rid = rid;
 }
 
 /* By id, never by index: the ring shifts under a click that is still travelling
@@ -376,15 +412,26 @@ static void handle_notify(R *r, uint32_t serial, const char *sender) {
     const char *body       = rstr(r);
     if (!r->ok) return;
 
-    /* actions array — skip */
+    /* actions: as — alternating key/label; we keep one key, the default */
+    char action[32] = "";
     uint32_t alen = ru32(r);
     if (!r->ok) return;
     ralign(r, 4);
     /* alen is attacker-controlled; (int)alen for alen>=0x80000000 is negative
      * and walks r->pos backwards past the bound check. 64-bit math avoids it. */
-    int64_t aend = (int64_t)r->pos + (int64_t)alen;
-    if (aend > r->len) { r->ok = 0; return; }
-    r->pos = (int)aend;
+    int64_t aend64 = (int64_t)r->pos + (int64_t)alen;
+    if (aend64 > r->len) { r->ok = 0; return; }
+    int aend = (int)aend64;
+    while (r->pos < aend) {
+        const char *key = rstr(r);
+        if (!r->ok) return;
+        rstr(r);                     /* human-readable label, unused */
+        if (!r->ok) return;
+        int def = !strcmp(key, "default");
+        if (def || !action[0]) snprintf(action, sizeof action, "%s", key);
+        if (def) break;
+    }
+    r->pos = aend;
 
     /* hints: a{sv} */
     Hints hn = { .urgency = 1, .progress = -1 };
@@ -432,7 +479,7 @@ static void handle_notify(R *r, uint32_t serial, const char *sender) {
      * most of the point. Progress posts (volume/backlight gauges) are transient
      * readouts, not messages, so they never land here. */
     if (hn.progress < 0)
-        notif_push(app_name, summary, body, hn.icon_cp, image, hn.urgency, rid);
+        notif_push(app_name, summary, body, hn.icon_cp, image, hn.urgency, rid, action);
 
     uint32_t out_id;
 #ifdef WISP_HAS_OSD
@@ -443,6 +490,7 @@ static void handle_notify(R *r, uint32_t serial, const char *sender) {
     } else {
         out_id = osd_post(rid, summary, body, hn.icon_cp, image, hn.progress,
                           hn.urgency, hn.muted, timeout);
+        osd_set_action(out_id, action);
         /* Only real messages ring — progress posts are our own volume/backlight
          * gauges. ponytail: ignores hint:suppress-sound; parse it if an app
          * that plays its own sound starts double-ringing. */
@@ -455,6 +503,8 @@ static void handle_notify(R *r, uint32_t serial, const char *sender) {
     free(image);
     out_id = rid ? rid : 1;
 #endif
+
+    if (hn.progress < 0 && !rid) notif_bind_rid(out_id);
 
     /* Reply: u (notification id) */
     W rb = {0};
@@ -484,11 +534,7 @@ static void handle_close(R *r, uint32_t serial, const char *sender) {
 
 static void handle_get_caps(uint32_t serial, const char *sender) {
     /* reply signature: as. Body: u32 array_bytes + array of strings.
-     * "actions" is advertised even though clicks only dismiss: Chromium/
-     * Electron (Discord) and Firefox refuse to use a server without it and
-     * silently show nothing.
-     * ponytail: emit ActionInvoked("default") on click if focus-on-click
-     * ever matters. */
+     * Only the default action is honoured; per-action chips don't exist. */
     W b = {0};
     int len_pos = b.pos;
     wu32(&b, 0);                         /* placeholder */
