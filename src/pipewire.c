@@ -98,6 +98,12 @@ int pw_reconnect_fd = -1;
 static int cur_vol = -1, cur_mute = 0, cur_mic_vol = -1, cur_mic_mute = 0, cur_ok = 0;
 static int pub_vol = -1, pub_mute = 0, pub_mic_vol = -1, pub_mic_mute = 0, pub_ok = 0;
 
+/* Last node-level Props read per side, the fallback when no card route backs the
+ * node. A node's own volume is a second, independent gain stage sitting at 100%
+ * on a fresh session — reading it as *the* volume made the first media key jump
+ * to full, so a route's value wins whenever there is one. */
+static int sink_node_vol = -1, sink_node_mute, source_node_vol = -1, source_node_mute;
+
 static uint32_t out_seq;
 static uint32_t next_id;             /* next free proxy id (starts at 3) */
 
@@ -122,7 +128,7 @@ static uint32_t sink_dev_proxy, source_dev_proxy;
 static uint32_t sink_dev_global, source_dev_global;
 static int      sink_card_device = -1, source_card_device = -1;
 #define ROUTES_MAX 16
-typedef struct { int device, index; } RouteEnt;
+typedef struct { int device, index, vol, mute; } RouteEnt;   /* vol -1 = unknown */
 static RouteEnt sink_routes[ROUTES_MAX], source_routes[ROUTES_MAX];
 static int      sink_nroutes, source_nroutes;
 
@@ -404,9 +410,11 @@ static void unbind_default(int is_sink) {
     if (is_sink) {
         unbind_one(&sink_proxy, &sink_node_global);
         unbind_one(&sink_dev_proxy, &sink_dev_global);
+        sink_card_device = -1; sink_nroutes = 0; sink_node_vol = -1;
     } else {
         unbind_one(&source_proxy, &source_node_global);
         unbind_one(&source_dev_proxy, &source_dev_global);
+        source_card_device = -1; source_nroutes = 0; source_node_vol = -1;
     }
 }
 
@@ -536,6 +544,45 @@ static void on_metadata_property(RD *r) {
     }
 }
 
+/* Decode an Object Props body: channelVolumes (linear, cube-rooted to pct) and
+ * mute. Returns 1 if a volume was present; the out params keep their prior value
+ * otherwise. */
+static int read_props(RD *o, int *vol, int *mute, int *nchan) {
+    int have_vol = 0;
+    while (o->pos < o->len && o->ok) {
+        uint32_t key = rd_u32(o);
+        (void)rd_u32(o);               /* prop flags */
+        if (!o->ok) break;
+        if (key == SPA_PROP_mute) {
+            *mute = rd_int(o) ? 1 : 0;
+        } else if (key == SPA_PROP_channelVolumes) {
+            int nc = 0;
+            float mx = rd_chanvols(o, &nc);
+            if (o->ok && nc > 0) { *vol = (int)lroundf(cbrtf(mx) * 100.0f); *nchan = nc; have_vol = 1; }
+        } else {
+            rd_skip(o);
+        }
+    }
+    return have_vol;
+}
+
+/* Recompute published state: route props if the write target is a card route
+ * that has reported one, node props otherwise. */
+static void refresh_side(int is_sink) {
+    int vol = is_sink ? sink_node_vol : source_node_vol;
+    int mute = is_sink ? sink_node_mute : source_node_mute;
+    const RouteEnt *tbl = is_sink ? sink_routes : source_routes;
+    int nr = is_sink ? sink_nroutes : source_nroutes;
+    int card = is_sink ? sink_card_device : source_card_device;
+    uint32_t dev = is_sink ? sink_dev_proxy : source_dev_proxy;
+    if (dev && card >= 0)
+        for (int i = 0; i < nr; i++)
+            if (tbl[i].device == card && tbl[i].vol >= 0) { vol = tbl[i].vol; mute = tbl[i].mute; break; }
+    if (is_sink) { cur_vol = vol; cur_mute = mute; if (vol >= 0) cur_ok = 1; }
+    else         { cur_mic_vol = vol; cur_mic_mute = mute; }
+    publish();
+}
+
 /* Node::Param: Struct{ Int seq, Id id, Int index, Int next, Object param }.
  * param is Props with channelVolumes (linear) + mute. */
 static void on_node_param(RD *r, int is_sink) {
@@ -547,26 +594,14 @@ static void on_node_param(RD *r, int is_sink) {
     uint32_t otype; RD o;
     if (!rd_object(&s, &o, &otype) || otype != SPA_OBJECT_Props) return;
 
-    int have_vol = 0, mute = is_sink ? cur_mute : cur_mic_mute;
-    int vol = is_sink ? cur_vol : cur_mic_vol, nchan = is_sink ? sink_nchan : source_nchan;
-    while (o.pos < o.len && o.ok) {
-        uint32_t key = rd_u32(&o);
-        (void)rd_u32(&o);              /* prop flags */
-        if (!o.ok) break;
-        if (key == SPA_PROP_mute) {
-            mute = rd_int(&o) ? 1 : 0;
-        } else if (key == SPA_PROP_channelVolumes) {
-            int nc = 0;
-            float mx = rd_chanvols(&o, &nc);
-            if (o.ok && nc > 0) { vol = (int)lroundf(cbrtf(mx) * 100.0f); nchan = nc; have_vol = 1; }
-        } else {
-            rd_skip(&o);
-        }
-    }
+    int mute = is_sink ? sink_node_mute : source_node_mute;
+    int vol = is_sink ? sink_node_vol : source_node_vol;
+    int nchan = is_sink ? sink_nchan : source_nchan;
+    (void)read_props(&o, &vol, &mute, &nchan);
     if (!o.ok) return;
-    if (is_sink) { cur_vol = vol; cur_mute = mute; sink_nchan = nchan; if (have_vol || cur_vol >= 0) cur_ok = 1; }
-    else         { cur_mic_vol = vol; cur_mic_mute = mute; source_nchan = nchan; }
-    publish();
+    if (is_sink) { sink_node_vol = vol; sink_node_mute = mute; sink_nchan = nchan; }
+    else         { source_node_vol = vol; source_node_mute = mute; source_nchan = nchan; }
+    refresh_side(is_sink);
 }
 
 /* Node::Info: Struct{ Int id, Int max_in, Int max_out, Long change_mask,
@@ -594,13 +629,14 @@ static void on_node_info(RD *r, int is_sink) {
     if (!d.ok || carddev < 0) return;
     if (is_sink) sink_card_device = carddev;
     else         source_card_device = carddev;
+    refresh_side(is_sink);             /* card known: a cached route may now win */
 }
 
 /* Device::Param(Route): Struct{ Int seq, Id id, Int index, Int next, Object route }.
  * Each event carries one route; cache (device, index) so a later write can pick
  * the route whose `device` equals the node's card.profile.device (the two events
- * arrive in either order). route.props volume/mute are ignored — reads come from
- * the node subscription; we only need the index for writes. */
+ * arrive in either order). route.props carries the real mixer volume — the node's
+ * own Props is a separate gain stage, so this is what reads must use. */
 static void on_device_param(RD *r, int is_sink) {
     RD s; if (!rd_struct(r, &s)) return;
     (void)rd_int(&s);                  /* seq */
@@ -611,20 +647,36 @@ static void on_device_param(RD *r, int is_sink) {
     if (!rd_object(&s, &o, &otype) || otype != SPA_OBJECT_ParamRoute) return;
 
     int route_index = -1, route_device = -2;
+    int vol = -1, mute = 0, nchan = is_sink ? sink_nchan : source_nchan, have_vol = 0;
     while (o.pos < o.len && o.ok) {
         uint32_t key = rd_u32(&o);
         (void)rd_u32(&o);              /* prop flags */
         if (!o.ok) break;
         if (key == SPA_ROUTE_index)       route_index = rd_int(&o);
         else if (key == SPA_ROUTE_device) route_device = rd_int(&o);
+        else if (key == SPA_ROUTE_props) {
+            uint32_t pt; RD p;
+            if (rd_object(&o, &p, &pt) && pt == SPA_OBJECT_Props)
+                have_vol = read_props(&p, &vol, &mute, &nchan);
+        }
         else rd_skip(&o);
     }
     if (!o.ok || route_index < 0 || route_device < 0) return;
+    if (have_vol) { if (is_sink) sink_nchan = nchan; else source_nchan = nchan; }
     RouteEnt *tbl = is_sink ? sink_routes : source_routes;
     int *nr = is_sink ? &sink_nroutes : &source_nroutes;
+    int slot = -1;
     for (int i = 0; i < *nr; i++)
-        if (tbl[i].device == route_device) { tbl[i].index = route_index; return; }
-    if (*nr < ROUTES_MAX) { tbl[*nr].device = route_device; tbl[*nr].index = route_index; (*nr)++; }
+        if (tbl[i].device == route_device) { slot = i; break; }
+    if (slot < 0) {
+        if (*nr >= ROUTES_MAX) return;
+        slot = (*nr)++;
+        tbl[slot].vol = -1; tbl[slot].mute = 0;
+    }
+    tbl[slot].device = route_device;
+    tbl[slot].index = route_index;
+    if (have_vol) { tbl[slot].vol = vol; tbl[slot].mute = mute; }
+    refresh_side(is_sink);
 }
 
 static void handle_msg(uint32_t id, uint32_t opcode, const uint8_t *body, int len) {
@@ -775,6 +827,21 @@ static void set_side(int is_sink, int pct, int mute) {
     int ridx = (dev && card >= 0) ? route_index_for(is_sink, card) : -1;
     if (dev && ridx >= 0) device_set_route(dev, ridx, card, pct, nchan, mute);
     else                  node_set_param(node, pct, nchan, mute);
+
+    /* Reflect the write locally: a device SetParam(Route) is not echoed back as a
+     * Route event, so without this the next step would repeat from a stale pct. */
+    RouteEnt *tbl = is_sink ? sink_routes : source_routes;
+    int nr = is_sink ? sink_nroutes : source_nroutes;
+    int *nvol = is_sink ? &sink_node_vol : &source_node_vol;
+    int *nmute = is_sink ? &sink_node_mute : &source_node_mute;
+    for (int i = 0; i < nr; i++)
+        if (tbl[i].device == card) {
+            if (pct >= 0) tbl[i].vol = pct;
+            if (mute >= 0) tbl[i].mute = mute;
+        }
+    if (pct >= 0) *nvol = pct;
+    if (mute >= 0) *nmute = mute;
+    refresh_side(is_sink);
 }
 
 void pw_set_volume(int pct) {
@@ -813,6 +880,8 @@ static void reset_state(void) {
     node_n = 0;
     rlen = 0;
     cur_vol = cur_mic_vol = -1;
+    sink_node_vol = source_node_vol = -1;
+    sink_node_mute = source_node_mute = 0;
     cur_mute = cur_mic_mute = cur_ok = 0;
 }
 
