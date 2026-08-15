@@ -379,7 +379,12 @@ static void teardown_all(int issued_unlock) {
     ls.requested = ls.locked_state = 0;
 }
 
+/* Lock surfaces must die before unlock_and_destroy: mango's destroylock frees
+ * the lock object without clearing m->lock_surface, so a trailing surface
+ * destroy lands in destroylocksurface with locked == 0 and derefs selmon. */
 static void finish_unlock(void) {
+    for (int i = 0; i < MAX_WIDGETS; i++)
+        if (widgets[i].kind == W_LOCK) widget_destroy(&widgets[i]);
     if (id_slock) wl_req(id_slock, SLOCK_REQ_UNLOCK_AND_DESTROY, NULL, 0, -1);
     teardown_all(1);
 }

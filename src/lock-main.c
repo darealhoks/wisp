@@ -71,6 +71,10 @@ int main(int argc, char **argv) {
     signal(SIGPIPE, SIG_IGN);
 
     wl_connect();
+    /* wl_output.scale/mode land after wl_connect's sync (the binds go out
+     * during it), and nothing rescales a lock surface later — without this the
+     * lock renders 1x on a scale-2 output and the compositor upscales it. */
+    wl_roundtrip();
     if (!id_compositor) die("compositor missing");
     if (!id_shm)        die("wl_shm missing");
     if (!id_slock_mgr)  die("ext_session_lock_manager_v1 missing");
@@ -147,7 +151,9 @@ int main(int argc, char **argv) {
         }
     }
 
-    /* Flush any pending wl writes before exit. wl_send is synchronous so
-     * unlock_and_destroy has already reached the kernel; nothing more to do. */
+    /* ext-session-lock-v1 requires a round-trip after unlock_and_destroy before
+     * the client exits, else the compositor may see the disconnect first and
+     * treat the session as abandoned while locked. */
+    wl_roundtrip();
     return 0;
 }
