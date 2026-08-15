@@ -116,7 +116,11 @@ const Font *font_at_scale(const Font *f, int s120) {
     t->px_size = px;
     tw[n_tw].base = f; tw[n_tw].px = px; tw[n_tw].twin = t;
     n_tw++;
-    return t;   /* font_open() runs on its first font_cache_find() */
+    /* Open now, not on the twin's first font_cache_find: draw_text reads
+     * sf->baseline before it looks a glyph up, so a still-closed twin places
+     * that first frame a baseline too high. */
+    font_open(t);
+    return t;
 }
 
 __attribute__((constructor, used))
