@@ -80,54 +80,77 @@ static int new_wall_path(const char *src, char *out, size_t outsz) {
     return got;
 }
 
-/* Config discovery walk. nftw() has no user-data hook, so the walk state is
- * file-static — wispctl is a one-shot process, one walk per run. */
+/* Directory walk for `<name>/<name>.wisp`. nftw() has no user-data hook, so
+ * the walk state is file-static — wispctl is a one-shot process, one walk. */
 #define WALK_TIED 8
 static const char *walk_name;
-static size_t walk_namelen;
 static char walk_hit[WALK_TIED][PATH_MAX];
 static int walk_nhit, walk_depth;
 
 static int walk_cb(const char *p, const struct stat *sb, int t, struct FTW *f) {
+    (void)sb;
+    if (t != FTW_D) return FTW_CONTINUE;
     const char *base = p + f->base;
     /* Dot-dirs are never config trees; 8 levels is deeper than any real one. */
-    if (t == FTW_D)
-        return (f->level >= 8 || (f->level && base[0] == '.'))
-               ? FTW_SKIP_SUBTREE : FTW_CONTINUE;
-    if (t != FTW_F || base[0] == '.' || f->level > walk_depth) return FTW_CONTINUE;
-    if (strncmp(base, walk_name, walk_namelen)
-        || (base[walk_namelen] && strcmp(base + walk_namelen, ".wisp")))
+    if (f->level >= 8 || (f->level && base[0] == '.')) return FTW_SKIP_SUBTREE;
+    if (!f->level || f->level > walk_depth || strcmp(base, walk_name))
         return FTW_CONTINUE;
+    char cand[PATH_MAX];
+    snprintf(cand, sizeof cand, "%s/%s.wisp", p, walk_name);
+    if (access(cand, R_OK) != 0) return FTW_CONTINUE;
     if (f->level < walk_depth) { walk_depth = f->level; walk_nhit = 0; }
-    if (walk_nhit < WALK_TIED) snprintf(walk_hit[walk_nhit], PATH_MAX, "%s", p);
+    if (walk_nhit < WALK_TIED) snprintf(walk_hit[walk_nhit], PATH_MAX, "%s", cand);
     walk_nhit++;
     return FTW_CONTINUE;
 }
 
-/* A literal path wins outright; otherwise <conf> is walked recursively for
- * `<name>.wisp` or a plain file `<name>`, shallowest match winning. A tie is a
- * hard error — silently picking one of two same-named configs costs an hour of
- * confusion. FTW_PHYS keeps symlinked dirs (and their loops) out of the walk.
+static int take(const char *p, char *out) {
+    return access(p, R_OK) == 0 && realpath(p, out) != NULL;
+}
+
+/* Two things are a config, and nothing else is: a file sitting directly in
+ * <conf> (any filename), and a directory holding a `.wisp` named after it —
+ * `themes/mine/mine.wisp` is the config `mine`, every other file beside it is
+ * an include fragment. That's what lets a config be split across files without
+ * its parts showing up as configs of their own.
+ *
+ * A literal path wins outright; a name with a slash is a directory path under
+ * <conf>; a bare name is looked for at the root first, then as a directory
+ * anywhere below, shallowest winning. A tie is a hard error — silently picking
+ * one of two same-named configs costs an hour of confusion. FTW_PHYS keeps
+ * symlinked dirs (and their loops) out of the walk.
  * Prints its own diagnostic; returns 1 on a hit. */
 static int resolve_config(const char *name, const char *conf, const char *src,
                           char *out) {
-    if (access(name, R_OK) == 0 && realpath(name, out)) return 1;
-
-    walk_name = name; walk_namelen = strlen(name);
-    walk_nhit = 0; walk_depth = 1 << 20;
-    nftw(conf, walk_cb, 16, FTW_PHYS | FTW_ACTIONRETVAL);
-    if (walk_nhit > 1) {
-        fprintf(stderr, "wispctl: config '%s' is ambiguous, %d matches:\n",
-                name, walk_nhit);
-        for (int i = 0; i < walk_nhit && i < WALK_TIED; i++)
-            fprintf(stderr, "  %s\n", walk_hit[i]);
-        return 0;
-    }
-    if (walk_nhit == 1 && realpath(walk_hit[0], out)) return 1;
+    if (take(name, out)) return 1;
 
     char p[PATH_MAX];
+    const char *slash = strrchr(name, '/');
+    if (slash) {
+        snprintf(p, sizeof p, "%s/%s/%s.wisp", conf, name, slash + 1);
+        if (take(p, out)) return 1;
+    } else {
+        snprintf(p, sizeof p, "%s/%s.wisp", conf, name);
+        if (take(p, out)) return 1;
+        snprintf(p, sizeof p, "%s/%s", conf, name);
+        struct stat sb;
+        if (stat(p, &sb) == 0 && S_ISREG(sb.st_mode) && take(p, out)) return 1;
+
+        walk_name = name;
+        walk_nhit = 0; walk_depth = 1 << 20;
+        nftw(conf, walk_cb, 16, FTW_PHYS | FTW_ACTIONRETVAL);
+        if (walk_nhit > 1) {
+            fprintf(stderr, "wispctl: config '%s' is ambiguous, %d matches:\n",
+                    name, walk_nhit);
+            for (int i = 0; i < walk_nhit && i < WALK_TIED; i++)
+                fprintf(stderr, "  %s\n", walk_hit[i]);
+            return 0;
+        }
+        if (walk_nhit == 1 && realpath(walk_hit[0], out)) return 1;
+    }
+
     snprintf(p, sizeof p, "%s/configs/%s.wisp", src, name);
-    if (access(p, R_OK) == 0 && realpath(p, out)) return 1;
+    if (take(p, out)) return 1;
 
     fprintf(stderr, "wispctl: config '%s' not found "
             "(searched %s recursively and %s/configs)\n", name, conf, src);
@@ -336,8 +359,8 @@ static const char USAGE[] =
 "  reload                    re-exec the installed wisp binary in place.\n"
 "                            does NOT rebuild: use `rebuild` for that\n"
 "  rebuild [config]          recompile from a .wisp, install, reload.\n"
-"                            config = a name found anywhere under\n"
-"                            ~/.config/wisp (searched recursively), or a path;\n"
+"                            config = a .wisp in ~/.config/wisp, or a dir\n"
+"                            below it holding <dir>.wisp, or a path;\n"
 "                            omitted = the last one used\n"
 "  update                    fetch + install the latest wisp from github,\n"
 "                            then rebuild + reload\n"

@@ -48,6 +48,11 @@ That resolves the name to `~/.config/wisp/mine.wisp`, runs `make install` in the
 share dir with `WISP=` pointed at it, remembers the selection, and reloads a
 running daemon. If none is running, start one with `wisp`.
 
+When one file gets long, move it to `~/.config/wisp/mine/mine.wisp` and
+`include` the rest of the pieces from beside it — `wispctl rebuild mine` still
+finds it, and the pieces are not configs of their own. The full rule is
+[[install#what-counts-as-a-config]].
+
 ## The edit loop
 
 ```sh

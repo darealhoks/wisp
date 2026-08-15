@@ -1,7 +1,7 @@
 //! font = ~/.local/share/fonts/MapleMono-NF-Bold.ttf
 //! font_fallback = /usr/share/fonts/noto-emoji/NotoColorEmoji.ttf
 
-include "theme.wisp";
+include "lib/theme.wisp";
 
 source time = clock("%H:%M");
 source date = clock("%A %d %B");

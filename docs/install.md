@@ -52,11 +52,27 @@ config it can find (repo `configs/*.wisp` plus `~/.config/wisp` searched
 recursively, the same lookup `wispctl rebuild` uses), so a later
 `wispctl rebuild <other>` is a cache hit rather than a compile.
 
-A file that is only ever `include`d is not a config. `configs/theme.wisp` is the
-default palette every shipped config includes, and it is skipped by both the
-warm sweep and `make check`. Theme switching is symlinking that name at another
-palette file; the build compares the resolved include list by content, so a
-symlink repointed at an older file still counts as a change.
+## What counts as a config
+
+Exactly two things, and this is the same rule everywhere — the warm sweep,
+`make check`, and `wispctl rebuild`'s lookup:
+
+- a `.wisp` file sitting **directly** in the config directory
+  (`~/.config/wisp`, or the repo's `configs/`), whatever it is called;
+- a **directory** holding a `.wisp` **named after it**, at any depth.
+  `themes/night/night.wisp` is the config `night`, also addressable as
+  `wispctl rebuild themes/night`.
+
+Every other `.wisp` is an include fragment: never built on its own, never
+offered by name, only reachable through `include`. So a config too big for one
+file splits into `night/night.wisp` plus `night/bar.wisp`, `night/menu.wisp`,
+and only `night` is a config.
+
+`configs/lib/theme.wisp` is the default palette the shipped configs include —
+`lib/` has no `lib.wisp`, so it is a fragment by that rule, with no name
+special-cased anywhere. Theme switching is symlinking that file at another
+palette; the build compares the resolved include list by content, so a symlink
+repointed at an older file still counts as a change.
 
 ## Build knobs
 
@@ -123,5 +139,5 @@ codegen; the full list of check-passes-emit-fails cases is in [[gotchas]].
 - `make` alone is not enough after an edit, use `make install`, because `wispctl reload` re-execs the installed binary.
 - `FRACTIONAL=1` with `FONT_BACKEND=bitmap` is a hard Makefile error; bitmap fonts can only pixel-double.
 - `FONT_BACKEND=baked` and `=freetype` were retired and now error out.
-- Only two configs ship: `reverie` and `anemoia`. `configs/theme.wisp` is a palette fragment they include, not a config.
+- Only two configs ship: `reverie` and `anemoia`. `configs/lib/theme.wisp` is a palette fragment they include, not a config.
 - `wispctl rebuild` needs the share dir (or `$WISP_SRC`) present, it shells out to `make -C` there.

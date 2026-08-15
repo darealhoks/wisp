@@ -79,16 +79,24 @@ client already holds) is skipped and logged once; the rest still switch.
 **`help`**, `-h`, `--help`. With no arguments at all, usage goes to stderr with
 exit 2; asked for explicitly, it goes to stdout with exit 0.
 
-**`rebuild [config]`** resolves the name in this order:
+**`rebuild [config]`** takes a config name, and only two things are configs
+(see [[install#what-counts-as-a-config]]): a `.wisp` sitting directly in
+`$XDG_CONFIG_HOME/wisp` (default `~/.config/wisp`), and a directory holding a
+`.wisp` named after it. It resolves the name in this order:
 
 1. a literal path, if it exists
-2. a recursive search of `$XDG_CONFIG_HOME/wisp` (default `~/.config/wisp`) for
-   `<name>.wisp` or a regular file `<name>` — so
-   `~/.config/wisp/themes/night/bar.wisp` resolves for `rebuild bar`. The
-   shallowest match wins; dot-directories and symlinked directories are skipped
-   and the walk stops at 8 levels. Two matches at the same depth is an error
-   listing every one of them, not a silent pick.
-3. `$WISP_SRC` or the install datadir, `configs/<name>.wisp`
+2. a name containing `/` — a directory path under the config dir, so
+   `rebuild themes/night` builds `~/.config/wisp/themes/night/night.wisp`
+3. a bare name — `<confdir>/<name>.wisp` first, then a recursive search for a
+   *directory* called `<name>` holding `<name>.wisp`, so
+   `~/.config/wisp/themes/night/night.wisp` also resolves for `rebuild night`.
+   The shallowest match wins; dot-directories and symlinked directories are
+   skipped and the walk stops at 8 levels. Two matches at the same depth is an
+   error listing every one of them, not a silent pick.
+4. `$WISP_SRC` or the install datadir, `configs/<name>.wisp`
+
+Any other `.wisp` — one that sits in a directory not named after it — is an
+include fragment and has no name `rebuild` will answer to.
 
 Then it remembers the choice in `<confdir>/current`, runs
 `make -s -C <src> install WISP=<path>`, sends a `wall` command with the new path

@@ -20,14 +20,17 @@ to the **directory of the file doing the including** (absolute paths work too),
 and it is resolved fresh on every compile.
 
 ```
-include "theme.wisp";
+include "lib/theme.wisp";
 include "widgets/net.wisp";
 ```
 
 - An included file may declare anything legal at top level — consts, sources,
   surfaces, `menu`, `lock`, `gamma`. There is no separate "fragment" kind.
 - Every `.wisp` is compilable on its own. A file holding only consts compiles
-  to a config that does nothing; that is fine.
+  to a config that does nothing; that is fine. Compilable is not the same as
+  *being a config*, though — a fragment in a subdirectory is never built by
+  itself or offered to `wispctl rebuild`, see
+  [[install#what-counts-as-a-config]].
 - Errors are reported against the file they are in, with its own line numbers.
 - Each file is included **once** per build, like C's `#pragma once`. If two
   files you include both include `palette.wisp`, it is parsed once — no
@@ -37,10 +40,16 @@ include "widgets/net.wisp";
   duplicate-declaration error.
 - Includes may nest 8 deep.
 
-The point is theme switching: symlink `theme.wisp` at one of several palette
-files (colors plus a `WALL_PATH` const), `include "theme.wisp";` from your main
-config, and `wispctl rebuild` swaps the look. Because nothing is cached across
-builds, re-pointing the symlink is enough.
+Two things this is for. Theme switching: symlink `lib/theme.wisp` at one of
+several palette files (colors plus a `WALL_PATH` const),
+`include "lib/theme.wisp";` from your main config, and `wispctl rebuild` swaps
+the look. Because nothing is cached across builds, re-pointing the symlink is
+enough.
+
+And splitting a config that got long. Put it in a directory named after it —
+`~/.config/wisp/night/night.wisp` is the config `night` — and `include` the
+rest of the files beside it. Only the eponymous file is a config; the parts are
+not built on their own and do not show up as names of their own.
 
 ## Comments
 

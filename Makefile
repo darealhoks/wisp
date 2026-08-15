@@ -344,10 +344,14 @@ $(ROOT)/bake: $(TOOLDIR)/bake.c
 # mtime sweep + copy — `wispctl rebuild other` then switches without compiling.
 CONFDIR := $(or $(XDG_CONFIG_HOME),$(HOME)/.config)/wisp
 # User configs are found recursively, matching `wispctl rebuild`'s lookup:
-# dot-dirs pruned, symlinked dirs not followed (find's default), depth 8.
-# theme.wisp is a palette fragment every config includes, never a config itself.
-ALL_WISP := $(filter-out %/theme.wisp,$(sort $(abspath $(wildcard configs/*.wisp) \
-    $(shell find $(CONFDIR) -maxdepth 8 -name '.*' -prune -o -name '*.wisp' -type f -print 2>/dev/null))))
+# dot-dirs pruned, symlinked dirs not followed (find's default), depth 8. The
+# awk applies the config rule — a .wisp at the root, or <dir>/<dir>.wisp — so a
+# config split across several files doesn't get its fragments built standalone.
+ALL_WISP := $(sort $(abspath $(wildcard configs/*.wisp) \
+    $(shell find $(CONFDIR) -maxdepth 8 -name '.*' -prune -o -name '*.wisp' -type f -print 2>/dev/null \
+        | awk -v c=$(CONFDIR)/ 'index($$0,c)==1 { rel=substr($$0,length(c)+1); \
+            n=split(rel,a,"/"); f=a[n]; sub(/\.wisp$$/,"",f); \
+            if (n==1 || f==a[n-1]) print }')))
 
 warm-cache: $(BIN)
 	@for w in $(filter-out $(WISP),$(ALL_WISP)); do \
@@ -408,8 +412,8 @@ distclean: clean
 
 # Configs present under configs/. Glob so deleting a .wisp file doesn't break
 # `make check`; add new ones by dropping them in configs/ — no Makefile edit.
-# theme.wisp excluded: palette fragment, not a config.
-CONFIGS := $(patsubst configs/%.wisp,%,$(filter-out configs/theme.wisp,$(wildcard configs/*.wisp)))
+# Root glob only: configs/lib/ holds include fragments, which are not configs.
+CONFIGS := $(patsubst configs/%.wisp,%,$(wildcard configs/*.wisp))
 
 # Build matrix: every config present under configs/. Per-config build dirs make
 # this incremental and side-effect-free: nothing to clean, and WISP_NOSELECT=1
