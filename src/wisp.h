@@ -108,6 +108,7 @@ void idle_init(void);
 int  idle_wl_event(uint32_t obj, uint16_t op);   /* 1 = consumed */
 void dpms_set(int on);
 void idle_on_output_added(Output *o);
+void idle_on_output_removed(Output *o);
 void idle_ss_reset(void);        /* session bus died: drop ScreenSaver cookies */
 #endif
 #ifdef WISP_HAS_POLKIT
@@ -301,7 +302,8 @@ struct Widget {
 #endif
     int        client_fd;            /* deferred-reply fd, -1 if none */
 
-    /* SHM pool: one pool, up to 2 slots ping-pong. */
+    /* SHM pool: one pool, 2 slots ping-pong, or 1 for a surface that never
+       animates (the buffer then doubles as the copy-forward source). */
     int        pool_fd;
     int        pool_size;
     uint8_t   *shm_base;
@@ -323,6 +325,11 @@ struct Widget {
     /* When set, on_buffer_release frees the SHM pool once every slot is idle.
        Used by OSD after committing a transparent buffer following last dismissal. */
     int        want_pool_free;
+
+    /* A render found every slot still held by the compositor and bailed. Set by
+       widget_free_slot, consumed by on_buffer_release. Single-slot pools have no
+       ping-pong to fall back on, so without this the update is lost, not late. */
+    int        repaint_pending;
 
     /* Scrollable container (`scroll = <px>` on a vertical surface): how far the
      * item stack is shifted up, and the largest useful shift. Both are recomputed
@@ -689,6 +696,7 @@ typedef struct {
     int vpn_state;     /* 0=off 1=on 2=stale */
     int wifi_level;    /* -1=off, 0..3 */
     int net_up;        /* default route exists */
+    int net_wired;     /* the lowest-metric default route is on a non-wireless iface */
     int net_rx_kbps;   /* KB/s over the last shared tick */
     int net_tx_kbps;
     int backlight_pct; /* -1 if no backlight device */

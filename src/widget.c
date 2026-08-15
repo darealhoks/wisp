@@ -59,6 +59,7 @@ void widget_free_pool(Widget *w) {
     w->pool_size = 0;
     w->n_slots = 0;
     w->last_attached = -1;   /* slots (and their memory) are gone */
+    w->repaint_pending = 0;  /* no release will arrive to service it */
 }
 
 static void region_destroy(uint32_t rid) {
@@ -349,10 +350,14 @@ BufSlot *widget_free_slot(Widget *w) {
      * buffers almost immediately, so both slots read idle and a naive "first
      * free" would keep reusing slot 0, clobbering the previous frame that
      * copy-forward needs. Skipping last_attached keeps the real ping-pong. */
+    /* Clearing on acquisition (not on attach) is what bounds the retry: a
+       release-driven repaint that gets its slot can never re-arm the flag and
+       loop repaint->attach->release->repaint at frame rate. */
     for (int i = 0; i < w->n_slots; i++)
-        if (!w->slots[i].busy && i != w->last_attached) return &w->slots[i];
+        if (!w->slots[i].busy && i != w->last_attached) { w->repaint_pending = 0; return &w->slots[i]; }
     for (int i = 0; i < w->n_slots; i++)
-        if (!w->slots[i].busy) return &w->slots[i];
+        if (!w->slots[i].busy) { w->repaint_pending = 0; return &w->slots[i]; }
+    w->repaint_pending = 1;
     return NULL;
 }
 
@@ -363,7 +368,11 @@ BufSlot *widget_free_slot(Widget *w) {
  * must then fall back to a full render. */
 int widget_copy_forward(Widget *w, BufSlot *dst) {
     int i = w->last_attached;
-    if (i < 0 || i >= w->n_slots || &w->slots[i] == dst) return 0;
+    if (i < 0 || i >= w->n_slots) return 0;
+    /* Single-slot pool: dst IS the last frame, so there is nothing to copy but
+       every bit of the predecessor is already there. With two slots the same
+       condition means "no predecessor" and must still fail. */
+    if (&w->slots[i] == dst) return w->n_slots == 1;
     memcpy(dst->px, w->slots[i].px, (size_t)(w->pool_size / w->n_slots));
     return 1;
 }
@@ -468,6 +477,14 @@ void on_buffer_release(uint32_t buf_id) {
                         w->want_pool_free = 0;
                         widget_free_pool(w);
                     }
+                }
+                /* Deferred repaint, not a timer: the render that set this had
+                 * no free slot, and this release is the earliest moment one
+                 * exists. Coalesced to one flag, so a burst of motion events
+                 * that all missed still costs a single frame. Idle stays 0. */
+                else if (w->repaint_pending && w->configured) {
+                    w->repaint_pending = 0;
+                    widget_repaint(w, 0);
                 }
                 return;
             }

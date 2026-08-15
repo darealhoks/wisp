@@ -12,7 +12,7 @@ static const SrcDef SOURCES[] = {
     {"mem",                  "pct",    "pct used_mb", F_MEM },
     {"temp",                 "c",      "c", F_TEMP },
     {"bat",                  "pct",    "pct charging", F_BAT },
-    {"net",                  "ssid",   "up ssid signal rx_kbps tx_kbps", F_NET },
+    {"net",                  "ssid",   "up ssid signal wired rx_kbps tx_kbps", F_NET },
     {"backlight",            "pct",    "pct", F_BACKLIGHT },
     {"power_profile",        "profile","profile", F_POWER },
     {"bluez",                "device", "powered connected device battery", F_BLUEZ },
@@ -82,6 +82,7 @@ static const PropSchema SCHEMAS[] = {
       " armpit_outer armpit_tl armpit_tr axis bg bg_bottom body_lines body_max"
       " border border_bottom border_left border_right border_top border_width"
       " clip_top clip_widgets cutout_height cutout_into cutout_width cutout_x"
+      " double_buffer"
       " cutout_y dbus_close dismiss_on_click edge exclusive_zone fg fillet_bl"
       " fillet_br fillet_inner_bottom fillet_inner_left fillet_inner_right"
       " fillet_inner_top fillet_offset_y fillet_outer_bottom fillet_outer_left"

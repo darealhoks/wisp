@@ -434,7 +434,17 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
             fprintf(o, "#ifdef WISP_HAS_ANIM\n        __%s_tweens_reset(w, __wi);\n#endif\n", nm);
         fputs("        return;\n    }\n", o);
     }
-    fputs("    widget_ensure_pool(w, 2);\n", o);
+    /* Ping-pong exists so a tween can paint slot B while the compositor still
+     * scans out slot A. A surface with no transition, no vis anim and no HUD
+     * slide never needs that, and one slot halves its pool — the copy-forward
+     * source is then the buffer itself (widget.c), and a repaint that collides
+     * with a held buffer is retried from on_buffer_release instead of dropped. */
+    /* eval_int does not know EX_BOOL, so `double_buffer = true` would read as
+     * the 0 default and silently do nothing — the exact failure this escape
+     * hatch exists to rescue someone from. Accept both spellings. */
+    Expr *dbuf_e = surface_prop(sur, "double_buffer");
+    int dbuf = dbuf_e && (dbuf_e->kind == EX_BOOL ? dbuf_e->b : eval_int(dbuf_e, 0) > 0);
+    fprintf(o, "    widget_ensure_pool(w, %d);\n", (has_slots || reveal || dbuf) ? 2 : 1);
     fputs("    BufSlot *sl = widget_free_slot(w);\n", o);
     fputs("    if (!sl) return;\n", o);
     /* HUD widgets translate the render output by cur_off along the slide edge
