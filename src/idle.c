@@ -71,6 +71,11 @@ static int      dpms_want = 1;      /* last requested state; outputs appearing l
 static uint32_t dpms_pending;       /* per-output bit: set_mode FAILED, retry on the timer */
 static int      dpms_retry_tfd = -1;
 static int      dpms_retry_s = 2;
+static int      dpms_tries;         /* retries spent on the current dpms_set() */
+
+/* On mango every set_mode is an output disable + DRM commit, so an output that
+ * never succeeds must not be re-modeset every 60s forever. */
+#define DPMS_MAX_TRIES 5
 
 static void dpms_apply(Output *o, int on);
 
@@ -116,6 +121,7 @@ void dpms_set(int on) {
     dpms_want = on;
     dpms_pending = 0;
     dpms_retry_s = 2;
+    dpms_tries = 0;
     if (dpms_retry_tfd >= 0) {
         struct itimerspec zero = {0};
         timerfd_settime(dpms_retry_tfd, 0, &zero, NULL);
@@ -126,7 +132,18 @@ void dpms_set(int on) {
 
 /* An output hotplugged back while blanked would otherwise come up lit. */
 void idle_on_output_added(Output *o) {
-    if (!dpms_want && id_output_power_mgr && o) dpms_apply(o, 0);
+    if (!o) return;
+    dpms_retry_s = 2;
+    dpms_tries = 0;
+    if (!dpms_want && id_output_power_mgr) dpms_apply(o, 0);
+}
+
+/* dpms_pending is indexed by slot, and slots are reused — a bit left set by a
+ * departing output would re-fire against whoever takes its place. */
+void idle_on_output_removed(Output *o) {
+    if (!o) return;
+    ptrdiff_t i = o - outputs;
+    if (i >= 0 && i < MAX_OUTPUTS) dpms_pending &= ~(1u << i);
 }
 
 /* ============================================================ */
@@ -148,6 +165,13 @@ int idle_wl_event(uint32_t obj, uint16_t op) {
         if (op == OUTPUT_POWER_EV_FAILED) {
             wl_req(o->power_ctrl, OUTPUT_POWER_REQ_DESTROY, NULL, 0, -1);
             o->power_ctrl = 0;
+            if (dpms_tries >= DPMS_MAX_TRIES) {
+                dpms_pending &= ~(1u << i);
+                msg("dpms: output power set still failing on %s after %d attempts — giving up until the next dpms request",
+                    o->name, DPMS_MAX_TRIES);
+                return 1;
+            }
+            dpms_tries++;
             dpms_pending |= 1u << i;
             msg("dpms: output power set failed on %s (panel not ready, or control held elsewhere) — retrying in %ds",
                 o->name, dpms_retry_s);

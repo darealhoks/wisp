@@ -198,6 +198,7 @@ static void ui_show(void) {
     if (!o)
         for (int i = 0; i < MAX_OUTPUTS; i++)
             if (outputs[i].active) { o = &outputs[i]; break; }
+    if (!o) { msg("polkit: no output to show the prompt on"); return; }
     Widget *w = widget_alloc(W_POLKIT);
     if (!w) { msg("polkit: no widget slot for the prompt"); return; }
     w->s.polkit.message[0] = w->s.polkit.prompt[0] = 0;
@@ -222,8 +223,13 @@ static void ui_hide(void) {
     if (w) widget_destroy(w);
 }
 
+/* every caller feeds a bigger buffer than the field, so gcc 16 makes
+ * snprintf's truncation a -Wformat-truncation error */
 static void set_field(char *dst, size_t cap, const char *src) {
-    snprintf(dst, cap, "%s", src);
+    size_t n = strnlen(src, cap - 1);
+    while (n > 0 && (src[n] & 0xc0) == 0x80) n--;
+    memcpy(dst, src, n);
+    dst[n] = 0;
 }
 
 /* PAM_PROMPT_ECHO_ON: the answer is not a secret, so it is shown verbatim.

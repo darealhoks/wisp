@@ -116,7 +116,6 @@ void widget_destroy(Widget *w) {
         Output *o = w->output;
         if (o->bar  == w) o->bar  = NULL;
         if (o->wall == w) o->wall = NULL;
-        if (o->hud  == w) o->hud  = NULL;
         if (o->lock == w) o->lock = NULL;
         w->output = NULL;
     }
@@ -203,6 +202,7 @@ void widget_screen_span(const Widget *w, int *top, int *below) {
 
 void widget_note_click(Widget *w, int x, int cw) {
     click_anchor.out   = w->output;
+    click_anchor.gen   = w->output ? w->output->gen : 0;
     click_anchor.x     = x - w->chrome_pad_x;
     click_anchor.w     = cw;
     widget_screen_span(w, &click_anchor.top, &click_anchor.below);
@@ -219,8 +219,13 @@ void widget_note_click(Widget *w, int x, int cw) {
  * panel just was. The open path spends it via output_active(). */
 void click_anchor_spend(void) { click_anchor.ms = 0; }
 
+Output *click_anchor_out(const ClickAnchor *a) {
+    if (!a->out || !a->out->active || a->out->gen != a->gen) return NULL;
+    return a->out;
+}
+
 Output *output_active(void) {
-    if (click_anchor.out && now_ms() - click_anchor.ms < 1000) {
+    if (click_anchor_out(&click_anchor) && now_ms() - click_anchor.ms < 1000) {
         /* Spend the stamp: this panel is what that click opened. Left live, the
          * next keybind-launched menu would anchor under the same cell and land
          * on top of the panel instead of centered. */

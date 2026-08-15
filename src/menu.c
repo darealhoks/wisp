@@ -529,11 +529,12 @@ Widget *menu_create(const char *title, char items[][ITEM_MAX], int n, int client
      * `wispctl menu` later doesn't inherit it. `menu --at` sets an explicit
      * anchor instead, which wins and leaves the click stamp alone. */
     TipAnchor a = pend_anchor;
+    Output *ca = click_anchor_out(&click_anchor);
     int anchored = a.out ? MENU_VERTICAL
                  : (click_anchor.ms && now_ms() - click_anchor.ms < 500
-                    && click_anchor.out && MENU_VERTICAL);
+                    && ca && MENU_VERTICAL);
     if (!a.out) {
-        a = (TipAnchor){ click_anchor.out, click_anchor.x, click_anchor.w, click_anchor.below, click_anchor.top };
+        a = (TipAnchor){ ca, click_anchor.x, click_anchor.w, click_anchor.below, click_anchor.top };
         click_anchor.ms = 0;
     }
     if (!a.top) a.top = a.below;   /* explicit `menu --at` gives no top edge */
@@ -546,6 +547,7 @@ Widget *menu_create(const char *title, char items[][ITEM_MAX], int n, int client
         for (int i = 0; i < MAX_OUTPUTS; i++)
             if (outputs[i].active) { o = &outputs[i]; break; }
     }
+    if (!o) { widget_destroy(w); return NULL; }
     widget_setup_surface(w, LAYER_OVERLAY, "wisp-menu", o);
     if (MENU_VERTICAL) {
         const Font *f = &font_small;

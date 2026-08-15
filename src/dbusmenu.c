@@ -266,7 +266,7 @@ static void apply_open(const DbmUD *u) {
     int slot = build_rows(u->service);
     /* The popup lands two round trips after the click, well past
      * menu_create's freshness window — restamp the rect that asked. */
-    if (menu_anchor.out) { click_anchor = menu_anchor; click_anchor.ms = now_ms(); }
+    if (click_anchor_out(&menu_anchor)) { click_anchor = menu_anchor; click_anchor.ms = now_ms(); }
     snprintf(open_path, sizeof open_path, "%s", u->path);
     snprintf(open_service, sizeof open_service, "%s", u->service);
     /* `menu tray {}` is a look-only decl: it owns no rows, just this

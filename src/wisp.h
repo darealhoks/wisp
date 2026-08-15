@@ -191,6 +191,9 @@ typedef struct { int x, y, w, h; } Rect;
 
 struct Output {
     int      active;                 /* slot in use */
+    uint32_t gen;                    /* bumped per alloc: a stamp taken before an unplug
+                                        must not validate against the monitor that
+                                        reused this slot */
     uint32_t registry_name;          /* wl_registry global name (for hotplug) */
     uint32_t wl_output;              /* bound wl_output object id */
     char     name[64];               /* wl_output.name (v4); mango ipc key */
@@ -202,7 +205,7 @@ struct Output {
     int      widgets_created;        /* bar/wall/hud spawned for this output */
     int      mode_w, mode_h;         /* current mode pixel size (wl_output.mode) */
     int      scale120;               /* scale in 120ths (wl_output.scale * 120), >= 120 */
-    struct Widget *bar, *wall, *hud, *lock;
+    struct Widget *bar, *wall, *lock;
 };
 
 extern Output  outputs[MAX_OUTPUTS];
@@ -514,9 +517,12 @@ int     cutout_apply(const char *self,   Output *self_out, uint32_t *px, int sw,
  * that click can be anchored under it instead of centered. Recorded by the
  * generated click dispatch, consumed (and time-boxed) by menu_create or by
  * output_active() — whichever popup the click opened gets it, exactly once. */
-typedef struct { Output *out; int x, w, below, top; int64_t ms; } ClickAnchor;
+typedef struct { Output *out; uint32_t gen; int x, w, below, top; int64_t ms; } ClickAnchor;
 extern ClickAnchor click_anchor;
 void    widget_note_click(Widget *w, int x, int cw);
+/* `a->out`, or NULL if that output was unplugged since the stamp (the slot may
+ * already hold a different monitor). Every consumer of a stamp goes through it. */
+Output *click_anchor_out(const ClickAnchor *a);
 /* Widget's real top/bottom edge in its output's logical coords. */
 void    widget_screen_span(const Widget *w, int *top, int *below);
 Output *output_active(void);             /* monitor an `output = active;` surface opens on */

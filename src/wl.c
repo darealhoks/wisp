@@ -66,7 +66,9 @@ int output_count(void) {
 Output *output_alloc(uint32_t registry_name) {
     for (int i = 0; i < MAX_OUTPUTS; i++) {
         if (!outputs[i].active) {
+            static uint32_t gen_seq;
             memset(&outputs[i], 0, sizeof outputs[i]);
+            outputs[i].gen = ++gen_seq;
             outputs[i].active = 1;
             outputs[i].registry_name = registry_name;
             outputs[i].last_applied_k = 0;
@@ -494,12 +496,19 @@ void output_init_widgets(Output *o) {
 void output_destroy(Output *o) {
     if (!o || !o->active) return;
 
-    /* Destroy widgets (sends layer_surface.destroy + surface.destroy). */
-    if (o->bar)  { widget_destroy(o->bar);  o->bar  = NULL; }
-    if (o->wall) { widget_destroy(o->wall); o->wall = NULL; }
-    if (o->hud)  { widget_destroy(o->hud);  o->hud  = NULL; }
 #ifdef WISP_HAS_LOCK
     if (o->lock) { lock_on_output_removed(o); }   /* destroys via widget_destroy */
+#endif
+    /* Every widget on this output, whatever kind the DSL declared it — the
+     * Output slots (o->bar, …) name only a few of them, so the table is the
+     * only complete list. widget_destroy clears the back-pointers and
+     * deregisters from the generated __<surface>_widgets[]. */
+    for (int i = 0; i < MAX_WIDGETS; i++)
+        if (widgets[i].kind != W_NONE && widgets[i].output == o)
+            widget_destroy(&widgets[i]);
+
+#ifdef WISP_HAS_IDLE
+    idle_on_output_removed(o);
 #endif
 
     if (o->gamma_ctrl) {
@@ -519,11 +528,6 @@ void output_destroy(Output *o) {
     }
 
 #ifdef WISP_HAS_OSD
-    /* If an OSD widget (stack or pct pill) was anchored to this output, drop
-     * it; the next post will re-anchor to whatever is focused now. */
-    for (int i = 0; i < MAX_WIDGETS; i++)
-        if (widgets[i].kind == W_OSD && widgets[i].output == o)
-            widget_destroy(&widgets[i]);
     extern void osd_on_output_destroyed(Output *o) __attribute__((weak));
     if (osd_on_output_destroyed) osd_on_output_destroyed(o);
 #endif

@@ -116,8 +116,13 @@ void greet_on_caps_changed(void) {
     ui_repaint();
 }
 
+/* every caller feeds a bigger buffer than the field, so gcc 16 makes
+ * snprintf's truncation a -Wformat-truncation error */
 static void set_field(char *dst, size_t cap, const char *src) {
-    snprintf(dst, cap, "%s", src);
+    size_t n = strnlen(src, cap - 1);
+    while (n > 0 && (src[n] & 0xc0) == 0x80) n--;
+    memcpy(dst, src, n);
+    dst[n] = 0;
 }
 
 static void sync_session(void) {
@@ -496,6 +501,7 @@ void greet_init(void) {
     if (!o)
         for (int i = 0; i < MAX_OUTPUTS; i++)
             if (outputs[i].active) { o = &outputs[i]; break; }
+    if (!o) die("greet: no active output");
     Widget *w = widget_alloc(W_GREET);
     if (!w) die("greet: no widget slot");
     memset(&w->s.greet, 0, sizeof w->s.greet);
