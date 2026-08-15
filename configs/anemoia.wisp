@@ -476,12 +476,7 @@ menu power {
 	item {
 		icon = 0xf186;
 		label = "Sleep";
-		exec = "true";
-	}
-	item {
-		icon = 0xf28d;
-		label = "Hibernate";
-		exec = "true";
+		exec = "loginctl suspend";
 	}
 }
 

@@ -10,6 +10,7 @@ source cpu_s  = cpu(every="2s");
 source mem_s  = mem(every="2s");
 source bat_s  = bat("BAT0");
 source temp_s = temp(every="2s");
+source disk_s = disk("/", every="600s");
 source wifi_s = net("");
 source tray_s = tray(icon_size=20);
 source vol_s  = pipewire();
@@ -17,7 +18,7 @@ source vol_s  = pipewire();
 source hid    = ui_hidden();
 source notif_s = notifications(history=64, image=22);
 
-include "theme.wisp";
+include "lib/theme.wisp";
 
 const TRAY_ICONS_ONLY = true; // icon-less tray items are hidden, not labelled
 
@@ -62,6 +63,18 @@ surface bar {
 				: bat_s.pct < 15 ? RED
 				: bat_s.pct < 25 ? ORANGE : TGREEN;
 		}
+		widget sep_bd.sep {
+			text = "/";
+		}
+		widget disk {
+			icon = 0xf233;
+			text = "{disk_s.pct}%";
+			tooltip = "Root filesystem used";
+			fg = disk_s.pct >= 90 ? RED
+				: disk_s.pct >= 75 ? ORANGE : TEXT;
+			icon_fg = disk_s.pct >= 90 ? RED
+				: disk_s.pct >= 75 ? ORANGE : TVIOLET;
+		}
 	}
 	group clockgrp {
 		align = left;
@@ -90,11 +103,13 @@ surface bar {
 	group conngrp {
 		align = right;
 		widget wifi {
-			icon = wifi_s.signal >= 3 ? 0xf0928
+			icon = wifi_s.wired        ? 0xf0200   // ethernet wins: it carries the traffic
+				: wifi_s.signal >= 3 ? 0xf0928
 				: wifi_s.signal >= 2 ? 0xf0925
 				: wifi_s.signal >= 1 ? 0xf0922
-				:                      0xf091f;
-			fg = wifi_s.signal >= 1 ? TTEAL : RED;
+				: wifi_s.signal >= 0 ? 0xf091f
+				:                      0xf092b;  // wifi-strength-off
+			fg = wifi_s.wired || wifi_s.signal >= 1 ? TTEAL : RED;
 			on_click() = exec("foot -T ws-hud-wifi --app-id=ws-hud-wifi -e impala");
 		}
 		widget sep_conn.sep {
@@ -190,11 +205,6 @@ group {
 	pad_x = 12;
 	gap = 14;
 } // no height → fills the bar row
-#bar group {
-	shadow = #14000000;
-	shadow_y = 0;
-	shadow_blur = 6; // 6 = bar top margin, keeps the even halo unclipped
-}
 #distrogrp {
 	pad_x = 12;
 	gap = 0;
@@ -231,9 +241,6 @@ widget {
 	pad = 6;
 	width = 28;
 	height = 28;
-	shadow = #14000000;  // matches the `#bar group` pills
-	shadow_y = 0;
-	shadow_blur = 6; // 6 = bar top margin, keeps the even halo unclipped
 	transition_size = 160ms;
 	enter_anim = 160ms;
 	exit_anim = 160ms;
@@ -279,9 +286,6 @@ surface hud {
 	reveal_gutter   = 3;
 	reveal_anim_ms  = 200;
 	reveal_easing   = ease_out;
-	shadow = #14000000;
-	shadow_y = 0;
-	shadow_blur = 6;
 	visible = hid.value == "0";
 
 	widget gamma_btn.btn {
@@ -373,9 +377,6 @@ surface notifs {
 	bg = NOTIFBG;
 	radius = 8;
 	border = BORD;
-	shadow = #14000000;
-	shadow_y = 0;
-	shadow_blur = 6;
 	border_width = 2;
 
 	group nhead {
@@ -495,9 +496,6 @@ surface osd {
 	bg = CRUST;
 	border = BORD;
 	separator = REST;
-	shadow = #14000000;
-	shadow_y = 0;
-	shadow_blur = 6;
 
 	widget icon  {
 		align = left;
@@ -571,9 +569,6 @@ surface pill {
 	margin = 3;
 	radius = 8;
 	font_size = 20;
-	shadow = #14000000;
-	shadow_y = 0;
-	shadow_blur = 6;
 
 	widget icon {
 		align = left;
@@ -678,9 +673,6 @@ surface tooltip {
 	border       = BORD;
 	border_width = 1;
 	radius       = 6;
-	shadow = #14000000;
-	shadow_y = 0;
-	shadow_blur = 6;
 
 	widget label {
 		align = left;
@@ -752,9 +744,6 @@ surface menu {
 	border = BORD;
 	border_width = 2;
 	radius = 8;
-	shadow = #14000000;
-	shadow_y = 0;
-	shadow_blur = 6;
 }
 
 // no anchor: an axis with neither edge bitted is centred by layer-shell
@@ -776,9 +765,6 @@ surface polkit {
 	border = BORD;
 	border_width = 2;
 	radius = 8;
-	shadow = #14000000;
-	shadow_y = 0;
-	shadow_blur = 6;
 
 	// this body advances by height+`pad` per row: the surface `gap` never
 	// reaches it, so the row spacing is each row's own trailing pad
@@ -841,12 +827,7 @@ menu power {
 	item {
 		icon = 0xf186;
 		label = "Sleep";
-		exec = "true";
-	}
-	item {
-		icon = 0xf28d;
-		label = "Hibernate";
-		exec = "true";
+		exec = "loginctl suspend";
 	}
 }
 
@@ -872,9 +853,6 @@ menu tray {
 	radius = 8;
 	pad_x = 6;
 	pad_y = 6;
-	shadow = #14000000;
-	shadow_y = 0;
-	shadow_blur = 6;
 
 	for row in rows {
 		cell {

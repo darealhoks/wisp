@@ -25,6 +25,7 @@ static const SrcDrv DRVS[] = {
     { "net",     DRV_STATUS,  {{"up", "status.net_up", 0},
                                {"ssid", "wispgen_net_ssid()", 1},
                                {"signal", "status.wifi_level", 0},
+                               {"wired", "status.net_wired", 0},
                                {"rx_kbps", "status.net_rx_kbps", 0},
                                {"tx_kbps", "status.net_tx_kbps", 0}} },
     { "backlight",DRV_STATUS, {{"pct", "status.backlight_pct", 0}} },
@@ -270,6 +271,8 @@ int collect_srcs(Unit *u, SrcInst *out, int max) {
                 return -1;
             }
         } else if (drv->drv == DRV_STATUS) {
+            /* disk owns a slow timer, not the tick: 0 = "no every=, use DISK_S" */
+            if (!strcmp(drv->name, "disk")) out[n].interval_ms = 0;
             for (int k = 0; k < c->call.nargs; k++) {
                 const char *kn = c->call.argnames ? c->call.argnames[k] : NULL;
                 size_t kl = c->call.anlen ? c->call.anlen[k] : 0;
@@ -286,7 +289,7 @@ int collect_srcs(Unit *u, SrcInst *out, int max) {
                     return -1;
                 }
                 if (kn && kl == 5 && memcmp(kn, "every", 5) == 0) {
-                    if (!status_kind_polled(drv)) {
+                    if (!status_kind_polled(drv) && strcmp(drv->name, "disk")) {
                         diag_error(d->loc, "codegen: every= only applies to polled kinds (cpu/mem/temp); %s() is event-driven", drv->name);
                         return -1;
                     }
@@ -828,8 +831,11 @@ void emit_sources(FILE *o, SrcInst *srcs, int nsrc) {
         fputs("int wispgen_disk_tfd = -1;\n", o);
         fputs("void wispgen_disk_init(void) {\n", o);
         fputs("    wispgen_disk_tfd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);\n", o);
-        fputs("    struct itimerspec ts = { .it_value = { .tv_sec = DISK_S },\n"
-              "                             .it_interval = { .tv_sec = DISK_S } };\n", o);
+        char per[32];
+        if (disk_s->interval_ms > 0) snprintf(per, sizeof per, "%d", disk_s->interval_ms < 1000 ? 1 : disk_s->interval_ms / 1000);
+        else                         snprintf(per, sizeof per, "DISK_S");
+        fprintf(o, "    struct itimerspec ts = { .it_value = { .tv_sec = %s },\n"
+                   "                             .it_interval = { .tv_sec = %s } };\n", per, per);
         fputs("    timerfd_settime(wispgen_disk_tfd, 0, &ts, NULL);\n", o);
         fputs("}\n", o);
         fputs("void wispgen_disk_handle(void) {\n", o);

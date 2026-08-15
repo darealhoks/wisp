@@ -125,23 +125,7 @@ static void sample_disk(void) {
     if (statvfs(disk_path, &s) || s.f_blocks == 0) return;
     unsigned long long total = (unsigned long long)s.f_blocks * s.f_frsize;
     unsigned long long used  = (unsigned long long)(s.f_blocks - s.f_bfree) * s.f_frsize;
-    /* swap-file subtraction only makes sense for the fs the swapfile lives on */
-    FILE *sw = strcmp(disk_path, "/") ? NULL : fopen("/proc/swaps", "re");
-    if (sw) {
-        char line[512];
-        (void)!fgets(line, sizeof line, sw);
-        while (fgets(line, sizeof line, sw)) {
-            char path[256], type[32];
-            unsigned long long size_kb;
-            if (sscanf(line, "%255s %31s %llu", path, type, &size_kb) == 3
-                && strcmp(type, "file") == 0) {
-                unsigned long long b = size_kb * 1024ULL;
-                if (b < used) used -= b; else used = 0;
-            }
-        }
-        fclose(sw);
-    }
-    status.disk_pct = total ? (int)((used * 100) / total) : 0;
+    status.disk_pct = total ? (int)((used * 100 + total / 2) / total) : 0;
 }
 
 static void detect_bat(void) {
@@ -246,21 +230,31 @@ void status_sample_net(void) {
         }
         fclose(f);
     }
-    /* up = a default route exists (Destination 00000000). Wired-only boxes
-     * have wifi_level -1 but net_up 1 — a widget shows the ethernet glyph. */
+    /* up = a default route exists (Destination 00000000); wired = the one the
+     * kernel actually uses (lowest metric) is not a wireless iface, so a box
+     * with both links up can show the ethernet glyph over the wifi bars. */
     status.net_up = 0;
+    status.net_wired = 0;
     f = fopen("/proc/net/route", "r");
     if (!f) return;
-    char line[256];
+    char line[256], best[64] = "";
+    unsigned long best_metric = ~0UL;
     (void)!fgets(line, sizeof line, f);            /* header */
     while (fgets(line, sizeof line, f)) {
-        char ifn[64]; unsigned long dest;
-        if (sscanf(line, "%63s %lx", ifn, &dest) != 2 || dest != 0) continue;
+        char ifn[64]; unsigned long dest, metric;
+        if (sscanf(line, "%63s %lx %*x %*x %*u %*u %lu", ifn, &dest, &metric) != 3
+            || dest != 0)
+            continue;
         if (net_iface[0] && strcmp(ifn, net_iface)) continue;
         status.net_up = 1;
-        break;
+        if (metric < best_metric) { best_metric = metric; snprintf(best, sizeof best, "%s", ifn); }
     }
     fclose(f);
+    if (best[0]) {
+        char p[128];
+        snprintf(p, sizeof p, "/sys/class/net/%s/wireless", best);
+        status.net_wired = access(p, F_OK) != 0;
+    }
 }
 
 #ifdef WISP_HAS_NET_RATES
