@@ -27,6 +27,8 @@ extern int notif_hist_cap;
  * `notifications(image=N)` sets it (sema.c); decode rides the OSD path, so it
  * only takes effect when the OSD surface also declares `image = N`. */
 extern int notif_image_px;
+/* `notifications(persist=false)` drops the on-disk history file. */
+extern int notif_persist;
 
 void diag_note (Loc l, const char *fmt, ...) __attribute__((format(printf,2,3)));
 void diag_hint (Loc l, const char *fmt, ...) __attribute__((format(printf,2,3)));

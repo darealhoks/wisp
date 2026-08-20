@@ -34,7 +34,7 @@ Using the bare name reads the **primary** field: `text = bat_s;` is
 | `exec_line(cmd, …)` | `value` | none | timerfd plus pipe |
 | `inotify(path=, …)` | `value` | none | own inotify fd |
 | `dbus_signal(iface, member)` | `value` | `history` (for only) | session bus |
-| `notifications([history=][, image=])` | `count` | `open`, `history` (for only) | in process, no fd |
+| `notifications([history=][, image=][, persist=])` | `count` | `open`, `history` (for only) | in process, no fd |
 | `mpris()` | `title` | `artist` `status` `player` `art` | session bus |
 | `tray([icon_size=])` | `count` | `items` (for only) | session bus |
 | `pipewire()` | `vol` | `mute` `mic_vol` `mic_mute` `ok` | native PipeWire protocol |
@@ -111,10 +111,13 @@ the daemon.
 `art` is the cover art decoded to a local path (`file://` only, an http cover
 gives `""`); feed it to a widget's `image`.
 
-**`notifications([history=N][, image=N])`** is the notification centre feed: the
+**`notifications([history=N][, image=N][, persist=BOOL])`** is the notification centre feed: the
 daemon's own history of accepted notifications, newest first, one entry per post
 that carried no progress hint. Entries are pushed before the DnD gate, so DnD
-collects instead of dropping.
+collects instead of dropping. The text of the ring survives a daemon restart or
+a reboot via `$XDG_STATE_HOME/wisp/notifications` (`~/.local/state/wisp/…`),
+rewritten on every change; `persist=false` keeps the ring in RAM only.
+Thumbnails are never stored — a restored entry falls back to `note.icon`.
 
 | field | meaning |
 |---|---|
@@ -136,7 +139,8 @@ widget bell {
 also sizes the per-cell arrays of every surface that loops over the ring.
 `image=` is 0 to 128 px, default 0 meaning off, and keeps a downscaled copy of
 each entry's pixmap; it rides the OSD decode, so it only produces anything when
-the `osd` surface also declares `image = N`. Nothing is persisted to disk.
+the `osd` surface also declares `image = N`; thumbnails are the one thing never
+written to disk.
 
 `note.id` is the entry's serial and the only safe dismiss key — there is no
 `note.index`, because the ring shifts while a click is still travelling over the
@@ -197,6 +201,7 @@ the global path.
 - More than 32 sources, or more than 16 `toplevel()` sources, is a hard codegen error.
 - `lines=` must be an integer literal in 1..256 and `tray(icon_size=)` an integer literal in 8..64.
 - `notifications(history=)` is 1..128 and `image=` 0..128, both integer literals; `history=` changes the BSS of every surface looping over the ring.
+- `notifications(persist=)` takes a bool literal, default `true`; `false` compiles the on-disk history out entirely.
 - `notifications(image=N)` alone decodes nothing: the `osd` surface has to declare `image = N` too.
 - A notification row keyed on an index instead of `note.id` dismisses the wrong entry when the ring moves under the click.
 - Reading `net().rx_kbps` silently converts an event-driven source into a polling one.

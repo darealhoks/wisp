@@ -114,6 +114,7 @@ fail to link.
 - Without `output = active` a panel opens on every monitor at once, and a monitor plugged in later never gets a copy of one that has it.
 - Dismiss a notification by `note.id`, never by a row index; the history ring can shift while the click is still travelling over the socket.
 - `notifications(image=N)` thumbnails only decode when the OSD surface also declares `image = N`; they ride that decode.
+- The notification history persists to `$XDG_STATE_HOME/wisp/notifications`, so entries outlive a restart; thumbnails do not — restored rows show `note.icon`. `notifications(persist=false)` turns it off.
 - Icon names resolve as PNGs only, under an app-supplied dir, the XDG hicolor `apps/` sizes, loose `<data>/icons/NAME.png`, then `/usr/share/pixmaps`. No theme index, no SVG.
 
 ## Lock traps

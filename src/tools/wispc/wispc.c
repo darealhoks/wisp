@@ -66,6 +66,7 @@ static void emit_features(FILE *o, SemaResult *r) {
     P(has_greet, "GREET");
     fprintf(o, "#define NOTIF_HIST_CAP %d\n", notif_hist_cap);
     fprintf(o, "#define NOTIF_IMAGE_PX %d\n", notif_image_px);
+    fprintf(o, "#define NOTIF_PERSIST %d\n", notif_persist);
     #undef P
     fputs("\n#endif\n", o);
 }

@@ -952,6 +952,7 @@ void        notif_push(const char *app, const char *summary, const char *body,
 void        notif_bind_rid(uint32_t rid);
 void        notif_invoke(uint32_t id);   /* ActionInvoked + dismiss */
 void        notif_dismiss(uint32_t id);
+void        notif_dismiss_rid(uint32_t rid);  /* by OSD slab id, for click-dismiss */
 void        notif_clear(void);
 
 /* OSD widget is created on demand (and re-anchored if focus moves to a

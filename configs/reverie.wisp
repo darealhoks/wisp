@@ -467,7 +467,7 @@ surface osd {
 	spawned_by = osd;
 	layer = overlay;
 	anchor = top;
-	max = 4;
+	max = 8;
 	body_lines = 4;
 	body_max = 256;
 	dismiss_on_click = true;

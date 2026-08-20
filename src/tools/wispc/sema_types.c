@@ -404,8 +404,9 @@ void check_source_args(const SrcDef *sd, Expr *c) {
         for (int i = 0; i < na; i++) {
             const char *kn = c->call.argnames ? c->call.argnames[i] : NULL;
             if (!kn || ((c->call.anlen[i] != 7 || memcmp(kn, "history", 7) != 0) &&
-                        (c->call.anlen[i] != 5 || memcmp(kn, "image", 5) != 0)))
-                diag_error(c->loc, "notifications() takes only history=N and image=N");
+                        (c->call.anlen[i] != 5 || memcmp(kn, "image", 5) != 0) &&
+                        (c->call.anlen[i] != 7 || memcmp(kn, "persist", 7) != 0)))
+                diag_error(c->loc, "notifications() takes only history=N, image=N and persist=BOOL");
         }
     }
     /* temp/bat/net/disk/vpn/backlight (probe arg + every=), tags, tray: shapes

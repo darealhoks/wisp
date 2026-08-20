@@ -14,6 +14,7 @@
 
 #include <ctype.h>
 #include <stdio.h>
+#include <sys/stat.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -257,8 +258,8 @@ static int parse_hint(R *r, Hints *hn) {
 /* ================================================================== */
 
 /* 16 deep, ~7 KB of BSS that stays untouched (so unbacked, no RSS) until
- * notifications actually arrive. Deliberately RAM-only: a center that
- * survives a reboot is a database, not a widget. */
+ * notifications actually arrive. Text survives a restart via
+ * $XDG_STATE_HOME/wisp/notifications (see nhist_save); thumbnails don't. */
 /* NOTIF_HIST_CAP comes from the generated features.h — wispc sizes the per-cell
  * st[]/hit/tween arrays from the same value, so the two cannot drift. */
 #define NOTIF_CAP NOTIF_HIST_CAP
@@ -283,11 +284,19 @@ int               notif_open;
  * keeps the count and changes the text — so the generated change-guard compares
  * this instead of walking the ring. */
 static int        nhist_rev;
-int         notif_revision(void)   { return nhist_rev; }
+#if NOTIF_PERSIST
+static void nhist_save(void);
+static void nhist_ensure(void);
+#else
+#define nhist_save()   ((void)0)
+#define nhist_ensure() ((void)0)
+#endif
+int         notif_revision(void)   { nhist_ensure(); return nhist_rev; }
 
 extern void wispgen_wisp_state_changed(void) __attribute__((weak));
 static void notif_repaint(void) {
     nhist_rev++;
+    nhist_save();
     if (wispgen_wisp_state_changed) wispgen_wisp_state_changed();
 }
 
@@ -296,7 +305,7 @@ static void notif_repaint(void) {
 static const NotifEntry *nent(int i) {
     return (i >= 0 && i < nhist_n) ? &nhist[i] : NULL;
 }
-int         notif_count(void)      { return nhist_n; }
+int         notif_count(void)      { nhist_ensure(); return nhist_n; }
 const char *notif_app(int i)       { const NotifEntry *e = nent(i); return e ? e->app : ""; }
 const char *notif_summary(int i)   { const NotifEntry *e = nent(i); return e ? e->summary : ""; }
 const char *notif_body(int i)      { const NotifEntry *e = nent(i); return e ? e->body : ""; }
@@ -328,6 +337,7 @@ const uint32_t *notif_image(int i) { (void)i; return NULL; }
 void notif_push(const char *app, const char *summary, const char *body,
                 uint32_t icon_cp, const uint32_t *image, int urgency,
                 uint32_t rid, const char *action) {
+    nhist_ensure();
     int at = -1;
     if (rid)
         for (int i = 0; i < nhist_n; i++)
@@ -389,6 +399,14 @@ void notif_dismiss(uint32_t id) {
     }
 }
 
+/* A toast dismissed by click must not reappear in the center; the OSD slab id
+ * is the entry's rid (notif_bind_rid backfills it when the app sent none). */
+void notif_dismiss_rid(uint32_t rid) {
+    if (!rid) return;
+    for (int i = 0; i < nhist_n; i++)
+        if (nhist[i].rid == rid) { notif_dismiss(nhist[i].id); return; }
+}
+
 void notif_clear(void) {
 #if NOTIF_IMG
     for (int i = 0; i < nhist_n; i++) nimg_drop(i);
@@ -396,6 +414,131 @@ void notif_clear(void) {
     nhist_n = 0;
     notif_repaint();
 }
+
+/* ---- persistence: $XDG_STATE_HOME/wisp/notifications ---------------- */
+#if NOTIF_PERSIST
+
+/* One entry per line: id<TAB>rid<TAB>icon<TAB>urgency<TAB>app<TAB>summary<TAB>
+ * body, newest first. Tabs/newlines/backslashes inside the text are escaped,
+ * so a body with newlines can't split a record. Thumbnails are not stored —
+ * a restored row falls back to the app's desktop icon (nimg_from_name). */
+static const char *nhist_path(void) {
+    static char p[512];
+    if (p[0]) return p;
+    const char *s = getenv("XDG_STATE_HOME");
+    if (s && s[0]) {
+        snprintf(p, sizeof p, "%s/wisp", s);
+    } else {
+        const char *h = getenv("HOME");
+        if (!h || !h[0]) return NULL;
+        snprintf(p, sizeof p, "%s/.local/state/wisp", h);
+    }
+    mkdir(p, 0755);
+    size_t n = strlen(p);
+    snprintf(p + n, sizeof p - n, "/notifications");
+    return p;
+}
+
+static void nput(FILE *f, const char *s) {
+    for (; *s; s++) {
+        switch (*s) {
+        case '\\': fputs("\\\\", f); break;
+        case '\t': fputs("\\t", f);  break;
+        case '\n': fputs("\\n", f);  break;
+        default:   fputc(*s, f);
+        }
+    }
+}
+
+static int nhist_loaded;
+
+static void nhist_save(void) {
+    if (!nhist_loaded) return;   /* never overwrite a file we haven't read yet */
+    const char *p = nhist_path();
+    if (!p) return;
+    FILE *f = fopen(p, "w");
+    if (!f) return;
+    for (int i = 0; i < nhist_n; i++) {
+        const NotifEntry *e = &nhist[i];
+        fprintf(f, "%u\t%u\t%u\t%u\t", e->id, e->rid, e->icon, e->urgency);
+        nput(f, e->app);  fputc('\t', f);
+        nput(f, e->summary); fputc('\t', f);
+        nput(f, e->body); fputc('\t', f);
+        nput(f, e->action);
+        fputc('\n', f);
+    }
+    fclose(f);
+}
+
+/* In place: unescape `src` up to the next tab/newline, copy into dst, return
+ * the first byte past the separator (or the terminator). */
+static const char *nget(const char *s, char *dst, size_t sz) {
+    size_t o = 0;
+    for (; *s && *s != '\t' && *s != '\n'; s++) {
+        char c = *s;
+        if (c == '\\' && s[1]) {
+            s++;
+            c = *s == 't' ? '\t' : *s == 'n' ? '\n' : *s;
+        }
+        if (o + 1 < sz) dst[o++] = c;
+    }
+    dst[o] = 0;
+    return *s ? s + 1 : s;
+}
+
+#if NOTIF_IMG
+/* Restored rows have no thumbnail (the wire image-data is gone), so fall back
+ * to the app's own desktop icon — otherwise every card comes back blank. */
+static uint32_t *nimg_from_name(const char *name) {
+    if (!name[0]) return NULL;
+    int px = NOTIF_IMAGE_PX * image_icon_oversample();
+    char path[512];
+    if (!image_find_icon(name, NULL, px, path, sizeof path)) return NULL;
+    if (!image_is_png(path)) return NULL;
+    int w, h;
+    uint8_t *rgba = image_load(path, &w, &h);
+    if (!rgba) return NULL;
+    uint32_t *pm = image_scale_square(rgba, w, h, px);
+    image_free(rgba);
+    return pm;
+}
+#endif
+
+static void nhist_ensure(void) {
+    if (nhist_loaded) return;
+    nhist_loaded = 1;
+    const char *p = nhist_path();
+    if (!p) return;
+    FILE *f = fopen(p, "r");
+    if (!f) return;
+    char line[1024];
+    while (nhist_n < NOTIF_CAP && fgets(line, sizeof line, f)) {
+        NotifEntry *e = &nhist[nhist_n];
+        memset(e, 0, sizeof *e);
+        /* not sscanf: a "\t" directive eats a whole whitespace run, so an
+         * empty app field would swallow its own tab and shift every field */
+        char num[16];
+        const char *s = line;
+        s = nget(s, num, sizeof num); unsigned id = (unsigned)strtoul(num, NULL, 10);
+        s = nget(s, num, sizeof num); unsigned rid = (unsigned)strtoul(num, NULL, 10);
+        s = nget(s, num, sizeof num); unsigned icon = (unsigned)strtoul(num, NULL, 10);
+        s = nget(s, num, sizeof num); unsigned urg = (unsigned)strtoul(num, NULL, 10);
+        if (!id) continue;
+        e->id = id; e->rid = rid; e->icon = icon;
+        e->urgency = (uint8_t)(urg > 255 ? 255 : urg);
+        s = nget(s, e->app,     sizeof e->app);
+        s = nget(s, e->summary, sizeof e->summary);
+        s = nget(s, e->body,    sizeof e->body);
+        (void)nget(s, e->action, sizeof e->action);
+#if NOTIF_IMG
+        e->image = nimg_from_name(e->app);
+#endif
+        if (id > nhist_serial) nhist_serial = id;
+        nhist_n++;
+    }
+    fclose(f);
+}
+#endif  /* NOTIF_PERSIST */
 
 static uint32_t djb2(const char *s) {
     uint32_t h = 5381;

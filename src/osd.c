@@ -883,6 +883,7 @@ void osd_on_click(Widget *w, int x, int y, int button) {
     Osd *o = &w->s.osd.items[idx];
 #ifdef WISP_HAS_DBUS
     if (button == 0x110 && o->action[0]) dbus_emit_action(o->replace_id, o->action);
+    notif_dismiss_rid(o->replace_id);   /* clicked away = read; keep it out of the center */
 #else
     (void)button;
 #endif

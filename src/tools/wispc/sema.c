@@ -265,6 +265,7 @@ static void read_tray_icon_size(SemaResult *r, Expr *c) {
  * st[]/hit arrays in every generated surface, so it stays compile-time. */
 int notif_hist_cap = NOTIF_HIST_CAP;
 int notif_image_px;
+int notif_persist = 1;
 static void read_notif_history(Expr *c) {
     for (int i = 0; i < c->call.nargs; i++) {
         const char *kn = c->call.argnames ? c->call.argnames[i] : NULL;
@@ -282,6 +283,12 @@ static void read_notif_history(Expr *c) {
             long v = (long)c->call.args[i]->i;
             if (v < 0 || v > 128) { diag_error(c->loc, "notifications image must be 0..128"); return; }
             notif_image_px = (int)v;
+        } else if (kn && c->call.anlen[i] == 7 && !memcmp(kn, "persist", 7)) {
+            Expr *a = c->call.args[i];
+            if (a->kind != EX_BOOL && a->kind != EX_INT) {
+                diag_error(c->loc, "notifications persist takes true/false"); return;
+            }
+            notif_persist = a->kind == EX_BOOL ? a->b : (a->i != 0);
         }
     }
 }
