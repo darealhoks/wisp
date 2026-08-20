@@ -344,13 +344,27 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
     if (has_ve) {
         fprintf(o, "%sdouble rev = 1.0;\n", indent);
         fprintf(o, "%s#ifdef WISP_HAS_ANIM\n", indent);
+        fprintf(o, "%sint __rvs = 0;\n", indent);
         fprintf(o, "%s{ VisSlot *__s = &%s_vis%d[__wi][%s];\n", indent, surf_nm, item_idx, ve_idx);
         fprintf(o, "%s  if (!__s->has) { __s->prev = vis; __s->rev = vis ? 1.0 : 0.0; __s->has = 1; }\n", indent);
         fprintf(o, "%s  else if (!__s->prev && vis) { anim_start_num(&__s->rev, ANIM_T_FLOAT, __s->rev, 1.0, %d, %s, NULL, w, NULL, NULL, 1, 0); __s->prev = 1; }\n",
                 indent, ve_in > 0 ? ve_in : 1, widget_easing_id(wd, "enter_easing"));
         fprintf(o, "%s  else if (__s->prev && !vis) { anim_start_num(&__s->rev, ANIM_T_FLOAT, __s->rev, 0.0, %d, %s, NULL, w, NULL, NULL, 1, 0); __s->prev = 0; }\n",
                 indent, ve_out > 0 ? ve_out : 1, widget_easing_id(wd, "exit_easing"));
-        fprintf(o, "%s  rev = __s->rev; if (rev > 0.004) vis = 1; }\n", indent);
+        fprintf(o, "%s  rev = __s->rev; if (rev > 0.004) vis = 1;\n", indent);
+        /* A size tween running *through* a reveal multiplies with it: an
+         * exiting pill shrinking 34->28 while rev fades and its entering
+         * neighbour growing 28->34 while rev rises do not sum to a constant
+         * row width, so everything after them slides out and snaps back.
+         * Entering (prev set) snaps the size slot to its target, exiting
+         * (prev clear) holds the last steady value; rev alone owns the
+         * geometry for the duration. */
+        /* Keyed off `prev`, not off `rev` alone: on the frame the edge is
+         * detected `rev` still holds its pre-tween value, so an exiting item
+         * reads 1.0 and would take the steady branch — starting exactly the
+         * size tween this is meant to suppress. */
+        fprintf(o, "%s  __rvs = (__s->prev && rev >= 1.0) ? 0 : (__s->prev ? 1 : 2); }\n", indent);
+        fprintf(o, "%s(void)__rvs;\n", indent);
         fprintf(o, "%s#endif\n", indent);
     }
 
@@ -559,13 +573,16 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
      * right, and independent rounding of a growing and a shrinking neighbour
      * stops cancelling, wobbling everything after them by 2px. */
     int tr_sz = transition_dur(wd, "size");
-    if (tr_sz > 0) emit_size_slot(o, indent, "tw", "tw", &sc, tr_sz, 0);
+    const char *rvm = has_ve ? "__rvs" : NULL;
+    if (tr_sz > 0) emit_size_slot(o, indent, "tw", "tw", &sc, tr_sz, 0, rvm);
     /* Step 6.3b: the reveal factor also scales geometry, so an entering item
      * grows from nothing and an exiting one collapses — not just alpha. Runs
      * after the size slot: the slot owns steady-state resizes (e.g. 28↔34),
-     * rev owns appear/disappear; layering them keeps both animations smooth. */
+     * rev owns appear/disappear, never both at once (see the __rvs note above).
+     * anim_px, not a cast: an exiting and an entering item truncating their
+     * halves independently costs the row a pixel for the whole fade. */
     if (has_ve)
-        fprintf(o, "%sif (rev < 1.0) tw = (int)(tw * rev);\n", indent);
+        fprintf(o, "%sif (rev < 1.0) tw = anim_px(tw * rev);\n", indent);
     fprintf(o, "%sst[%s].tw  = tw;\n", indent, idx_expr);
     fprintf(o, "%sst[%s].h   = __h;\n", indent, idx_expr);
     /* Cross-axis size (horizontal: height, vertical: width) lowered as an expr
@@ -573,13 +590,13 @@ void emit_item_measure(FILE *o, BarItem *it, CGCtx *ctx, int vertical,
     Expr *che = widget_prop(wd, vertical ? "width" : "height");
     if (che) { CE cc = lower(ctx, che); cc = coerce_to_int(ctx, cc);
                fprintf(o, "%sint __ch = %s;\n", indent, cc.text);
-               if (tr_sz > 0) emit_size_slot(o, indent, "__ch", "ch", &sc, tr_sz, 1);
+               if (tr_sz > 0) emit_size_slot(o, indent, "__ch", "ch", &sc, tr_sz, 1, rvm);
                /* keep the even quantisation — see the cross-axis note above */
                if (has_ve)
-                   fprintf(o, "%sif (rev < 1.0) __ch = ((int)(__ch * rev)) & ~1;\n", indent);
+                   fprintf(o, "%sif (rev < 1.0) __ch = anim_px(__ch * rev) & ~1;\n", indent);
                fprintf(o, "%sst[%s].ch = __ch;\n", indent, idx_expr); }
     if (has_ve)
-        fprintf(o, "%sst[%s].pad = rev < 1.0 ? (int)(%d * rev) : %d;\n",
+        fprintf(o, "%sst[%s].pad = rev < 1.0 ? anim_px(%d * rev) : %d;\n",
                 indent, idx_expr, padE, padE);
     else
         fprintf(o, "%sst[%s].pad = %d;\n", indent, idx_expr, padE);

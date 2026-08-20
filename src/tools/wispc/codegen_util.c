@@ -410,11 +410,19 @@ void emit_color_slot(FILE *o, const char *ind, const char *var, const char *slot
 /* Same, for an already-declared int size var tweened through a SizeSlot.
  * `even` quantises to even pixels — see the cross-axis note in codegen_items.c. */
 void emit_size_slot(FILE *o, const char *ind, const char *var, const char *slot,
-                    const SlotCtx *sc, int dur, int even) {
+                    const SlotCtx *sc, int dur, int even, const char *rev_mode) {
     if (dur <= 0) return;
     fprintf(o, "%s#ifdef WISP_HAS_ANIM\n", ind);
     fprintf(o, "%s{ SizeSlot *__s = &%s_tr%d_%s[__wi][%s];\n", ind, sc->surf, sc->item, slot, sc->idx);
     fprintf(o, "%s  if (!__s->has) { __s->cur = %s; __s->last = %s; __s->has = 1; }\n", ind, var, var);
+    if (rev_mode) {
+        /* 1 = entering: land on the target now, the reveal owns the growth.
+         * 2 = exiting/hidden: freeze, so the fade is the only motion. */
+        fprintf(o, "%s  else if (%s == 1) { anim_cancel_for(&__s->cur); __s->cur = %s; __s->last = %s; }\n",
+                ind, rev_mode, var, var);
+        fprintf(o, "%s  else if (%s == 2) { if (__s->last != %s) { anim_cancel_for(&__s->cur); __s->last = %s; } }\n",
+                ind, rev_mode, var, var);
+    }
     fprintf(o, "%s  else if (__s->last != %s) { anim_start_num(&__s->cur, ANIM_T_FLOAT, __s->cur, %s, %d, %s, NULL, w, NULL, NULL, 1, 0); __s->last = %s; }\n",
             ind, var, var, dur, sc->ease, var);
     fprintf(o, "%s  %s = anim_px(__s->cur)%s; }\n", ind, var, even ? " & ~1" : "");

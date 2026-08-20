@@ -67,7 +67,7 @@ typedef struct { const char *surf; int item; const char *idx; const char *ease; 
 void        emit_color_slot(FILE *o, const char *ind, const char *var, const char *slot,
                             const char *tgt_expr, const SlotCtx *sc, int dur);
 void        emit_size_slot(FILE *o, const char *ind, const char *var, const char *slot,
-                           const SlotCtx *sc, int dur, int even);
+                           const SlotCtx *sc, int dur, int even, const char *rev_mode);
 void        emit_item_slot_decls(FILE *o, Widget *wd, const char *nm, int idx, int slots, int nwid);
 void        emit_item_slot_reset(FILE *o, Widget *wd, const char *nm, int idx);
 int         widget_enter_ms(Widget *wd);
