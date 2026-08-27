@@ -289,6 +289,10 @@ static void post_response(const char *text) {
     explicit_bzero(buf, sizeof buf);
 }
 
+static void cancel_session(void) {
+    send_json("{\"type\":\"cancel_session\"}");
+}
+
 static void start_session(void) {
     char esc[SESSION_MAX * 2], buf[SESSION_MAX * 2 + 64];
     if (jesc(esc, sizeof esc, G.nsess ? G.sess[G.sel] : "") < 0) return;
@@ -302,6 +306,7 @@ static void start_session(void) {
 /* ============================================================ */
 
 static int starting;     /* start_session sent: the next success ends us */
+static int cancelling;   /* cancel_session sent: the next success reopens one */
 
 static void on_message(const char *s, int len) {
     Widget *w = greet_widget();
@@ -310,6 +315,7 @@ static void on_message(const char *s, int len) {
     if (w) w->s.greet.busy = 0;
 
     if (strcmp(type, "success") == 0) {
+        if (cancelling) { cancelling = 0; create_session(); return; }
         if (starting) exit(0);   /* greetd owns the VT from here */
         starting = 1;
         start_session();
@@ -327,9 +333,10 @@ static void on_message(const char *s, int len) {
         clear_entry();
         G.awaiting = 0;
         starting = 0;
-        /* Both flavours leave greetd without a session: auth_error means the
-         * attempt failed, a plain error means it never started. */
-        create_session();
+        /* greetd keeps the failed session configured; create_session would
+         * answer "already configuring a session" until it is cancelled */
+        if (cancelling) { cancelling = 0; create_session(); }
+        else { cancelling = 1; cancel_session(); }
         ui_repaint();
         return;
     }
