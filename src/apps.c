@@ -24,6 +24,7 @@
 #define APP_CAP   MAX_ITEMS   /* menu ceiling; ponytail: >256 visible apps get truncated */
 #define EXEC_MAX  256         /* flatpak Exec lines overflow ITEM_MAX (160) */
 #define ICON_MAX  128         /* Icon= value: theme name or absolute path */
+#define ID_MAX    96          /* .desktop basename; reverse-dns flatpak ids are the long ones */
 
 typedef struct {
     char name[ITEM_MAX];
@@ -143,6 +144,11 @@ static void scan(void) {
     int n = 0;
     char dirs[8][256];
     int nd = app_dirs(dirs, 8);
+    /* desktop-file ids already resolved; a hidden entry still consumes its id,
+     * which is what makes a NoDisplay/Hidden file in ~/.local/share mask the
+     * system copy of the same name (XDG menu spec) */
+    char (*seen)[ID_MAX] = calloc(APP_CAP, ID_MAX);
+    int n_seen = 0;
     for (int d = 0; d < nd; d++) {
         DIR *dp = opendir(dirs[d]);
         if (!dp) continue;
@@ -150,6 +156,11 @@ static void scan(void) {
         while (n < APP_CAP && (e = readdir(dp))) {
             size_t l = strlen(e->d_name);
             if (l < 9 || strcmp(e->d_name + l - 8, ".desktop")) continue;
+            int masked = 0;
+            for (int i = 0; i < n_seen && !masked; i++)
+                masked = strcmp(seen[i], e->d_name) == 0;
+            if (masked) continue;
+            if (seen && n_seen < APP_CAP) scpy(seen[n_seen++], ID_MAX, e->d_name);
             char path[600];
             if (snprintf(path, sizeof path, "%.256s/%.256s", dirs[d], e->d_name)
                 >= (int)sizeof path) continue;
@@ -161,6 +172,7 @@ static void scan(void) {
         }
         closedir(dp);
     }
+    free(seen);
     for (int i = 0; i < n && old; i++)
         for (int j = 0; j < n_old; j++)
             if (!strcmp(fresh[i].name, old[j].name)) { fresh[i].count = old[j].count; break; }
