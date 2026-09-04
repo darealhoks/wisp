@@ -149,8 +149,30 @@ Widget *widget_by_frac(uint32_t obj) {
 }
 #endif
 
+void output_remember_tags(Output *o, uint32_t m, uint32_t a, uint32_t u) {
+    if (!o) return;
+    o->tag_mask = m;
+    o->active_mask = a;
+    o->urgent_mask = u;
+    o->have_tags = 1;
+}
+
+void output_remember_title(Output *o, const char *s) {
+    if (!o) return;
+    snprintf(o->title, MAX_TEXT, "%s", s ? s : "");
+}
+
 void widget_setup_surface(Widget *w, uint32_t layer, const char *ns, Output *o) {
     w->output        = o;
+    if (o && o->have_tags) {
+        w->tag_mask = o->tag_mask;
+        w->active_mask = o->active_mask;
+        w->urgent_mask = o->urgent_mask;
+        w->have_tags = 1;
+    }
+    if (o) {
+        snprintf(w->title, MAX_TEXT, "%s", o->title);
+    }
     /* Output-agnostic surfaces (menu/osd) follow the focused output. */
     w->scale120      = o ? o->scale120 : (focused_output ? focused_output->scale120 : 120);
     if (w->scale120 < 120) w->scale120 = 120;

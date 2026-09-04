@@ -823,19 +823,29 @@ int emit_surfaces(FILE *o, Unit *u, CGCtx *ctx) {
           "    w->tag_mask = m; w->active_mask = a; w->urgent_mask = u; w->have_tags = 1;\n"
           "}\n", o);
     fputs("void bar_set_tags(uint32_t m, uint32_t a, uint32_t u) {\n", o);
+    fputs("    for (int i = 0; i < MAX_OUTPUTS; i++) {\n"
+          "        if (outputs[i].active) output_remember_tags(&outputs[i], m, a, u);\n"
+          "    }\n", o);
     for (int i = 0; i < nsurf; i++)
         fprintf(o, "    for (int i = 0; i < __%s_nw; i++) __apply_tags(__%s_widgets[i], m, a, u);\n",
                 surf_names[i], surf_names[i]);
     fputs("    wispgen_tags_changed();\n}\n", o);
+    /* Remember unconditionally: with the bar hidden there is no widget to
+     * stamp, and the sources only publish on change. */
     fputs("void bar_set_tags_on(Output *o, uint32_t m, uint32_t a, uint32_t u) {\n"
+          "    output_remember_tags(o, m, a, u);\n"
           "    if (o && o->bar) __apply_tags(o->bar, m, a, u);\n"
           "    wispgen_tags_changed();\n}\n", o);
     fputs("void bar_set_title(const char *s) {\n", o);
+    fputs("    for (int i = 0; i < MAX_OUTPUTS; i++) {\n"
+          "        if (outputs[i].active) output_remember_title(&outputs[i], s);\n"
+          "    }\n", o);
     for (int i = 0; i < nsurf; i++)
         fprintf(o, "    for (int i = 0; i < __%s_nw; i++) snprintf(__%s_widgets[i]->title, MAX_TEXT, \"%%s\", s ? s : \"\");\n",
                 surf_names[i], surf_names[i]);
     fputs("    wispgen_tags_changed();\n}\n", o);
     fputs("void bar_set_title_on(Output *o, const char *s) {\n"
+          "    output_remember_title(o, s);\n"
           "    if (o && o->bar) snprintf(o->bar->title, MAX_TEXT, \"%s\", s ? s : \"\");\n"
           "    wispgen_tags_changed();\n}\n\n", o);
 

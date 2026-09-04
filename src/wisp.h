@@ -206,6 +206,14 @@ struct Output {
     int      widgets_created;        /* bar/wall/hud spawned for this output */
     int      mode_w, mode_h;         /* current mode pixel size (wl_output.mode) */
     int      scale120;               /* scale in 120ths (wl_output.scale * 120), >= 120 */
+    /* Last tag masks + focused title published for this output. The draw reads
+     * the Widget copies, but a surface is torn down and rebuilt on hide/unhide
+     * and output hotplug while the sources publish only on change —
+     * widget_setup_surface reseeds from here, else a rebuilt bar shows no tags
+     * until the next workspace switch. */
+    uint32_t tag_mask, active_mask, urgent_mask;
+    int      have_tags;
+    char     title[MAX_TEXT];
     struct Widget *bar, *wall, *lock;
 };
 
@@ -217,6 +225,9 @@ Output *output_by_wl(uint32_t wl_output);
 Output *output_by_gamma(uint32_t gamma_ctrl);
 Output *output_by_registry_name(uint32_t name);
 Output *output_by_name(const char *name);
+/* Stash what a tag/title source just published, for surfaces created later. */
+void    output_remember_tags(Output *o, uint32_t m, uint32_t a, uint32_t u);
+void    output_remember_title(Output *o, const char *s);
 
 /* Tag/workspace seam (workspace.c) — tag state in, tag switches out. Two
  * backends: mango's unix socket, else river's status protocol, else
