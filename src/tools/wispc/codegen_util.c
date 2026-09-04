@@ -614,3 +614,14 @@ void emit_reg_destroyed(FILE *o) {
                 reg_names[i], reg_names[i], reg_names[i], reg_names[i], reg_names[i]);
     fputs("}\n", o);
 }
+
+/* Emit `s` as the body of a C string literal, octal-escaping the token bytes
+ * and anything else the compiler would misread. */
+void cg_cstr_body(FILE *o, const char *s, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        unsigned char c = (unsigned char)s[i];
+        if (c == '"' || c == '\\') fprintf(o, "\\%c", c);
+        else if (c >= 0x20 && c < 0x7f) fputc(c, o);
+        else fprintf(o, "\\%03o", c);
+    }
+}

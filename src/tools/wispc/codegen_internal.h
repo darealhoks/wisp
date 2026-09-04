@@ -22,6 +22,7 @@ void        cg_line_reset(FILE *o);
 
 const char *sname(const char *s, size_t n);
 char       *strndup0(const char *s, size_t n);
+void        cg_cstr_body(FILE *o, const char *s, size_t n);
 int         eval_anchor(Expr *e);
 int         eval_layer(Expr *e);
 int         eval_int(Expr *e, int dflt);

@@ -601,8 +601,10 @@ static void emit_menus(FILE *o, Unit *u, CGCtx *ctx) {
             fputs("    { \"", o);
             /* item text: "<icon>  <label>" (icon optional) */
             if (it->icon) { emit_utf8(o, it->icon); fputs("  ", o); }
-            fprintf(o, "%.*s\", \"%.*s\" },\n",
-                    (int)it->llen, it->label, (int)it->elen, it->exec);
+            cg_cstr_body(o, it->label, it->llen);
+            fputs("\", \"", o);
+            cg_cstr_body(o, it->exec, it->elen);
+            fputs("\" },\n", o);
         }
         fputs("};\n", o);
     }

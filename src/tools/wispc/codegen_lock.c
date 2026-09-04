@@ -64,27 +64,16 @@ static int lock_show(Expr *e) {
     return LSHOW_ALWAYS;
 }
 
-/* Emit `s` as the body of a C string literal, octal-escaping the token bytes
- * and anything else the compiler would misread. */
-static void emit_cstr_body(FILE *o, const char *s, size_t n) {
-    for (size_t i = 0; i < n; i++) {
-        unsigned char c = (unsigned char)s[i];
-        if (c == '"' || c == '\\') fprintf(o, "\\%c", c);
-        else if (c >= 0x20 && c < 0x7f) fputc(c, o);
-        else fprintf(o, "\\%03o", c);
-    }
-}
-
 /* A lock text template: literal bytes with an LT_* byte per {token}. */
 static void emit_template(FILE *o, Expr *e) {
     fputc('"', o);
     if (!e) { /* nothing */ }
     else if (e->kind == EX_STRING) {
-        emit_cstr_body(o, e->str.s, e->str.n);
+        cg_cstr_body(o, e->str.s, e->str.n);
     } else if (e->kind == EX_INTERP) {
         for (int i = 0; i < e->interp.nparts; i++) {
             InterpPart *p = &e->interp.parts[i];
-            if (!p->is_expr) { emit_cstr_body(o, p->lit, p->llen); continue; }
+            if (!p->is_expr) { cg_cstr_body(o, p->lit, p->llen); continue; }
             int t = lock_token(p->expr);
             if (!t) {
                 diag_error(e->loc, "lock text may only interpolate {dots} {count} {layout} {prompt} {time}");
@@ -140,7 +129,7 @@ static void emit_el(FILE *o, LockElem *e, CGCtx *ctx) {
     Expr *fmt = elem_prop(e, "format");
     if (fmt && fmt->kind == EX_STRING) {
         fputc('"', o);
-        emit_cstr_body(o, fmt->str.s, fmt->str.n);
+        cg_cstr_body(o, fmt->str.s, fmt->str.n);
         fputc('"', o);
     } else {
         fputs("\"%H:%M\"", o);
