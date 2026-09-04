@@ -749,6 +749,19 @@ int emit_surfaces(FILE *o, Unit *u, CGCtx *ctx) {
     fputs("    (void)w; (void)wx; (void)wy;\n}\n\n", o);
 
     fputs("void bar_input_leave(Widget *w) {\n", o);
+    /* Pointer left a `dismiss_on_unfocus` panel. The kbd-leave path can't cover
+     * this alone: a press over an on_demand layer pins kbd focus to it on mango,
+     * so after clicking anything inside (dismiss a card, clear all) hovering off
+     * sends no kbd leave and the panel stranded open. Skipped when focus already
+     * names another surface — that's the kbd path's case, sibling copies
+     * included. */
+    for (int i = 0; i < nsurf; i++) {
+        if (!surf_unf[i] || !surf_esc[i]) continue;
+        fprintf(o, "    for (int i = 0; i < __%s_nw; i++) if (__%s_widgets[i] == w) {\n",
+                surf_names[i], surf_names[i]);
+        fputs("        if (!kbd_focus || kbd_focus == w->surface) ", o);
+        fprintf(o, "exec_cmd(\"%s\");\n        break;\n    }\n", surf_esc[i]);
+    }
     for (int i = 0; i < ndisp; i++) {
         fprintf(o, "    for (int i = 0; i < __%s_nw; i++) if (__%s_widgets[i] == w) { %s_on_leave(w); return; }\n",
                 disp_names[i], disp_names[i], disp_names[i]);
