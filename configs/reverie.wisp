@@ -362,7 +362,7 @@ surface hud {
 surface notifs {
 	layer   = overlay;
 	anchor  = top | right;
-	margin  = 46;          // bar height 34 + bar margin 6, keep in sync
+	margin  = 48;          // bar height 34 + bar margin 6, keep in sync
 	margin_x = 6;          // matches the bar margin
 	width   = 380;
 	height  = 420;
@@ -375,7 +375,6 @@ surface notifs {
 	pad_x   = 10;
 	pad_y   = 8;
 	on_escape = "wispctl notif close";
-	dismiss_on_unfocus;
 
 	bg = NOTIFBG;
 	radius = 8;
