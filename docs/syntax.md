@@ -68,6 +68,7 @@ is expanded.
 | `font` | `FONT` | `~/.local/share/fonts/MapleMono-NF-Bold.ttf` |
 | `font_fallback` | `FONT_FALLBACK` | empty |
 | `fractional` | `FRACTIONAL` | `0`, and `1` requires truetype |
+| `single_buffer` | `SINGLE_BUFFER` | `0`; `1` halves shm RAM but breaks some compositors, see install.md |
 
 ```wisp
 //! font = ~/.local/share/fonts/MapleMono-NF-Bold.ttf

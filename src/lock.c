@@ -285,9 +285,9 @@ static void lock_draw_content(uint32_t *px, int W, int H) {
 }
 
 /* Frame stage: buffer plumbing only — acquire, draw, attach. Keyboard only. */
-static void lock_render(Widget *w) {
+void lock_render_widget(Widget *w) {
     if (!w->configured || w->w <= 0 || w->h <= 0) return;
-    widget_ensure_pool(w, 1);
+    widget_ensure_pool(w, WISP_POOL_SLOTS);
     BufSlot *s = widget_free_slot(w);
     if (!s) return;
 
@@ -302,7 +302,7 @@ void lock_on_caps_changed(void) {
 
 void lock_render_all(void) {
     for (int i = 0; i < MAX_WIDGETS; i++)
-        if (widgets[i].kind == W_LOCK) lock_render(&widgets[i]);
+        if (widgets[i].kind == W_LOCK) lock_render_widget(&widgets[i]);
 }
 
 /* Spawn a lock surface + Widget(W_LOCK) for one Output. Called from
@@ -341,7 +341,7 @@ void lock_on_surf_configure(Widget *w, uint32_t serial, int width, int height) {
     if (height) w->h = height;
     wl_req(w->s.lock.slock_surf_id, SLOCK_SURF_REQ_ACK_CONFIGURE, &serial, 1, -1);
     w->configured = 1;
-    lock_render(w);
+    lock_render_widget(w);
 }
 
 void lock_on_locked(void) {

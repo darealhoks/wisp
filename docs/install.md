@@ -87,6 +87,7 @@ Set them on the make command line, or as `//!` directive comments inside the
 | `FONT` | `~/.local/share/fonts/MapleMono-NF-Bold.ttf` | the font to bake sizes from |
 | `FONT_FALLBACK` | empty | second font in the chain, truetype only; a CBDT emoji font renders in colour |
 | `FRACTIONAL` | `0` | fractional scale support, requires `FONT_BACKEND=truetype` |
+| `SINGLE_BUFFER` | `0` | one shm slot instead of two on surfaces that do not animate, halves shm RAM, **compositor-dependent, see below** |
 | `PREFIX` | `~/.local` | install prefix |
 | `LINE_MAP` | `1` | `0` drops `#line` mapping back to the `.wisp` |
 
@@ -138,6 +139,7 @@ codegen; the full list of check-passes-emit-fails cases is in [[gotchas]].
 
 - `make` alone is not enough after an edit, use `make install`, because `wispctl reload` re-execs the installed binary.
 - `FRACTIONAL=1` with `FONT_BACKEND=bitmap` is a hard Makefile error; bitmap fonts can only pixel-double.
+- `SINGLE_BUFFER=1` **may break your compositor.** Wayland does not say when a compositor must release a committed `wl_shm` buffer. wlroots-based ones (and mango) release it at commit, so one slot is enough and RAM roughly halves. niri/smithay holds the buffer until the surface commits the *next* one, and with a single slot there is no next buffer to commit, so the release never arrives and the surface **stops painting after its first frame** — most visibly a lock screen that draws its background and then ignores every keystroke. Works on mango, stops painting on niri. Leave it at `0` unless you have tested your compositor; surfaces that tween keep two slots either way.
 - `FONT_BACKEND=baked` and `=freetype` were retired and now error out.
 - Only two configs ship: `reverie` and `anemoia`. `configs/lib/theme.wisp` is a palette fragment they include, not a config.
 - `wispctl rebuild` needs the share dir (or `$WISP_SRC`) present, it shells out to `make -C` there.

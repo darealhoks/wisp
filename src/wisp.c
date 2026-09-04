@@ -447,6 +447,9 @@ void widget_repaint(Widget *w, int first_configure) {
 #ifdef WISP_HAS_GREET
     if (w->kind == W_GREET) greet_render(w);
 #endif
+#ifdef WISP_HAS_LOCK
+    if (w->kind == W_LOCK) lock_render_widget(w);
+#endif
 #ifdef WISP_HAS_OSD
     if (w->kind == W_OSD) {
         if (first_configure) osd_on_first_configure(w);

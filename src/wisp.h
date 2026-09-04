@@ -504,6 +504,20 @@ void    widget_setup_surface(Widget *w, uint32_t layer, const char *ns, Output *
 void    widget_repaint(Widget *w, int first_configure);
 void    widget_rescale_output(Output *o);
 void    widget_set_scale(Widget *w, int s120);   /* restamp + repool + repaint */
+/* Slot count for a surface with nothing animating. Two by default: a
+ * compositor is free to hold a committed shm buffer until the surface commits
+ * the next one (niri/smithay does), and a one-slot pool has no next buffer to
+ * commit, so the release never arrives and the surface freezes after its first
+ * frame. -DWISP_SINGLE_BUFFER (make SINGLE_BUFFER=1 / `//! single_buffer = 1`)
+ * drops it to one and halves shm RSS — correct only where the compositor
+ * releases at commit (wlroots, mango). Animating surfaces always get two. */
+#ifndef WISP_POOL_SLOTS
+#  ifdef WISP_SINGLE_BUFFER
+#    define WISP_POOL_SLOTS 1
+#  else
+#    define WISP_POOL_SLOTS 2
+#  endif
+#endif
 void    widget_ensure_pool(Widget *w, int n_slots);
 /* Release the SHM pool (destroys buffers, destroys pool, munmaps, closes fd).
  * Safe to call after a frame.done has confirmed the compositor consumed the
@@ -1080,6 +1094,7 @@ int  lock_active(void);
 void lock_on_output_added(Output *o);
 void lock_on_output_removed(Output *o);
 void lock_render_all(void);              /* re-render every lock widget */
+void lock_render_widget(Widget *w);
 void wl_roundtrip(void);                 /* block until one display.sync completes */
 
 /* ============================================================ */

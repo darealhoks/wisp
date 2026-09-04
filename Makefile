@@ -99,6 +99,7 @@ $(eval $(call KNOB,FONT_BACKEND,font_backend))
 $(eval $(call KNOB,FONT,font))
 $(eval $(call KNOB,FONT_FALLBACK,font_fallback))
 $(eval $(call KNOB,FRACTIONAL,fractional))
+$(eval $(call KNOB,SINGLE_BUFFER,single_buffer))
 
 # Font backend (one per build) + font path defaults — lowest priority.
 #   truetype — daemon rasterizes TTF/OTF with src/tt/ (default; no FreeType).
@@ -122,6 +123,15 @@ $(error FRACTIONAL=1 needs FONT_BACKEND=truetype (bitmap fonts can only pixel-do
 endif
 CFLAGS += -DWISP_FRACTIONAL
 endif
+# One shm slot per non-animating surface instead of two — halves shm RSS, but
+# only works on compositors that release a committed buffer at commit time
+# (wlroots, mango). niri/smithay holds it until the next commit, so a one-slot
+# surface stops painting after its first frame (a lock that ignores keystrokes).
+SINGLE_BUFFER ?= 0
+ifeq ($(SINGLE_BUFFER),1)
+CFLAGS += -DWISP_SINGLE_BUFFER
+endif
+
 ifneq (,$(filter $(FONT_BACKEND),baked freetype))
 $(error FONT_BACKEND=$(FONT_BACKEND) was retired — truetype (default) covers it; bitmap remains for PSF/BDF pixel fonts)
 endif
@@ -140,7 +150,7 @@ CFLAGS += $(FONT_DEFS)
 # corrupt the earlier fields during recovery. build/.selected is refreshed with
 # the same tuple so a bare `make` repeats this selection — sub-makes fanning out
 # over all configs (install/check) pass WISP_NOSELECT=1 to not steal it.
-BUILD_TAG := WISP=$(WISP) FRACTIONAL=$(FRACTIONAL) FONT_BACKEND=$(FONT_BACKEND) FONT=$(FONT) FONT_FALLBACK=$(FONT_FALLBACK)
+BUILD_TAG := WISP=$(WISP) FRACTIONAL=$(FRACTIONAL) SINGLE_BUFFER=$(SINGLE_BUFFER) FONT_BACKEND=$(FONT_BACKEND) FONT=$(FONT) FONT_FALLBACK=$(FONT_FALLBACK)
 TAG_RESET := $(shell mkdir -p $(BUILD); \
   prev=""; [ -f $(BUILD_TAG_FILE) ] && prev=$$(cat $(BUILD_TAG_FILE)); \
   if [ "$$prev" != "$(BUILD_TAG)" ]; then \

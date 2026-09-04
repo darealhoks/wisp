@@ -240,7 +240,7 @@ int emit_generated_compound(FILE *o, Decl *cmp, CGCtx *ctx, const char *nm) {
         fputs("    render_clip_reset();\n", o);
         fputs("    if (!w->configured || w->w <= 0 || w->h <= 0) return;\n", o);
         fprintf(o, "    int __wi = __%s_slot(w); if (__wi < 0) __wi = 0; (void)__wi;\n", rnm);
-        fputs("    widget_ensure_pool(w, 1);\n", o);
+        fputs("    widget_ensure_pool(w, WISP_POOL_SLOTS);\n", o);
         fputs("    BufSlot *sl = widget_free_slot(w);\n", o);
         fputs("    if (!sl) return;\n", o);
         fputs("    clear_buf(sl->px, w->w, w->h, 0);\n", o);
