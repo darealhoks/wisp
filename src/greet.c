@@ -69,8 +69,8 @@
 #define KEY_ENTER 28
 #define KEY_LSHIFT 42
 #define KEY_RSHIFT 54
-#define KEY_UP   103
-#define KEY_DOWN 108
+#define KEY_LEFT  105
+#define KEY_RIGHT 106
 
 #define GREET_SESSIONS_CAP 8
 #define SESSION_MAX 256
@@ -388,7 +388,7 @@ static void submit(void) {
     ui_repaint();
 }
 
-/* Only text edits repeat: a held Enter would resubmit, a held Up/Tab would
+/* Only text edits repeat: a held Enter would resubmit, a held Right/Tab would
  * spin the session list. */
 int greet_key_repeats(uint32_t key) {
     if (key == KEY_BS) return 1;
@@ -400,8 +400,8 @@ int greet_on_key(Widget *w, uint32_t key, uint32_t state) {
     if (w->kind != W_GREET) return 0;
     if (state != 1) return 1;
     if (key == KEY_LSHIFT || key == KEY_RSHIFT) return 1;
-    if (key == KEY_UP)   { cycle_session(-1); return 1; }
-    if (key == KEY_DOWN || key == KEY_TAB) { cycle_session(1); return 1; }
+    if (key == KEY_LEFT)  { cycle_session(-1); return 1; }
+    if (key == KEY_RIGHT || key == KEY_TAB) { cycle_session(1); return 1; }
     if (key == KEY_ESC)  { clear_entry(); ui_repaint(); return 1; }
     if (key == KEY_ENTER) { submit(); return 1; }
     if (!G.awaiting) return 1;

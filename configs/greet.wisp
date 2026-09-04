@@ -21,11 +21,11 @@ surface scrim {
 
 // font_size is per-surface, so the 64px clock and the 13px date cannot share one
 // with the pill. margins are logical px on this box's 1200-tall panel, stacked
-// above the centred pill (top edge at (1200-198)/2 = 501).
+// above the centred pill (top edge at (1200-140)/2 = 530).
 surface greetclock {
 	layer     = bottom;
 	anchor    = top;
-	margin    = 370;
+	margin    = 399;
 	width     = 600;
 	height    = 84;
 	bg        = #00000000;
@@ -41,7 +41,7 @@ surface greetclock {
 surface greetdate {
 	layer     = bottom;
 	anchor    = top;
-	margin    = 464;
+	margin    = 493;
 	width     = 600;
 	height    = 22;
 	bg        = #00000000;
@@ -61,9 +61,9 @@ surface login {
 	sessions   = "/etc/greetd/environments";
 
 	axis   = vertical;
-	width  = 420;
-	height = 198;
-	pad_x  = 14;
+	width  = 340;
+	height = 140;
+	pad_x  = 16;
 	pad_y  = 14;
 	font_size = 14;
 
@@ -74,37 +74,25 @@ surface login {
 	radius       = 8;
 
 	group who {
-		height = 30;
+		height = 22;
 		pad    = 8;
-		pad_x  = 12;
 		gap    = 8;
 		cell {
-			icon = 0xf007;
-			fg   = SUBTXT;
+			text = "login";
+			fg   = EMPTY;
 		}
 		cell {
 			text = greet.user;
 			fg   = TEXT;
 		}
-		cell {
-			text = greet.session;
-			fg   = EMPTY;
-		}
 	}
 
 	group field {
-		height = 38;
-		pad    = 8;
-		pad_x  = 12;
-		gap    = 10;
-		bg     = REST;
-		radius = 6;
+		height = 22;
+		pad    = 10;
+		gap    = 8;
 		cell {
-			icon = 0xf023;
-			fg   = greet.failed ? RED : SUBTXT;
-		}
-		cell {
-			text = greet.prompt;
+			text = greet.prompt == "" ? "password:" : greet.prompt;
 			fg   = SUBTXT;
 		}
 		// one cell: a second cell would put the group's gap before the caret
@@ -114,25 +102,30 @@ surface login {
 		}
 	}
 
-	for s in greet.sessions {
+	// horizontal band: a session added to /etc/greetd/environments widens the
+	// strip instead of pushing the stack past `height`
+	group sess {
+		height = 22;
+		pad    = 10;
+		gap    = 4;
 		cell {
-			height = 30;
-			pad    = 4;
-			pad_x  = 8;
-			radius = 4;
-			// the environments file is bare command lines, so the icon is named here
-			icon   = s.name == "MangoWM" ? 0xf2d0 : s.name == "zsh" ? 0xf120 : 0xf144;
-			icon_gap = 8;
-			text   = s.name;
-			fg     = s.selected ? TEXT : SUBTXT;
-			bg     = s.selected ? REST : #00000000;
+			text = "session";
+			fg   = EMPTY;
+		}
+		for s in greet.sessions {
+			cell {
+				text = s.selected ? "[{s.name}]" : " {s.name} ";
+				fg   = s.selected ? TEXT : EMPTY;
+			}
 		}
 	}
 
+	// greetd's own description is "unable to create session: pam_authenticate:
+	// AUTH_ERR"; PAM's human messages arrive as auth_message and leave failed 0
 	widget status {
 		height = 18;
-		pad_x  = 2;
-		text   = greet.caps ? "caps" : greet.error;
+		text   = greet.caps ? "caps lock is on"
+			: greet.failed ? "incorrect password" : greet.error;
 		fg     = greet.caps ? ORANGE : (greet.failed ? RED : EMPTY);
 	}
 }

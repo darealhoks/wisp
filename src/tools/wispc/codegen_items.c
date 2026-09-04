@@ -1445,7 +1445,8 @@ Expr *group_prop(Group *g, const char *name) {
 /* One group member: read its measured st[] (dynamic fg/bg/text already
  * resolved), draw optional member bg then icon+text vertically centered in the
  * container height, push its click rect. Advances the local cursor __gx. */
-static void emit_group_member(FILE *o, BarItem *it, const char *nm, int gap, int partial) {
+static void emit_group_member(FILE *o, BarItem *it, const char *nm, int gap, int partial,
+                              int greet_rows) {
     Widget *wd = it->w;
     char sbuf[32]; const char *sb = sbuf;
     /* A for-block member is one cell drawn N times: loop the runtime count and
@@ -1504,8 +1505,11 @@ static void emit_group_member(FILE *o, BarItem *it, const char *nm, int gap, int
     fprintf(o, "            }\n");
     /* Same widened gate as the top-level path: kind -1 = hover-only rect. */
     int has_tip = widget_prop(wd, "tooltip") != NULL;
-    if (clk || has_tip) {
-        int kind = !clk ? -1 : it->is_runtime_for_cell ? 2 : it->is_for_cell ? 1 : 0;
+    /* greet session rows carry no on_click — greet_on_click turns kind 2 into
+     * greet_select(). Same exception the top-level draw makes. */
+    int greet_row = greet_rows && it->is_runtime_for_cell;
+    if (clk || has_tip || greet_row) {
+        int kind = !clk ? (greet_row ? 2 : -1) : it->is_runtime_for_cell ? 2 : it->is_for_cell ? 1 : 0;
         char arg[16];
         if (it->is_runtime_for_cell) snprintf(arg, sizeof arg, "it");
         else snprintf(arg, sizeof arg, "%d", it->is_for_cell ? it->cell_idx : it->handler_idx);
@@ -1596,7 +1600,7 @@ int emit_group_draw(FILE *o, BarItem *items, int first, int nitems,
     }
     fprintf(o, "        int __gx = __bx + %d; (void)__gw;\n", padx);
     for (int k = 0; k < cnt; k++)
-        emit_group_member(o, &items[first + k], nm, gap, ctx->partial_ok);
+        emit_group_member(o, &items[first + k], nm, gap, ctx->partial_ok, ctx->greet_rows);
     fputs("    }\n", o);
     return cnt;
 }
