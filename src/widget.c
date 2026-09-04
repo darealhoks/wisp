@@ -444,6 +444,19 @@ void widget_attach_rect(Widget *w, BufSlot *s, int request_frame,
     w->want_pool_free = 0;
 }
 
+/* Every slot but the one the compositor is currently showing is released.
+ * last_attached stays busy forever on a surface that never attaches again
+ * (wallpaper, hidden hud/osd): wl_buffer.release only fires when a *different*
+ * buffer is attached, so requiring it too would pin every deferred pool free
+ * that exists. Destroying that buffer before its release is spec-legal as long
+ * as the storage is not re-used — we close the memfd with it — and the
+ * compositor keeps its own texture, which is what wall.c relies on. */
+static int pool_quiescent(const Widget *w) {
+    for (int k = 0; k < w->n_slots; k++)
+        if (w->slots[k].busy && k != w->last_attached) return 0;
+    return 1;
+}
+
 /* Frame callback dispatch. Generic widget plumbing: any kind that requested
  * a frame via widget_attach(_, _, 1) lands here on .done. HUD piggybacks for
  * its slide animation; other widgets only use it to drive want_pool_free. */
@@ -459,17 +472,10 @@ void on_frame_done(Widget *w, uint32_t cb_id) {
     if (w->kind == W_OSD && osd_tick) osd_tick(w);
     /* Fall through (don't return) so the frame callback can drive the one-shot
      * pool free the comment in osd.c promises, instead of relying solely on
-     * buffer-release. If osd_tick re-attached, widget_attach cleared the flag.
-     * Only free once every slot is released — freeing a busy slot would yank
-     * the pool out from under the compositor (see on_buffer_release). */
-    if (w->want_pool_free) {
-        int all_free = 1;
-        for (int k = 0; k < w->n_slots; k++)
-            if (w->slots[k].busy) { all_free = 0; break; }
-        if (all_free) {
-            w->want_pool_free = 0;
-            widget_free_pool(w);
-        }
+     * buffer-release. If osd_tick re-attached, widget_attach cleared the flag. */
+    if (w->want_pool_free && pool_quiescent(w)) {
+        w->want_pool_free = 0;
+        widget_free_pool(w);
     }
 #ifdef WISP_HAS_WALL
     /* A deferred reload waits here, not on the fade's anim-done: that callback
@@ -483,7 +489,7 @@ void on_frame_done(Widget *w, uint32_t cb_id) {
 
 /* Buffer release: clear busy flag for matching slot. If the widget has been
  * marked for pool teardown (e.g. OSD after the last slab dismissed), free the
- * pool once every slot has been returned by the compositor. */
+ * pool once no in-flight buffer is left (see pool_quiescent). */
 void on_buffer_release(uint32_t buf_id) {
     for (int i = 0; i < MAX_WIDGETS; i++) {
         Widget *w = &widgets[i];
@@ -491,14 +497,9 @@ void on_buffer_release(uint32_t buf_id) {
         for (int j = 0; j < w->n_slots; j++)
             if (w->slots[j].id == buf_id) {
                 w->slots[j].busy = 0;
-                if (w->want_pool_free) {
-                    int all_free = 1;
-                    for (int k = 0; k < w->n_slots; k++)
-                        if (w->slots[k].busy) { all_free = 0; break; }
-                    if (all_free) {
-                        w->want_pool_free = 0;
-                        widget_free_pool(w);
-                    }
+                if (w->want_pool_free && pool_quiescent(w)) {
+                    w->want_pool_free = 0;
+                    widget_free_pool(w);
                 }
                 /* Deferred repaint, not a timer: the render that set this had
                  * no free slot, and this release is the earliest moment one
