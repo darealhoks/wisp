@@ -471,7 +471,7 @@ menu power {
 	item {
 		icon = 0xf08b;
 		label = "Logout";
-		exec = "pkill -x mango";
+		exec = "loginctl terminate-session \"\"";
 	}
 	item {
 		icon = 0xf186;

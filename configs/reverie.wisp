@@ -14,6 +14,7 @@ source disk_s = disk("/", every="600s");
 source wifi_s = net("");
 source tray_s = tray(icon_size=20);
 source vol_s  = pipewire();
+source tw_s   = exec_line("tw-hours", every="60s");
 
 source hid    = ui_hidden();
 source notif_s = notifications(history=64, image=22);
@@ -44,7 +45,9 @@ surface bar {
 		align = left;
 		widget distro {
 			icon = 0xf08e8;
-			fg   = TVIOLET;
+			text = tw_s.value == "" ? "" : "{tw_s.value} h";
+			fg   = TEXT;
+			icon_fg = TVIOLET;
 		}
 	}
 	group batgrp {
@@ -271,7 +274,7 @@ widget {
 source gamma_warm = gamma_warm();
 source dnd_on     = dnd();
 source mirror_on  = toplevel(app_id="at.yrlf.wl_mirror");
-// written by ~/next/rice/mango/caffeine; inotify wants a literal absolute path
+// written by ~/next/rice/bin/caffeine; inotify wants a literal absolute path
 source caffeine_on = inotify(path="/run/user/1000/caffeine");
 
 surface hud {
@@ -642,8 +645,8 @@ media {
 idle {
 	timeout blank {
 		after  = 300s;
-		run    = "caffeine blank || wispctl dpms off";
-		resume = "wispctl dpms on";
+		run    = "caffeine blank || niri msg action power-off-monitors";
+		resume = "niri msg action power-on-monitors";
 	}
 	timeout suspend {
 		after = 720s;
@@ -822,7 +825,7 @@ menu power {
 	item {
 		icon = 0xf08b;
 		label = "Logout";
-		exec = "pkill -x mango";
+		exec = "loginctl terminate-session \"\"";
 	}
 	item {
 		icon = 0xf186;
