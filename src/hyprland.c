@@ -144,7 +144,7 @@ static HlMon *hl_mon(const char *name) {
 
 static void hl_publish(HlMon *m) {
 #ifdef WISP_HAS_BAR
-    if (m->out) bar_set_tags_on(m->out, m->occ, m->act, m->urg);
+    if (m->out) bar_set_tags_on(m->out, m->occ, m->act, m->urg, m->occ);
 #else
     (void)m;
 #endif

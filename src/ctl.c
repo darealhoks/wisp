@@ -310,7 +310,7 @@ static int dispatch(Client *c, char *cmd) {
             unsigned occ, act, urg;
             if (parse_hex(argv[2], &occ) || parse_hex(argv[3], &act) || parse_hex(argv[4], &urg))
                 return fail(c, "bar tags: masks must be hex");
-            bar_set_tags(occ, act, urg);
+            bar_set_tags(occ, act, urg, occ);
             (void)!write(c->fd, "ok\n", 3); return 0;
         }
         if (!strcmp(sub, "refresh")) {

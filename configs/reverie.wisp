@@ -89,11 +89,16 @@ surface bar {
 		}
 	}
 
-	for tag in tags.list {
-		cell.ws {
-			text         = tag.label;
-			visible      = tag.pinned || tag.occupied || tag.active || tag.urgent;
-			on_click()   = exec("wispctl tag {tag.index} {tag.output}");
+	group wsgrp {
+		align = left;
+		for tag in tags.list {
+			cell.ws {
+				bg         = tag.active ? TEXT : EMPTY;
+				width      = tag.active ? 24 : tag.occupied ? 10 : 6;
+				height     = tag.occupied || tag.active ? 10 : 6;
+				visible    = tag.pinned || tag.exists || tag.active || tag.urgent;
+				on_click() = exec("wispctl tag {tag.index} {tag.output}");
+			}
 		}
 	}
 
@@ -235,24 +240,15 @@ widget {
 }
 
 .ws {
-	align = left;
-	fg = TEXT;
-	bg = CRUST;
-	border = BORD;
-	border_width = 2;
-	radius = 8;
-	pad = 6;
-	width = 28;
-	height = 28;
+	radius = 5;
+	pad = 5;
 	transition_size = 160ms;
 	enter_anim = 160ms;
 	exit_anim = 160ms;
 }
-.ws:active {
-	fg = TEXT;
-	border = BORD;
-	width = 34;
-	height = 34;
+#wsgrp {
+	pad_x = 10;
+	gap = 6;
 }
 
 .tray {

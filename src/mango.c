@@ -67,9 +67,9 @@ static void mg_flush(Output *o, uint32_t occ, uint32_t act, uint32_t urg, uint32
     if (all && act == all && last[i].o == o) act = last[i].act;
     else { last[i].o = o; last[i].act = act; }
 #ifdef WISP_HAS_BAR
-    bar_set_tags_on(o, occ, act, urg);
+    bar_set_tags_on(o, occ, act, urg, all);   /* mango reports every tag; occ is only the ones holding clients */
 #else
-    (void)occ; (void)urg;
+    (void)occ; (void)urg; (void)all;
 #endif
 }
 

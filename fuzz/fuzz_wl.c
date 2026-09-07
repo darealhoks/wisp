@@ -7,7 +7,7 @@
  * It compiles the real wire-facing sources into ONE TU so every bounds check,
  * wire-string reader (u32 len + pad4 + NUL), array walk (i+4 <= alen) and tag
  * clamp runs on fuzz input:
- *     wl.c workspace.c river.c wl_toplevel.c mango.c hyprland.c
+ *     wl.c workspace.c river.c wl_toplevel.c mango.c hyprland.c niri.c
  * and stubs only the leaf side effects — the render/widget/gamma entry points,
  * the seat input handlers, and epoll registration. NONE of the stubbed leaves
  * touch untrusted wire bytes, so the stubbing can't mask a parser bug.
@@ -62,7 +62,7 @@ Widget *widget_by_ls(uint32_t id) { (void)id; return NULL; }
 void widget_destroy(Widget *w) { (void)w; }
 void widget_rescale_output(Output *o) { (void)o; }
 void cutout_drop_output(Output *o) { (void)o; }
-void bar_set_tags_on(Output *o, uint32_t m, uint32_t a, uint32_t u) { (void)o; (void)m; (void)a; (void)u; }
+void bar_set_tags_on(Output *o, uint32_t m, uint32_t a, uint32_t u, uint32_t e) { (void)o; (void)m; (void)a; (void)u; (void)e; }
 void epoll_add_fd(int fd) { (void)fd; }
 void epoll_del_fd(int fd) { (void)fd; }
 void output_init_widgets(Output *o) { (void)o; }   /* codegen'd in the real build */
@@ -79,6 +79,7 @@ void gamma_on_failed(Output *o) { (void)o; }
 #include "wl_toplevel.c"
 #include "mango.c"
 #include "hyprland.c"
+#include "niri.c"
 
 /* Pre-armed object ids so mode 0 can address the id-routed handlers directly. */
 #define OID_EXTWS_MGR   0xE0000001u

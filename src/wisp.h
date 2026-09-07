@@ -211,7 +211,7 @@ struct Output {
      * and output hotplug while the sources publish only on change —
      * widget_setup_surface reseeds from here, else a rebuilt bar shows no tags
      * until the next workspace switch. */
-    uint32_t tag_mask, active_mask, urgent_mask;
+    uint32_t tag_mask, active_mask, urgent_mask, exists_mask;
     int      have_tags;
     char     title[MAX_TEXT];
     struct Widget *bar, *wall, *lock;
@@ -226,7 +226,7 @@ Output *output_by_gamma(uint32_t gamma_ctrl);
 Output *output_by_registry_name(uint32_t name);
 Output *output_by_name(const char *name);
 /* Stash what a tag/title source just published, for surfaces created later. */
-void    output_remember_tags(Output *o, uint32_t m, uint32_t a, uint32_t u);
+void    output_remember_tags(Output *o, uint32_t m, uint32_t a, uint32_t u, uint32_t e);
 void    output_remember_title(Output *o, const char *s);
 
 /* Tag/workspace seam (workspace.c) — tag state in, tag switches out. Two
@@ -258,6 +258,12 @@ extern int hyprland_fd;
 void    hyprland_init(void);
 void    hyprland_dispatch(void);
 void    hyprland_view_tag(Output *o, int idx);
+
+/* niri unix-socket IPC backend (niri.c); driven by workspace.c. */
+extern int niri_fd;
+void    niri_init(void);
+void    niri_dispatch(void);
+void    niri_view_tag(Output *o, int idx);
 void    output_destroy(Output *o);
 void    output_init_widgets(Output *o);   /* spawn bar/wall/hud + ipc + gamma */
 int     output_count(void);
@@ -361,6 +367,7 @@ struct Widget {
     uint32_t   tag_mask;             /* bit i set => tag i is occupied */
     uint32_t   active_mask;          /* bit i set => tag i is active   */
     uint32_t   urgent_mask;          /* bit i set => tag i is urgent   */
+    uint32_t   exists_mask;          /* bit i set => tag i exists (== tag_mask on backends with no separate notion) */
     int        have_tags;
     char       title[MAX_TEXT];
 
@@ -814,10 +821,10 @@ void input_flush_unfocus(void);                /* judge a pending kbd leave once
 int  widget_scroll(Widget *w, int dpx);
 /* Broadcast helpers: external `wispctl bar tags`/`bar title` callers don't
  * specify an output, so we apply to every connected bar. */
-void bar_set_tags(uint32_t mask, uint32_t active, uint32_t urgent);
+void bar_set_tags(uint32_t mask, uint32_t active, uint32_t urgent, uint32_t exists);
 void bar_set_title(const char *s);
 /* Per-output: mango ipc tag updates push directly via these. */
-void bar_set_tags_on(Output *o, uint32_t mask, uint32_t active, uint32_t urgent);
+void bar_set_tags_on(Output *o, uint32_t mask, uint32_t active, uint32_t urgent, uint32_t exists);
 void bar_set_title_on(Output *o, const char *s);
 
 /* ============================================================ */

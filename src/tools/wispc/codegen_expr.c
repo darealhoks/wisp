@@ -361,6 +361,9 @@ CE lower_member(CGCtx *c, Expr *e) {
         } else if (flen == 6 && memcmp(fld, "pinned", 6) == 0) {
             snprintf(r.text, sizeof r.text, "((TAG_PINNED >> (%s)) & 1u)", L->c_expr);
             r.type = T_BOOL;
+        } else if (flen == 6 && memcmp(fld, "exists", 6) == 0) {
+            snprintf(r.text, sizeof r.text, "(((%s)->exists_mask >> (%s)) & 1u)", wv, L->c_expr);
+            r.type = T_BOOL;
         } else if (flen == 8 && memcmp(fld, "occupied", 8) == 0) {
             snprintf(r.text, sizeof r.text, "(((%s)->tag_mask >> (%s)) & 1u)", wv, L->c_expr);
             r.type = T_BOOL;

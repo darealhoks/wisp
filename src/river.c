@@ -44,7 +44,7 @@ void river_init(void) {
 
 static void river_publish(RvOut *r) {
 #ifdef WISP_HAS_BAR
-    if (r->out) bar_set_tags_on(r->out, r->occ, r->act, r->urg);
+    if (r->out) bar_set_tags_on(r->out, r->occ, r->act, r->urg, r->occ);
 #else
     (void)r;
 #endif

@@ -70,11 +70,9 @@ static int name_to_tag(const char *s) {
  *
  * ponytail: ext-workspace has no client count, so "occupied" degrades to "the
  * workspace exists and isn't hidden" — the compositor's own answer to which
- * workspaces are worth showing. Verified against niri: it reports no `hidden`
- * and no occupancy, and materializes workspaces on demand, so the bar tracks
- * its list exactly (incl. niri's trailing empty workspace, as its own bars do).
- * No upgrade path in v1: ext-foreign-toplevel-list lists toplevels but never
- * says which workspace they're on. */
+ * workspaces are worth showing. No upgrade path in v1: ext-foreign-toplevel-list
+ * lists toplevels but never says which workspace they're on; compositors with
+ * real occupancy get their own backend (mango, hyprland, river, niri). */
 static void extws_publish(void) {
     for (int g = 0; g < MAX_GROUPS; g++) {
         if (!groups[g].id || !groups[g].out) continue;
@@ -100,7 +98,7 @@ static void extws_publish(void) {
             if (w->state & EXTWS_STATE_URGENT) urg |= bit;
         }
 #ifdef WISP_HAS_BAR
-        bar_set_tags_on(groups[g].out, occ, act, urg);
+        bar_set_tags_on(groups[g].out, occ, act, urg, occ);
 #else
         (void)occ; (void)act; (void)urg;
 #endif
@@ -208,6 +206,11 @@ void tags_init(void) {
     hyprland_init();
     tags_fd = hyprland_fd;
     if (hyprland_fd >= 0) { id_extws_mgr = 0; id_river_status_mgr = 0; return; }
+    /* niri before ext-workspace: niri advertises ext-workspace too, but only its
+     * own IPC reports which workspaces actually hold windows. */
+    niri_init();
+    tags_fd = niri_fd;
+    if (niri_fd >= 0) { id_extws_mgr = 0; id_river_status_mgr = 0; return; }
     /* river before ext-workspace: its view_tags gives true occupancy (which tags
      * hold views), which ext-workspace can't report. */
     if (id_river_status_mgr) { id_extws_mgr = 0; river_init(); return; }
@@ -215,7 +218,7 @@ void tags_init(void) {
         for (int i = 0; i < MAX_WS; i++) wss[i].coord = -1;
         return;   /* handles stream in on their own; no fd to poll */
     }
-    msg("wisp: no workspace backend (no ext_workspace_v1, no river, no mango/hyprland ipc)");
+    msg("wisp: no workspace backend (no ext_workspace_v1, no river, no mango/hyprland/niri ipc)");
 }
 
 void tags_dispatch(void) {
@@ -225,6 +228,9 @@ void tags_dispatch(void) {
     } else if (hyprland_fd >= 0) {
         hyprland_dispatch();
         tags_fd = hyprland_fd;   /* hyprland.c clears it to -1 on close */
+    } else if (niri_fd >= 0) {
+        niri_dispatch();
+        tags_fd = niri_fd;   /* niri.c clears it to -1 on close */
     }
     /* river + ext-workspace have no fd of their own (ride wl_display) */
 }
@@ -232,6 +238,7 @@ void tags_dispatch(void) {
 void tags_view(Output *o, int idx) {
     if (idx < 1 || idx > 32) return;
     if (hyprland_fd >= 0)          hyprland_view_tag(o, idx);
+    else if (niri_fd >= 0)         niri_view_tag(o, idx);
     else if (id_river_status_mgr)  river_view_tag(o, idx);
     else if (id_extws_mgr)         extws_view(o, idx);
     else                           mango_view_tag(o, idx);

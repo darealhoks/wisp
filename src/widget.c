@@ -149,11 +149,12 @@ Widget *widget_by_frac(uint32_t obj) {
 }
 #endif
 
-void output_remember_tags(Output *o, uint32_t m, uint32_t a, uint32_t u) {
+void output_remember_tags(Output *o, uint32_t m, uint32_t a, uint32_t u, uint32_t e) {
     if (!o) return;
     o->tag_mask = m;
     o->active_mask = a;
     o->urgent_mask = u;
+    o->exists_mask = e;
     o->have_tags = 1;
 }
 
@@ -168,6 +169,7 @@ void widget_setup_surface(Widget *w, uint32_t layer, const char *ns, Output *o) 
         w->tag_mask = o->tag_mask;
         w->active_mask = o->active_mask;
         w->urgent_mask = o->urgent_mask;
+        w->exists_mask = o->exists_mask;
         w->have_tags = 1;
     }
     if (o) {
