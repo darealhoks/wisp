@@ -104,14 +104,18 @@ fail to link.
 - Reading `net().rx_kbps` or `tx_kbps` turns an event-driven source into a polling one.
 - A `gamma {}` config is never idle-zero-CPU: it gets a dedicated 1 Hz timer if no polled status source exists.
 - Always pass `{tag.output}` to `wispctl tag`, or the click switches the focused monitor.
-- Under `ext-workspace-v1` there is no client count, so `tag.occupied` means "exists and is not hidden".
+- Under `ext-workspace-v1` there is no client count, so `tag.occupied` means "exists and is not hidden" — same value as `tag.exists`. Only niri IPC and mango's IPC separate the two.
+- On niri the workspace source is niri's own IPC, not `ext-workspace-v1`, even though niri advertises it. `$NIRI_SOCKET` unset drops back to ext-workspace and with it to occupancy that is always true.
 - `make` alone is not enough. `wispctl reload` re-execs the installed binary, so use `make install`.
+- A `.wisp` is a config only if it sits directly in the config dir or is `<dir>/<dir>.wisp`. Every other file beside it is an include fragment: not warmed, not offered to `wispctl rebuild`, not built standalone ([[install#what-counts-as-a-config]]).
 - The daemon must start before your tray apps do; wisp owns the StatusNotifier watcher name.
 - `dismiss_on_unfocus` is an error without `on_escape`: it reuses that command rather than taking one of its own.
+- `dismiss_on_unfocus` also fires on pointer leave, not only on keyboard unfocus — a press over an `on_demand` layer pins keyboard focus to it, so hovering away would otherwise never close the panel. Skipped while keyboard focus names another surface, sibling copies included.
 - A `spawned_by = greet` surface needs `$GREETD_SOCK`: outside greetd it is fatal, not a degraded mode. Preview one with `fakegreet 'mango -c configs/... -s build/greet/wisp'`.
 - `keyboard` defaults to `exclusive` on a greet surface and to `on_demand` everywhere else.
 - `keyboard = exclusive` holds the session's keyboard for as long as the surface is mapped, so a panel that declares it eats every keystroke until dismissed. Panels want the default `on_demand`.
 - Without `output = active` a panel opens on every monitor at once, and a monitor plugged in later never gets a copy of one that has it.
+- A left click on a notification popup invokes the notification's default action and closes it; right and middle close without invoking. The engine owns that; a history cell does whatever its own `on_click` says, so wire `wispctl notif invoke {note.id}` there and put dismiss on `on_right_click()`.
 - Dismiss a notification by `note.id`, never by a row index; the history ring can shift while the click is still travelling over the socket.
 - `notifications(image=N)` thumbnails only decode when the OSD surface also declares `image = N`; they ride that decode.
 - The notification history persists to `$XDG_STATE_HOME/wisp/notifications`, so entries outlive a restart; thumbnails do not — restored rows show `note.icon`. `notifications(persist=false)` turns it off.

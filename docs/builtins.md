@@ -21,11 +21,11 @@ Using the bare name reads the **primary** field: `text = bat_s;` is
 | `mem([every=])` | `pct` | `used_mb` | shared tick |
 | `temp([zone][, every=])` | `c` | none | shared tick, every 2nd |
 | `bat([name])` | `pct` | `charging` | uevent plus 60 s fallback |
-| `net([iface])` | `ssid` | `up` `signal` `rx_kbps` `tx_kbps` | rtnetlink; rates join the shared tick only if read |
+| `net([iface])` | `ssid` | `up` `signal` `wired` `rx_kbps` `tx_kbps` | rtnetlink; rates join the shared tick only if read |
 | `backlight([name])` | `pct` | none | uevent only, no timer |
 | `power_profile()` | `profile` | none | system bus |
 | `bluez()` | `device` | `powered` `connected` `battery` | system bus |
-| `disk([path])` | `pct` | - | own 30 s timer |
+| `disk([path][, every=])` | `pct` | - | own timer, 30 s default |
 | `vpn([probe])` | `state` | `ok` | rtnetlink, no poll |
 | `tags([labels=][, pinned=])` | `title` | `list` (for only), `occ` `act` `urg` (fail `--emit`) | workspace backend |
 | `gamma_warm()` | `value` | none | in process |
@@ -50,9 +50,9 @@ readable field, writable bare or as `clock.value`. A format
 containing seconds arms a 1 Hz timer, otherwise the timer is an absolute
 per-minute REALTIME wakeup.
 
-**`cpu`**, **`mem`**, **`temp`** ride one shared status tick. `every=` is only
-legal on these (and on `net` when its rate fields are read) and must be at least
-250 ms; anything below is an `--emit` error.
+**`cpu`**, **`mem`**, **`temp`** ride one shared status tick. `every=` is legal on
+these, on `net` when its rate fields are read, and on `disk`; it must be at
+least 250 ms, anything below is an `--emit` error.
 
 ```wisp
 source cpu_s = cpu(every="2s");
@@ -69,11 +69,15 @@ that off and reports the kernel's capacity unchanged.
 
 **`backlight([name])`** is pure uevent, zero timers.
 
-**`disk([path])`** polls on its own 30 s timer. `disk.pct` is its only field.
+**`disk([path][, every=])`** polls on its own timer, 30 s by default and at
+least 250 ms. `disk.pct` is its only field, rounded to nearest.
 
 ## Network
 
-**`net([iface])`** with an empty string means "whichever link is up". Reading
+**`net([iface])`** with an empty string means "whichever link is up". `up`,
+`ssid` and `signal` describe that link; `wired` is true when the lowest-metric
+default route sits on an interface with no `/sys/class/net/<if>/wireless`, so a
+box with ethernet and wifi both up reads as wired. Reading
 `rx_kbps` or `tx_kbps` sets `WISP_HAS_NET_RATES` and pulls the source into the
 shared poll tick; reading only `ssid`/`up`/`signal` keeps it event-driven.
 `signal` refreshes on a 10 s timer while the link is up.
@@ -93,6 +97,12 @@ widget wifi {
 **`tags([labels=][, pinned=])`** is the workspace source. Only `title` lowers as
 a scalar. `list` is iterable-only, `occ`/`act`/`urg` pass `--check` and fail
 `--emit`. Backend selection is in [[modules#workspaces-per-compositor]].
+
+Cell fields are `label` `index` `active` `urgent` `occupied` `exists` `pinned`
+`output`. `occupied` is "holds windows", `exists` is "the compositor lists this
+workspace at all"; on backends with no separate notion the two are the same
+mask. niri's own IPC and mango's report both, so an empty workspace is
+distinguishable there.
 
 ```wisp
 source tags = tags();
@@ -123,7 +133,7 @@ Thumbnails are never stored — a restored entry falls back to `note.icon`.
 |---|---|
 | `count` | number of entries held |
 | `open` | the panel flag `wispctl notif open\|close\|toggle` drives |
-| `history` | for-only ring; fields `summary` `body` `app` `icon` `image` `urgent` `id` |
+| `history` | for-only ring; fields `summary` `body` `app` `icon` `image` `urgent` `action` `id` |
 
 ```wisp
 source notif_s = notifications(history=64, image=22);
@@ -196,7 +206,7 @@ the global path.
 
 ## Gotchas
 
-- `every=` on `vpn`, `bat`, `disk` or `backlight` is an `--emit` error; those are not polled kinds.
+- `every=` on `vpn`, `bat` or `backlight` is an `--emit` error; those are not polled kinds.
 - `every=` below 250 ms is an `--emit` error.
 - More than 32 sources, or more than 16 `toplevel()` sources, is a hard codegen error.
 - `lines=` must be an integer literal in 1..256 and `tray(icon_size=)` an integer literal in 8..64.

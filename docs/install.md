@@ -111,7 +111,7 @@ gamma, and so on.
 |---|---|---|---|---|---|
 | mango | yes | own IPC + ext-ws | yes | yes | yes |
 | sway 1.12+ | yes | ext-ws | yes | yes | yes |
-| niri 25.08+ | yes | ext-ws | yes | yes | yes |
+| niri 25.08+ | yes | own IPC + ext-ws | yes | yes | yes |
 | hyprland | yes | own IPC | yes | yes | yes |
 | river | yes | river-status | yes | yes | yes |
 | labwc 0.8.3+ | yes | ext-ws | flaky on multi-output | yes | yes |

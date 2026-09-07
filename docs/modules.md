@@ -116,7 +116,10 @@ Panels are usually keyboard-dismissable and per-monitor:
   elsewhere, so clicking away closes the panel. It needs `on_escape`. A click
   landing on the panel itself does not dismiss it, and the verdict is taken at
   the end of the Wayland event batch, so focus moving between this surface's own
-  per-output copies is not a click-away either.
+  per-output copies is not a click-away either. The pointer leaving the panel
+  runs it too, unless keyboard focus already names another surface — a press
+  inside the panel can pin keyboard focus to it, so the pointer leave is the
+  only leave that ever arrives.
 - `output = active;` creates exactly one copy, on the monitor whose bar cell was
   just clicked (the same one-second click anchor menus use, and reading it
   spends it). Without it a panel opens on every monitor at once. A monitor
@@ -124,7 +127,14 @@ Panels are usually keyboard-dismissable and per-monitor:
 
 The notification centre is this panel plus a `notifications()` source: gate
 `visible` on `<src>.open`, loop `for note in <src>.history`, and drive it with
-`wispctl notif open|close|toggle|clear|dismiss <id>`.
+`wispctl notif open|close|toggle|clear|dismiss <id>|invoke <id>`. `invoke` fires
+the entry's default action (`note.action`, `""` when the app declared none) and
+dismisses in one go.
+
+The ring mirrors to `$XDG_STATE_HOME/wisp/notifications`, rewritten on every
+mutation and read back on first access, so the centre survives a restart or a
+reboot; `notifications(persist=false)` compiles the file out. Thumbnails are not
+stored — a restored entry falls back to the app's own desktop icon.
 
 ## HUD
 
@@ -227,7 +237,9 @@ surface lifecycle runs.
 osd|notify|volume|mic|backlight|mpris`, or by an `emit(osd, …)` handler. A post
 with a matching replace id overwrites its slot instead of stacking. Expiry
 drives the epoll timeout, so an empty stack costs nothing; when the ring empties
-the pool is released. Cover art resolves `image-data`, then `image-path`, then
+the pool is released. A left click on a slab emits `ActionInvoked` for the
+notification's default action, if it declared one, and closes it; right and
+middle close only. Per-action buttons do not exist. Cover art resolves `image-data`, then `image-path`, then
 `app_icon`, PNG only.
 
 Skeleton: [[templates#osd-stack]].
@@ -310,7 +322,9 @@ menu emoji { preset = emoji; }
 ```
 
 `item` needs `icon` as an integer literal codepoint plus `label` and `exec` as
-strings, all three required. `preset = emoji` is the only preset that exists.
+strings, all three required; both strings are escaped into the generated C, so a
+quote or a backslash in either is fine. `preset = emoji` is the only preset that
+exists.
 
 Per-menu overrides, where 0 means inherit: `width`, `row_h`, `max_visible`,
 `separator_h`, `anchor_gap`, `pad_y`. A bare `hover;` marker makes pointer motion move the
@@ -322,6 +336,12 @@ what flips on the menu feature), and surface-level `bg`, `border`
 and `radius`, because the body carries the look and `menu.c` owns the surface.
 Also all OSD props, `reveal_*`, `armpit_*`, `fillet_*`, `clip_top`, `cutout_*`,
 `visible`, `input`.
+
+The `wispctl apps` scan walks the XDG data dirs in precedence order and resolves
+each `.desktop` id first-match. A `NoDisplay=true` or `Hidden=true` file in a
+higher-priority directory therefore **masks** the system entry of the same file
+name instead of merely skipping itself, which is how `~/.local/share/applications`
+hides an app from the launcher.
 
 **Lifecycle.** Opened by `wispctl menu <name>` or `wispctl apps`, closed by
 Escape, a selection, focus loss, or `wispctl menu-cancel`.
@@ -763,9 +783,9 @@ widget or group scope.
 
 | head | cap | cell fields |
 |---|---|---|
-| `for t in <tags-src>.list` | 9 | `label` `index` `active` `urgent` `occupied` `pinned` `output` |
+| `for t in <tags-src>.list` | 9 | `label` `index` `active` `urgent` `occupied` `exists` `pinned` `output` |
 | `for n in <dbus_signal-src>.history` | 8 | `summary` `body` `url` `urgent` |
-| `for n in <notifications-src>.history` | `history=` (16) | `summary` `body` `app` `icon` `image` `urgent` `id` |
+| `for n in <notifications-src>.history` | `history=` (16) | `summary` `body` `app` `icon` `image` `urgent` `id` `action` |
 | `for i in <tray-src>.items` | 8 | `icon` `has_icon` `title` `id` `status` `index` `has_attention_icon` `menu_open` |
 | `for r in rows` | 32 | `label` `icon` `has_icon` `selected` `index` `enabled` `separator` `toggle` `checked` |
 
@@ -782,19 +802,21 @@ stable dismiss key — `exec("wispctl notif dismiss {note.id}")`.
 
 1. **mango IPC**, first because its IPC reports client counts, so an empty tag is distinguishable from an occupied one.
 2. **hyprland IPC**, before the rest for the same reason.
-3. **river-status**, whose `view_tags` gives true occupancy.
-4. **ext-workspace-v1**, the portable fallback: sway, niri, labwc, cosmic, kwin, hyprland, patched dwl.
-5. Nothing, in which case the tag row stays empty and a message is logged.
+3. **niri IPC**, one `$NIRI_SOCKET` connection in `EventStream` mode; niri reports each window with its workspace id, so occupancy is a real window count.
+4. **river-status**, whose `view_tags` gives true occupancy.
+5. **ext-workspace-v1**, the portable fallback: sway, labwc, cosmic, kwin, hyprland, patched dwl.
+6. Nothing, in which case the tag row stays empty and a message is logged.
 
 That is the closed set; Wayfire's wire format rules it out.
 
 What differs in practice:
 
-- **Occupancy.** mango, hyprland and river report real occupancy. ext-workspace has no client count, so `tag.occupied` degrades to "the workspace exists and is not hidden". On niri that means the bar mirrors niri's live list including its trailing empty workspace.
+- **Occupancy vs existence.** `tag.occupied` means "holds windows", `tag.exists` means "the compositor has this workspace at all". mango, hyprland, niri and river report real occupancy. ext-workspace has no client count, so there `tag.occupied` degrades to "the workspace exists and is not hidden" and `tag.exists` is the same bit. niri materialises workspaces on demand and always keeps a trailing empty one, which is why it gets its own source: under ext-workspace that trailing workspace reads as occupied.
+- **`tag.exists`** is a separate mask only where the backend has a separate notion: niri, and mango (whose IPC reports every tag while `occ` is only the ones holding clients). hyprland, river, ext-workspace and `wispctl bar tags` pass their occupancy through as existence.
 - **Numbering** under ext-workspace: the workspace name is parsed as 1..32 first, then the compositor's first coordinate plus 1, then arrival order. Anything outside 1..32 is dropped.
 - **Multi-monitor clicks.** Always pass `tag.output`: `exec("wispctl tag {tag.index} {tag.output}")`. Without it a click switches the keyboard-focused monitor instead of the clicked one. reverie passes it, anemoia does not.
 - **`tag.pinned`** reads a compile-time mask, not compositor state, and is identical on every backend.
-- **Poll cost.** mango and hyprland add a real fd to epoll; river and ext-workspace add none.
+- **Poll cost.** mango, hyprland and niri add a real fd to epoll; river and ext-workspace add none.
 
 ## Gotchas
 

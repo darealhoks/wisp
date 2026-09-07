@@ -61,7 +61,7 @@ surface bar {
 	for tag in tags.list {
 		cell.ws {
 			text = tag.label;
-			visible = tag.pinned || tag.occupied || tag.active || tag.urgent;
+			visible = tag.pinned || tag.exists || tag.active || tag.urgent;
 			on_click() = exec("wispctl tag {tag.index} {tag.output}");
 		}
 	}
@@ -78,9 +78,11 @@ surface bar {
 .ws:urgent { bg = #ffe0603f; }
 ```
 
-- `tags.list` unrolls to 9 cells at compile time. Cell fields: `label` `index` `active` `urgent` `occupied` `pinned` `output`.
+- `tags.list` unrolls to 9 cells at compile time. Cell fields: `label` `index` `active` `urgent` `occupied` `exists` `pinned` `output`.
 - Always interpolate `{tag.output}` into the click, or clicks retarget the focused monitor.
 - Only `tags.title` reads as a scalar; per-tag state comes from the `for` cell (`tag.occupied` etc.).
+- `tag.exists` is "the workspace is there at all", `tag.occupied` is "it holds windows". Only backends with a real window count separate them; the rest report the same value for both.
+- Under niri the source is niri's own IPC over `$NIRI_SOCKET`, tried ahead of `ext-workspace-v1` because ext-workspace carries no window count and niri makes workspaces on demand, which reads every one of them as occupied.
 - `tag.pinned` is a compile-time mask from `tags(pinned=…)`, not compositor state.
 
 ## HUD
@@ -308,9 +310,9 @@ surface login {
 	sessions   = "/etc/greetd/environments";
 
 	axis   = vertical;
-	width  = 420;
-	height = 198;
-	pad_x  = 14;
+	width  = 340;
+	height = 140;
+	pad_x  = 16;
 	pad_y  = 14;
 	font_size = 14;
 
@@ -321,42 +323,35 @@ surface login {
 	radius = 8;
 
 	group who {
-		height = 30;
+		height = 22;
 		pad    = 8;
-		pad_x  = 12;
 		gap    = 8;
-		cell { icon = 0xf007;         fg = #ffa5adbb; }
-		cell { text = greet.user;     fg = #ffdbe2ee; }
-		cell { text = greet.session;  fg = #ff64799c; }
+		cell { text = "login";    fg = #ff64799c; }
+		cell { text = greet.user; fg = #ffdbe2ee; }
 	}
 	group field {
-		height = 38;
-		pad    = 8;
-		pad_x  = 12;
-		gap    = 10;
-		bg     = #ff141a26;
-		radius = 6;
-		cell { icon = 0xf023; fg = greet.failed ? #ffe0603f : #ffa5adbb; }
-		cell { text = greet.prompt; fg = #ffa5adbb; }
+		height = 22;
+		pad    = 10;
+		gap    = 8;
+		cell { text = greet.prompt == "" ? "password:" : greet.prompt; fg = #ffa5adbb; }
 		cell { text = "{greet.dots}{greet.input}{greet.busy ? \"…\" : \"_\"}"; fg = #ffdbe2ee; }
 	}
-	for s in greet.sessions {
-		cell {
-			height = 30;
-			pad    = 4;
-			pad_x  = 8;
-			radius = 4;
-			icon   = s.name == "zsh" ? 0xf120 : 0xf144;
-			icon_gap = 8;
-			text   = s.name;
-			fg     = s.selected ? #ffdbe2ee : #ffa5adbb;
-			bg     = s.selected ? #ff141a26 : #00000000;
+	group sess {
+		height = 22;
+		pad    = 10;
+		gap    = 4;
+		cell { text = "session"; fg = #ff64799c; }
+		for s in greet.sessions {
+			cell {
+				text = s.selected ? "[{s.name}]" : " {s.name} ";
+				fg   = s.selected ? #ffdbe2ee : #ff64799c;
+			}
 		}
 	}
 	widget status {
 		height = 18;
-		pad_x  = 2;
-		text   = greet.caps ? "caps" : greet.error;
+		text   = greet.caps ? "caps lock is on"
+			: greet.failed ? "incorrect password" : greet.error;
 		fg     = greet.caps ? #ffe08d3f : (greet.failed ? #ffe0603f : #ff64799c);
 	}
 }
@@ -366,7 +361,9 @@ surface login {
 - Row advance is polkit's: `height` + that row's own `pad`, no surface `gap`, no `y_offset`.
 - Bindings: `greet.prompt`, `.dots`, `.input`, `.user`, `.session`, `.error`, `.failed`, `.busy`, `.caps` ([[state#greet-self-locals]]) plus `for s in greet.sessions`. The typed secret is not readable.
 - `keyboard` defaults to `exclusive` here, unlike every other surface.
-- The session rows are clickable without an `on_click`: a left click selects that session, exactly what Up/Down does.
+- The sessions are one horizontal band inside a group, so a line added to `/etc/greetd/environments` widens the strip instead of pushing the stack past `height`. Eight entries are kept.
+- The session cells are clickable without an `on_click`: a left click selects that session, exactly what Left/Right does. Tab steps forward; only text edits key-repeat.
+- `greet.error` on a wrong password is greetd's own `unable to create session: pam_authenticate: AUTH_ERR`. Gate a human string on `greet.failed`; PAM's own messages arrive as the prompt and leave `failed` at 0.
 - Only usable under greetd — `$GREETD_SOCK` unset is fatal, not a degraded mode. Wiring it up: [[greeter]].
 
 ## Notification centre
@@ -448,7 +445,8 @@ surface notifs {
 			fg = #ffdbe2ee;
 			body_fg = #ffa5adbb;
 			icon_fg = note.urgent ? #ffe0603f : #ff64799c;
-			on_click() = exec("wispctl notif dismiss {note.id}");
+			on_click()       = exec("wispctl notif invoke {note.id}");
+			on_right_click() = exec("wispctl notif dismiss {note.id}");
 		}
 	}
 }
@@ -471,6 +469,7 @@ surface notifs {
 - `on_escape` is a shell command, not a handler body, and declaring it gives the surface `keyboard = on_demand`. Declare `keyboard = exclusive` only for a modal; a panel would then eat every keystroke until it closes.
 - `dismiss_on_unfocus` reuses that same command when focus goes elsewhere, and errors at compile time without an `on_escape`.
 - `scroll = rows` needs `axis = vertical`; the leading `sticky` rows stay pinned above the scrolled stack, and Up/Down plus Enter work with no declaration.
+- `wispctl notif invoke` fires the notification's default action and closes it; `dismiss` only closes. Popups split the same way on their own — left invokes, right and middle close.
 - Dismiss on `note.id`, never on a row index: the ring can shift while the click is in flight.
 - `note.image` needs both `notifications(image=N)` and `image = N` on the `osd` surface; `note.icon` is the fallback glyph and `icon_box` should match the thumbnail size so both align.
 - `body_fg` colours the lines after the first. A `for` block holds exactly one cell, so it is the only way to dim a body against its summary.

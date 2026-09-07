@@ -64,7 +64,7 @@ The tree ships two example configs, `configs/reverie.wisp` and
 ## Requirements in one line
 
 A wlroots-shaped compositor with `wlr-layer-shell-unstable-v1`; workspaces come
-from mango IPC, hyprland IPC, river-status or `ext-workspace-v1`. See
+from mango IPC, niri IPC, hyprland IPC, river-status or `ext-workspace-v1`. See
 [[install#compositors]].
 
 ## Gotchas

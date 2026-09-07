@@ -10,17 +10,21 @@ installed system-wide.
 ## 1. Write the config
 
 `~/.config/wisp/greet.wisp` — take [[templates#greet]] verbatim and edit the
-colors and `user`. It is one surface, no other module, no bar.
+colors and `user`. It is one surface, no other module, no bar. Split it across
+several files by moving it to `~/.config/wisp/greet/greet.wisp` and `include`-ing
+the pieces from beside it.
 
 ```wisp
 surface login {
 	spawned_by = greet;
 	user       = "you";
 	sessions   = "/etc/greetd/environments";
-	width  = 420;
-	height = 198;
+	axis   = vertical;
+	width  = 340;
+	height = 140;
 	bg = #ff0e131c;
-	/* … rows: greet.user, greet.prompt, greet.dots, for s in greet.sessions … */
+	/* … rows: greet.user, greet.prompt + greet.dots, then a `sess` group
+	   holding `for s in greet.sessions` as one horizontal band … */
 }
 ```
 
@@ -98,4 +102,6 @@ on the config in a window. Rebuild with step 2's `make` line between edits.
 - `/etc/pam.d/greetd` must include `login` (or your distro's equivalent session stack) or logind/elogind never assigns the seat and the compositor cannot open the DRM device.
 - greetd's own `HOME` is `/var/lib/greetd`: `~`-relative paths in the config (a wallpaper, a font) resolve there. Set `HOME` in the wrapper script if you point at files in your own home, and keep `XDG_CACHE_HOME` writable by the `greetd` user.
 - `keyboard` defaults to `exclusive` on a greet surface only; do not override it.
-- Sessions are read once at startup, so a `/etc/greetd/environments` edit needs a greeter restart, not a rebuild.
+- Sessions are read once at startup, so a `/etc/greetd/environments` edit needs a greeter restart, not a rebuild. The strip widens with each entry rather than growing the surface.
+- Left/Right (and Tab) cycle the session, and a click on a session cell selects it with no `on_click` of its own.
+- A wrong password leaves `greet.error` holding greetd's raw `unable to create session: pam_authenticate: AUTH_ERR`. Show your own string on `greet.failed` instead; PAM's human messages arrive as the prompt with `failed` still 0.

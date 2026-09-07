@@ -88,7 +88,7 @@ breaking the rest.
 |---|---|---|---|---|---|---|
 | **mango** (home) | ✓ | ✓ IPC + ext-ws | ✓ | ✓ | ✓ | ✓ |
 | **sway** ≥1.12 | ✓ | ✓ ext-ws | ✓ | ✓ | ✓ | ✓ |
-| **niri** ≥25.08 | ✓ | ✓ ext-ws | ✓ | ✓ | ✓ | ✓ |
+| **niri** ≥25.08 | ✓ | ✓ IPC + ext-ws | ✓ | ✓ | ✓ | ✓ |
 | **labwc** ≥0.8.3 | ✓ | ✓ ext-ws | ⚠ flaky¹ | ✓ | ✓ | ✓ |
 | **hyprland** | ✓ | ✓ own IPC | ✓ | ✓ | ✓ | ✓ |
 | **wayfire** | ✓ | ✗ own IPC only² | ✓ | ✓ | ✓ | ✓ |
