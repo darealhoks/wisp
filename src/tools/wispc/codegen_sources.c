@@ -38,7 +38,14 @@ static const SrcDrv DRVS[] = {
                                {"connected", "bz_connected()", 0},
                                {"device",    "bz_device()",    1},
                                {"battery",   "bz_battery()",   0}} },
-    { "tags",DRV_TAGS,{{"title", "(($W)->title)", 1}} },
+    /* tags scalars read the same per-widget masks the `list` cells unroll over,
+     * so a single-widget workspace readout needs no loop. `active` is 1-based
+     * to match tag.index and wispctl tag; 0 means no active tag on this output. */
+    { "tags",DRV_TAGS,{{"title", "(($W)->title)", 1},
+                       {"active", "(($W)->active_mask ? __builtin_ctz(($W)->active_mask) + 1 : 0)", 0},
+                       {"count",  "__builtin_popcount(($W)->tag_mask)", 0},
+                       {"urgent", "__builtin_popcount(($W)->urgent_mask)", 0},
+                       {"total",  "__builtin_popcount(($W)->exists_mask)", 0}} },
     /* DRV_WISP: value is read straight from daemon state, so polling it via
      * `exec_line("wispctl …")` (a fork + socket round-trip back into ourselves
      * every tick) is pure waste — these are free and update instantly. */

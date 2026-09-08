@@ -18,7 +18,7 @@ static const SrcDef SOURCES[] = {
     {"bluez",                "device", "powered connected device battery", F_BLUEZ },
     {"disk",                 "pct",    "pct", F_DISK },
     {"vpn",                  "state",  "state ok", F_VPN },
-    {"tags",             "title",  "title list", F_TAGS },
+    {"tags",             "title",  "title list active count urgent total", F_TAGS },
     {"gamma_warm",           "value",  "value", F_NONE },
     {"dnd",                  "value",  "value", F_NONE },
     {"ui_hidden",            "value",  "value", F_NONE },
