@@ -834,7 +834,19 @@ int emit_generated_surface(FILE *o, Decl *sur, CGCtx *ctx, const char *nm) {
                 break;
             default: break;
             }
-            fprintf(o, "      if (__bh0 > 0) fill_rect_rounded(sl->px, w->w, w->h, __cox, __by0, __cws, __bh0, __rtl, __rtr, __rbr, __rbl, 0x%08xu);\n", bg);
+            /* Under a border that owns the whole outer edge, the body must
+             * drop its AA band: both passes cover the same ring otherwise, and
+             * the half-covered body pixel tints the border's outer edge toward
+             * the body color. Needs the border opaque, all four sides on, and
+             * the same radii — the fillet clamp above can shrink __rtl.. below
+             * what the border draws, which would leave the gap uncovered. */
+            int body_under = (sur_bord >> 24) == 0xff && sur_bord_w > 0 && !cg_has_fillet
+                           && eval_int(surface_prop(sur, "border_top"),    1)
+                           && eval_int(surface_prop(sur, "border_bottom"), 1)
+                           && eval_int(surface_prop(sur, "border_left"),   1)
+                           && eval_int(surface_prop(sur, "border_right"),  1);
+            fprintf(o, "      if (__bh0 > 0) fill_rect_rounded%s(sl->px, w->w, w->h, __cox, __by0, __cws, __bh0, __rtl, __rtr, __rbr, __rbl, 0x%08xu);\n",
+                    body_under ? "_under" : "", bg);
             fprintf(o, "      if (__clip_top > 0) { int __ct = __clip_top > (int)w->h ? (int)w->h : __clip_top; memset(sl->px, 0, (size_t)w->w * (size_t)__ct * 4); } }\n");
         } else {
             Expr *bg_bot_e = surface_prop(sur, "bg_bottom");

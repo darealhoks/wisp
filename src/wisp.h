@@ -606,6 +606,11 @@ void fill_rect_over(uint32_t *px, int sw, int sh, int x, int y, int w, int h, ui
 void fill_rect_rounded(uint32_t *px, int sw, int sh,
                        int x, int y, int w, int h,
                        int r_tl, int r_tr, int r_br, int r_bl, uint32_t c);
+/* fill_rect_rounded without the corner AA band, for a body drawn under an
+ * opaque border of the same outer shape (see render.c). */
+void fill_rect_rounded_under(uint32_t *px, int sw, int sh,
+                             int x, int y, int w, int h,
+                             int r_tl, int r_tr, int r_br, int r_bl, uint32_t c);
 void fill_rect_rounded_split(uint32_t *px, int sw, int sh,
                              int x, int y, int w, int h,
                              int r_tl, int r_tr, int r_br, int r_bl,

@@ -927,8 +927,12 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
                     indent, shx - shspread, shy - shspread, 2 * shspread, 2 * shspread,
                     maxr + shspread, shblur > 0 ? shblur : 8, shc);
         if (any_round) {
-            fprintf(o, "%s    if (bg  & 0xff000000u) fill_rect_rounded(sl->px, w->w, w->h, __rx, pos, __rw, __adv, %d, %d, %d, %d, bg);\n",
-                    indent, r_tl, r_tr, r_br, r_bl);
+        /* An opaque border owns the outer edge, so the body drops its AA band
+         * there: otherwise both passes cover that ring and the half-covered
+         * body pixel tints the border's outer edge toward the body color. */
+            const char *bgfn = vbw > 0 ? "(((bdr) >> 24) == 0xffu ? fill_rect_rounded_under : fill_rect_rounded)" : "fill_rect_rounded";
+            fprintf(o, "%s    if (bg  & 0xff000000u) %s(sl->px, w->w, w->h, __rx, pos, __rw, __adv, %d, %d, %d, %d, bg);\n",
+                    indent, bgfn, r_tl, r_tr, r_br, r_bl);
             fprintf(o, "%s    if (bdr & 0xff000000u) fill_rect_rounded_border(sl->px, w->w, w->h, __rx, pos, __rw, __adv, %d, %d, %d, %d, %d, 1, 1, 1, 1, 0, bdr);\n",
                     indent, r_tl, r_tr, r_br, r_bl, vbw);
         } else {
@@ -1048,12 +1052,6 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
             fprintf(o, "%s    fill_rounded_shadow(sl->px, w->w, w->h, __bx + %d, __by + %d, __bw + %d, __bh + %d, %d, %d, 0x%08xu);\n",
                     indent, shx - shspread, shy - shspread, 2 * shspread, 2 * shspread,
                     maxr + shspread, shblur > 0 ? shblur : 8, shc);
-        if (any_round) {
-            fprintf(o, "%s    if (bg  & 0xff000000u) fill_rect_rounded(sl->px, w->w, w->h, __bx, __by, __bw, __bh, %d, %d, %d, %d, bg);\n",
-                    indent, r_tl, r_tr, r_br, r_bl);
-        } else {
-            fprintf(o, "%s    if (bg  & 0xff000000u) fill_rect(sl->px, w->w, w->h, __bx, __by, __bw, __bh, bg);\n", indent);
-        }
         int bw_px = eval_int(widget_prop(wd, "border_width"), 1);
         /* Per-side suppression (default all on): `border_bottom` alone gives a
          * typographic underline. side order matches fill_rect_rounded_border. */
@@ -1061,6 +1059,17 @@ void emit_item_draw(FILE *o, BarItem *it, CGCtx *ctx, int vertical, const char *
         int bs_r = eval_int(widget_prop(wd, "border_right"),  1);
         int bs_b = eval_int(widget_prop(wd, "border_bottom"), 1);
         int bs_l = eval_int(widget_prop(wd, "border_left"),   1);
+        if (any_round) {
+        /* An opaque border owns the outer edge, so the body drops its AA band
+         * there: otherwise both passes cover that ring and the half-covered
+         * body pixel tints the border's outer edge toward the body color. */
+            const char *bgfn = (bw_px > 0 && bs_t && bs_r && bs_b && bs_l)
+                             ? "(((bdr) >> 24) == 0xffu ? fill_rect_rounded_under : fill_rect_rounded)" : "fill_rect_rounded";
+            fprintf(o, "%s    if (bg  & 0xff000000u) %s(sl->px, w->w, w->h, __bx, __by, __bw, __bh, %d, %d, %d, %d, bg);\n",
+                    indent, bgfn, r_tl, r_tr, r_br, r_bl);
+        } else {
+            fprintf(o, "%s    if (bg  & 0xff000000u) fill_rect(sl->px, w->w, w->h, __bx, __by, __bw, __bh, bg);\n", indent);
+        }
         fprintf(o, "%s    if (bdr & 0xff000000u) {\n", indent);
         if (any_round) {
             fprintf(o, "%s        fill_rect_rounded_border(sl->px, w->w, w->h, __bx, __by, __bw, __bh, %d, %d, %d, %d, %d, %d, %d, %d, %d, 0, bdr);\n",
@@ -1484,7 +1493,8 @@ static void emit_group_member(FILE *o, BarItem *it, const char *nm, int gap, int
      * the group band. Otherwise a 20px icon cell got a full-band-tall pill. */
     fprintf(o, "            int __mh = st[%s].ch > 0 ? st[%s].ch : __gh, __my = __gy + (__gh - __mh)/2;\n", sb, sb);
     if (any_round)
-        fprintf(o, "            if (bg  & 0xff000000u) fill_rect_rounded(sl->px,w->w,w->h, __gx,__my,__ma,__mh, %d,%d,%d,%d, bg);\n", mr, mr, mr, mr);
+        fprintf(o, "            if (bg  & 0xff000000u) %s(sl->px,w->w,w->h, __gx,__my,__ma,__mh, %d,%d,%d,%d, bg);\n",
+                mbw > 0 ? "(((bdr) >> 24) == 0xffu ? fill_rect_rounded_under : fill_rect_rounded)" : "fill_rect_rounded", mr, mr, mr, mr);
     else
         fprintf(o, "            if (bg  & 0xff000000u) fill_rect(sl->px,w->w,w->h, __gx,__my,__ma,__mh, bg);\n");
     /* Border is radius-independent — the SDF handles r=0 — so a member with
@@ -1593,7 +1603,9 @@ int emit_group_draw(FILE *o, BarItem *items, int first, int nitems,
                 gg, shx - shspread, shy - shspread, 2 * shspread, 2 * shspread,
                 r + shspread, shblur > 0 ? shblur : 8, shc);
     if (r > 0) {
-        if (cbg  & 0xff000000u) fprintf(o, "        %sfill_rect_rounded(sl->px,w->w,w->h, __bx,__gy,__bw,__gh, %d,%d,%d,%d, 0x%08xu);\n", gg, r, r, r, r, cbg);
+        if (cbg  & 0xff000000u) fprintf(o, "        %s%s(sl->px,w->w,w->h, __bx,__gy,__bw,__gh, %d,%d,%d,%d, 0x%08xu);\n", gg,
+                                        (cbor >> 24) == 0xff && bw > 0 ? "fill_rect_rounded_under" : "fill_rect_rounded",
+                                        r, r, r, r, cbg);
         if (cbor & 0xff000000u) fprintf(o, "        %sfill_rect_rounded_border(sl->px,w->w,w->h, __bx,__gy,__bw,__gh, %d,%d,%d,%d, %d,1,1,1,1,0, 0x%08xu);\n", gg, r, r, r, r, bw, cbor);
     } else {
         if (cbg & 0xff000000u) fprintf(o, "        %sfill_rect(sl->px,w->w,w->h, __bx,__gy,__bw,__gh, 0x%08xu);\n", gg, cbg);

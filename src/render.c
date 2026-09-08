@@ -335,10 +335,12 @@ void blit_argb(uint32_t *px, int sw, int sh, int x, int y,
     }
 }
 
-void fill_rect_rounded(uint32_t *px, int sw, int sh,
-                       int x, int y, int w, int h,
-                       int r_tl, int r_tr, int r_br, int r_bl,
-                       uint32_t c) {
+/* `hard`: drop the partially-covered corner pixels instead of anti-aliasing
+ * them (see fill_rect_rounded_under). */
+static void fill_rect_rounded_c(uint32_t *px, int sw, int sh,
+                                int x, int y, int w, int h,
+                                int r_tl, int r_tr, int r_br, int r_bl,
+                                uint32_t c, int hard) {
     if (w <= 0 || h <= 0) return;
     sw = SC(sw); sh = SC(sh);
     x = SC(x); y = SC(y); w = SC(w); h = SC(h);
@@ -403,6 +405,7 @@ void fill_rect_rounded(uint32_t *px, int sw, int sh,
                  * (cov→1 there, matching the flat region just outside). */
                 double dx = (i + 0.5) - ccx, dy = (j + 0.5) - ccy;
                 double cov = cov_from_sd(sqrt(dx * dx + dy * dy) - r);
+                if (hard && cov < 1.0) continue;
                 if (cov <= 0.0) continue;
                 a = (uint8_t)(ca * cov + 0.5);
             }
@@ -427,6 +430,25 @@ void fill_rect_rounded(uint32_t *px, int sw, int sh,
             }
         }
     }
+}
+
+void fill_rect_rounded(uint32_t *px, int sw, int sh,
+                       int x, int y, int w, int h,
+                       int r_tl, int r_tr, int r_br, int r_bl, uint32_t c) {
+    fill_rect_rounded_c(px, sw, sh, x, y, w, h, r_tl, r_tr, r_br, r_bl, c, 0);
+}
+
+/* The same fill, minus the corner AA band: every partially covered pixel is
+ * left alone. For a body drawn UNDER an opaque border of the same outer shape —
+ * the border's own AA band then blends against what is behind the surface
+ * instead of over a half-covered body pixel, which otherwise tints the outer
+ * edge toward the body color by cov*(1-cov)*(body-behind). The dropped band is
+ * at most 1px inside the outer boundary, so a border of >=1 physical px covers
+ * it; only call it when such a border follows on the same rect. */
+void fill_rect_rounded_under(uint32_t *px, int sw, int sh,
+                             int x, int y, int w, int h,
+                             int r_tl, int r_tr, int r_br, int r_bl, uint32_t c) {
+    fill_rect_rounded_c(px, sw, sh, x, y, w, h, r_tl, r_tr, r_br, r_bl, c, 1);
 }
 
 /* Signed distance from (px,py) to the rounded rect (x,y,w,h, per-corner radii),
