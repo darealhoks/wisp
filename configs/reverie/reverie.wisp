@@ -90,14 +90,21 @@ surface bar {
 
 	group wsgrp {
 		align = left;
-		for tag in tags.list {
-			cell.ws {
-				bg         = tag.active ? TEXT : EMPTY;
-				width      = tag.active ? 24 : tag.occupied ? 10 : 6;
-				height     = tag.occupied || tag.active ? 10 : 6;
-				visible    = tag.pinned || tag.exists || tag.active || tag.urgent;
-				on_click() = exec("wispctl tag {tag.index} {tag.output}");
-			}
+		widget ws {
+			icon = 0xf108;
+			text = "{tags.active}";
+			fg   = tags.urgent > 0 ? RED : TEXT;
+			icon_fg = tags.urgent > 0 ? RED : TBLUE;
+			// niri pads the strip with an empty workspace at each end — total is the strip length, so
+			// active/total reads as position, and the wrap is over the same number shown
+			on_click()       = exec("wispctl tag $(( {tags.active} % {tags.total} + 1 ))");
+			on_right_click() = exec("wispctl tag $(( ({tags.active} + {tags.total} - 2) % {tags.total} + 1 ))");
+		}
+		widget sep_ws.sep {
+			text = "/";
+		}
+		widget wscount.dim {
+			text = "{tags.total}";
 		}
 	}
 
@@ -235,16 +242,9 @@ widget {
 	fg = BORD;
 }
 
-.ws {
-	radius = 5;
-	pad = 5;
-	transition_size = 160ms;
-	enter_anim = 160ms;
-	exit_anim = 160ms;
-}
+// group gap only separates the digits from "/" — icon_gap keeps the glyph tight to its number
 #wsgrp {
-	pad_x = 10;
-	gap = 6;
+	gap = 7;
 }
 
 .tray {
