@@ -58,9 +58,11 @@ surface bar {
 }
 ```
 
-The tree ships three example configs, each a directory holding its own
-palette: `configs/reverie/` and `configs/anemoia/` are full desktops and both
-are worth reading; `configs/greet/` is the login screen ([[greeter]]).
+The tree ships four example configs, each a directory holding its own
+palette: `configs/dwm/` is dwm's default bar in one file, with every other
+subsystem below it commented out — start there; `configs/reverie/` and
+`configs/anemoia/` are full desktops and both are worth reading;
+`configs/greet/` is the login screen ([[greeter]]).
 
 ## Requirements in one line
 

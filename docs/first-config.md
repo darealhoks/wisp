@@ -124,6 +124,18 @@ out, and string interpolation `"{bat_s.pct}%"`.
 Always pass `{tag.output}` to `wispctl tag`. Without it a click switches the
 workspace on the keyboard-focused monitor instead of the one you clicked.
 
+## Or start from dwm's
+
+`configs/dwm/dwm.wisp` is dwm's default bar — tags, layout symbol, window
+title, status text — in one file with no palette fragment, and below it every
+other subsystem commented out to uncomment as you want it.
+
+```sh
+wispctl rebuild dwm
+```
+
+Copy it to `~/.config/wisp/mine.wisp` and edit from there.
+
 ## Where to go next
 
 - Every property of every surface kind: [[modules]].

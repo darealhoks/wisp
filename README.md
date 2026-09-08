@@ -55,6 +55,7 @@ visibility conditions are all just fields - see the
 ```sh
 curl -fsSL https://raw.githubusercontent.com/darealhoks/wisp/main/install.sh | sh
 wispctl rebuild reverie  # compile an example config and install it
+                         # (or `dwm`: dwm's bar, one file, everything else commented out)
 wisp
 ```
 
