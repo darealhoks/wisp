@@ -70,7 +70,7 @@ endif
 
 # Still no selector (fresh build/, no tag) → canonical default. reverie is what
 # syml.sh installs, so a tagless tree rebuilds the preset that's actually running.
-WISP ?= configs/reverie.wisp
+WISP ?= configs/reverie/reverie.wisp
 # Absolute so the tag can't thrash between rel/abs spellings of one config.
 override WISP := $(abspath $(WISP))
 # ponytail: build dirs keyed by basename — two same-named configs from
@@ -352,12 +352,18 @@ $(ROOT)/bake: $(TOOLDIR)/bake.c
 # non-selected config warns instead of blocking the install/switch. Each
 # sub-make lands in its own build/<name>/, so with fresh caches this is a
 # mtime sweep + copy — `wispctl rebuild other` then switches without compiling.
+# Repo configs, by the same rule the awk below applies to CONFDIR: a .wisp at
+# the root, or <dir>/<dir>.wisp. Everything else beside one is an include
+# fragment, reachable only through `include`.
+REPO_WISP := $(wildcard configs/*.wisp) \
+    $(foreach d,$(wildcard configs/*/),$(wildcard $(d)$(notdir $(d:/=)).wisp))
+
 CONFDIR := $(or $(XDG_CONFIG_HOME),$(HOME)/.config)/wisp
 # User configs are found recursively, matching `wispctl rebuild`'s lookup:
 # dot-dirs pruned, symlinked dirs not followed (find's default), depth 8. The
 # awk applies the config rule — a .wisp at the root, or <dir>/<dir>.wisp — so a
 # config split across several files doesn't get its fragments built standalone.
-ALL_WISP := $(sort $(abspath $(wildcard configs/*.wisp) \
+ALL_WISP := $(sort $(abspath $(REPO_WISP) \
     $(shell find $(CONFDIR) -maxdepth 8 -name '.*' -prune -o -name '*.wisp' -type f -print 2>/dev/null \
         | awk -v c=$(CONFDIR)/ 'index($$0,c)==1 { rel=substr($$0,length(c)+1); \
             n=split(rel,a,"/"); f=a[n]; sub(/\.wisp$$/,"",f); \
@@ -398,10 +404,11 @@ install-share:
 	rm -rf $(SHAREDIR)
 	install -d $(SHAREDIR)/configs $(SHAREDIR)/docs
 	cp -r Makefile src $(SHAREDIR)/
-	# Whole tree, not a *.wisp glob: a config's `include` targets live in
-	# subdirs (configs/themes/) and a flat copy would install a config whose
-	# include is missing — broken on first `wispctl rebuild`.
-	cp -r configs/. $(SHAREDIR)/configs/
+	# Whole tree, not a *.wisp glob: a config's `include` targets sit beside it
+	# and a flat copy would install a config whose include is missing — broken
+	# on first `wispctl rebuild`. -L: a theme.wisp symlinked at a palette
+	# outside the tree must install as content, not as a dangling link.
+	cp -rL configs/. $(SHAREDIR)/configs/
 	install -m 644 docs/*.md $(SHAREDIR)/docs/
 
 uninstall:
@@ -420,10 +427,9 @@ distclean: clean
 
 .PHONY: warm-cache
 
-# Configs present under configs/. Glob so deleting a .wisp file doesn't break
-# `make check`; add new ones by dropping them in configs/ — no Makefile edit.
-# Root glob only: configs/lib/ holds include fragments, which are not configs.
-CONFIGS := $(patsubst configs/%.wisp,%,$(wildcard configs/*.wisp))
+# Glob so deleting a config doesn't break `make check`; add new ones by dropping
+# them in configs/ by the REPO_WISP rule — no Makefile edit.
+CONFIGS := $(REPO_WISP)
 
 # Build matrix: every config present under configs/. Per-config build dirs make
 # this incremental and side-effect-free: nothing to clean, and WISP_NOSELECT=1
@@ -434,16 +440,17 @@ check:
 	@set -e; \
 	fail=0; \
 	echo "==> Build matrix"; \
-	for e in $(CONFIGS); do \
-	    if out=$$($(MAKE) -s WISP=configs/$$e.wisp WISP_NOSELECT=1 2>&1); then \
+	for w in $(CONFIGS); do \
+	    e=$$(basename $$w .wisp); \
+	    if out=$$($(MAKE) -s WISP=$$w WISP_NOSELECT=1 2>&1); then \
 	        sz=$$(stat -c%s $(ROOT)/$$e/wisp); \
-	        printf "  %-26s OK  %d B\n" "WISP=$$e.wisp" "$$sz"; \
+	        printf "  %-26s OK  %d B\n" "WISP=$$w" "$$sz"; \
 	    else \
-	        printf "  %-26s FAIL\n%s\n" "WISP=$$e.wisp" "$$out"; \
+	        printf "  %-26s FAIL\n%s\n" "WISP=$$w" "$$out"; \
 	        fail=1; \
 	    fi; \
 	done; \
-	if [ -f configs/minimal.wisp ]; then \
+	if [ -f $(ROOT)/minimal/wisp ]; then \
 	    echo "==> nm assertions (WISP=minimal.wisp must not link optional modules)"; \
 	    for sym in dbus_ osd_ menu_ hud_ lock_ gamma_ wall_; do \
 	        if nm $(ROOT)/minimal/wisp 2>/dev/null | grep -q " T $$sym\| t $$sym"; then \
@@ -453,7 +460,7 @@ check:
 	        fi; \
 	    done; \
 	else \
-	    echo "==> nm assertions skipped (configs/minimal.wisp absent)"; \
+	    echo "==> nm assertions skipped (minimal config absent)"; \
 	fi; \
 	if $(MAKE) -s check-diag; then :; else fail=1; fi; \
 	if $(MAKE) -s check-rebuild; then :; else fail=1; fi; \

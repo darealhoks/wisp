@@ -20,7 +20,7 @@ to the **directory of the file doing the including** (absolute paths work too),
 and it is resolved fresh on every compile.
 
 ```
-include "lib/theme.wisp";
+include "theme.wisp";
 include "widgets/net.wisp";
 ```
 
@@ -40,9 +40,9 @@ include "widgets/net.wisp";
   duplicate-declaration error.
 - Includes may nest 8 deep.
 
-Two things this is for. Theme switching: symlink `lib/theme.wisp` at one of
-several palette files (colors plus a `WALL_PATH` const),
-`include "lib/theme.wisp";` from your main config, and `wispctl rebuild` swaps
+Two things this is for. Theme switching: symlink `theme.wisp` at one of
+several palette files (colors plus a wallpaper-path const),
+`include "theme.wisp";` from your main config, and `wispctl rebuild` swaps
 the look. Because nothing is cached across builds, re-pointing the symlink is
 enough.
 

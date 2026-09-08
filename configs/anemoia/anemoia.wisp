@@ -1,27 +1,26 @@
+//! font = ~/.local/share/fonts/MapleMono-NF-Bold.ttf
+//! font_fallback = /usr/share/fonts/noto-emoji/NotoColorEmoji.ttf
+
+include "theme.wisp";
+
 // bar
 
 source time   = clock("%H:%M");
 source date_s = clock("%b %d");
 source tags   = tags();
-source cpu_s  = cpu();
-source mem_s  = mem();
+source cpu_s  = cpu(every="2s");
+source mem_s  = mem(every="2s");
 source bat_s  = bat("BAT0");
-source temp_s = temp();
-source wifi_s = net("wlan0");
-source disk_s = disk("/");
-
-const FG    = #ffffffff;
-const DIM   = #ff7a808b;
-const URG   = #ffee3300;
-const ACT   = #ff2a2f3a;
-const WARN  = #ffff5050;
+source temp_s = temp(every="2s");
+source wifi_s = net("");
+source disk_s = disk("/", every="600s");
 
 surface bar {
 	layer = top;
 	anchor = top | left | right;
 	height = 28;
 	exclusive_zone = 28;
-	bg = #ff0f1219;
+	bg = CRUST;
 
 	armpit_inner = 10;
 
@@ -48,8 +47,8 @@ surface bar {
 		cell {
 			align   = left;
 			text    = tag.label;
-			visible = tag.pinned || tag.occupied || tag.active || tag.urgent;
-			on_click() = exec("wispctl tag {tag.index}");
+			visible = tag.pinned || tag.exists || tag.active || tag.urgent;
+			on_click() = exec("wispctl tag {tag.index} {tag.output}");
 		}
 	}
 
@@ -66,12 +65,13 @@ surface bar {
 	}
 	widget wifi   {
 		align = right;
-		icon = wifi_s.signal >= 3 ? 0xf0928
+		icon = wifi_s.wired        ? 0xf0200
+			: wifi_s.signal >= 3 ? 0xf0928
 			: wifi_s.signal >= 2 ? 0xf0925
 			: wifi_s.signal >= 1 ? 0xf0922
 			:                      0xf091f;
 		pad = 16;
-		visible = wifi_s.signal >= 0;
+		visible = wifi_s.wired || wifi_s.signal >= 0;
 	}
 	widget bat    {
 		align = right;
@@ -82,7 +82,7 @@ surface bar {
 			: bat_s.pct >= 10 ? 0xf243
 			:                   0xf244;
 		text = "{bat_s.pct}%";
-		fg   = bat_s.pct < 15 ? WARN : (bat_s.charging ? #ff7fbf9f : FG);
+		fg   = bat_s.pct < 15 ? WARN : (bat_s.charging ? CHARGE : FG);
 	}
 	widget sep.dim {
 		align = right;
@@ -122,7 +122,7 @@ widget {
 
 #bar cell          {
 	fg = DIM;
-	bg = #00000000;
+	bg = CLEAR;
 	width = 28;
 	height = 28;
 	pad = 4;
@@ -143,9 +143,9 @@ surface screen_corners {
 	anchor = bottom | left | right;
 	height = 10;
 	exclusive_zone = 0;
-	bg = #00000000;
+	bg = CLEAR;
 	armpit_outer = 10;
-	armpit_color = #ff0f1219; // must match surface bar bg
+	armpit_color = CRUST;
 	input = none;
 }
 
@@ -153,12 +153,6 @@ surface screen_corners {
 
 source gamma_warm = gamma_warm();
 source dnd_on     = dnd();
-
-const SURFACE = #26ffffff;
-const PEACH   = #ffe6b89c;
-const SAGE    = #ff8fb3a3;
-const TEAL    = #ff7fb0bb;
-const DARK    = #ff1a2530;
 
 // width 244 = 4×48 buttons + 3×12 gaps + 2×8 pad
 // buttons straddle the bar edge (.btn y_offset -14), clip_top 28 hides the overhang
@@ -172,7 +166,7 @@ surface hud {
 	reveal_on_hover = 28;
 	reveal_anim_ms  = 200;
 	reveal_easing   = ease_out;
-	bg = #ff0f1219;
+	bg = CRUST;
 	border_width    = 0;
 	radius_bl       = 14;
 	radius_br       = 14;
@@ -244,14 +238,14 @@ surface osd {
 	timeout_low = 3000;
 	timeout_normal = 5000;
 	timeout = 1200;
-	bg = #ff0f1219;
+	bg = CRUST;
 	fg = FG;
-	border = #00000000;
-	prog_fg = #ff84a7b3;
-	prog_track = #ff1c2733;
+	border = CLEAR;
+	prog_fg = ACCENT;
+	prog_track = SUNK;
 	radius = 10;
 	fillet_r = 14;
-	separator = #ff1c2733;
+	separator = SUNK;
 	separator_frac = 80;
 	dismiss_on_click = true;
 	focus_follow = true;
@@ -285,8 +279,8 @@ surface osd {
 		visible = $progress >= 0;
 		value = $progress;
 		value_max = 100;
-		track_bg = #ff1c2733;
-		track_fg = #ff84a7b3;
+		track_bg = SUNK;
+		track_fg = ACCENT;
 		track_radius = 5;
 	}
 }
@@ -297,10 +291,10 @@ surface osd {
 }
 
 #osd widget:warn {
-	fg = #ffffaa20;
+	fg = AMBER;
 }
 #prog:warn {
-	track_fg = #ffffaa20;
+	track_fg = AMBER;
 }
 #prog:mute {
 	track_fg = WARN;
@@ -331,66 +325,66 @@ surface pill {
 		height = 10;
 		value = $progress;
 		value_max = 100;
-		track_bg = #ff1c2733;
-		track_fg = #ff84a7b3;
+		track_bg = SUNK;
+		track_fg = ACCENT;
 		track_radius = 5;
 	}
 }
 
 #pill {
-	bg = #ff0f1219;
+	bg = CRUST;
 }
 #pill widget {
 	fg = FG;
 }
 #pill widget:warn {
-	fg = #ffffaa20;
+	fg = AMBER;
 }
 
 // subsystems
 
 lock {
-	bg       = #ff000000; // only shows when the wallpaper is missing
-	ring     = #ff5f8a93;
-	ring_bad = #ffd06878;
-	fg       = #ffa8d5cc;
-	dim      = #59000000;
-	caps     = #ffe0c060;
+	bg       = BLACK; // only shows when the wallpaper is missing
+	ring     = LOCKRING;
+	ring_bad = LOCKBAD;
+	fg       = LOCKFG;
+	dim      = SCRIM;
+	caps     = LOCKCAPS;
 	prompt   = "Password";
 	pam      = "system-auth";
 	font_size = 16;
 
 	// x/y are insets from the anchored edges, not absolute coords
 	text clock { anchor = top; y = 120; text = "{time}"; format = "%H:%M";
-	             fg = #ffa8d5cc; font_size = 64; }
+	             fg = LOCKFG; font_size = 64; }
 	text date  { anchor = top; y = 210; text = "{time}"; format = "%A %e %B";
-	             fg = #ff7a808b; font_size = 16; }
+	             fg = DIM; font_size = 16; }
 
 	// show holds one condition only, hence the split caps/non-caps ring pair
 	ring dial      { anchor = bottom | right; x = 160; y = 48; radius = 44;
-	                 thickness = 10; bg = #cc101418; border = #ff101418;
-	                 highlight = #ffa8d5cc; highlight_bs = #ff7a808b;
-	                 separator = #ff101418; show = !caps; }
+	                 thickness = 10; bg = LOCKBG; border = LOCKED;
+	                 highlight = LOCKFG; highlight_bs = DIM;
+	                 separator = LOCKED; show = !caps; }
 	ring dial_caps { anchor = bottom | right; x = 160; y = 48; radius = 44;
-	                 thickness = 10; bg = #cc101418; border = #ff101418;
-	                 highlight = #ffe0c060; highlight_bs = #ff7a808b;
-	                 separator = #ff101418; show = caps; }
+	                 thickness = 10; bg = LOCKBG; border = LOCKED;
+	                 highlight = LOCKCAPS; highlight_bs = DIM;
+	                 separator = LOCKED; show = caps; }
 	ring dial_bad  { anchor = bottom | right; x = 160; y = 48; radius = 44;
-	                 thickness = 10; fg = #ffd06878; show = wrong; }
+	                 thickness = 10; fg = LOCKBAD; show = wrong; }
 
 	frame card { anchor = bottom | left; x = 48; y = 48;
 	             width = 360; height = 96; radius = 12;
-	             bg = #cc101418; border = #ff5f8a93; border_width = 1; }
+	             bg = LOCKBG; border = LOCKRING; border_width = 1; }
 	text label { anchor = bottom | left; x = 72; y = 108; text = "{prompt}";
-	             fg = #ff7a808b; font_size = 14; }
+	             fg = DIM; font_size = 14; }
 	text dots  { anchor = bottom | left; x = 72; y = 72; text = "{dots}";
-	             show = !wrong; fg = #ffa8d5cc; }
+	             show = !wrong; fg = LOCKFG; }
 	text bad   { anchor = bottom | left; x = 72; y = 72; text = "wrong password";
-	             show = wrong; fg = #ffd06878; }
+	             show = wrong; fg = LOCKBAD; }
 	text caps_ind { anchor = bottom | right; x = 48; y = 48; text = "CAPS";
-	                show = caps; fg = #ffe0c060; font_size = 14; }
+	                show = caps; fg = LOCKCAPS; font_size = 14; }
 	text kbd   { anchor = bottom | right; x = 48; y = 72; text = "{layout}";
-	             fg = #ff7a808b; font_size = 14; }
+	             fg = DIM; font_size = 14; }
 }
 
 gamma {
@@ -404,8 +398,8 @@ gamma {
 }
 
 wallpaper {
-	path = "~/next/rice/walls/anemoia.png";
-	bg   = #ff0f1219;
+	path = WALL;
+	bg   = CRUST;
 	transition = wipe;
 	wipe_dir   = down_right;
 	wipe_soft  = 200;
@@ -426,14 +420,14 @@ surface menu {
 	prompt = "run:";
 	sort   = "most_used";
 
-	bg = #ff0f1219;
+	bg = CRUST;
 	pad_x = 8;
 
 	group query {
 		pad = 8;
 		gap = 6;
-		bg = #00000000;
-		border = #00000000;
+		bg = CLEAR;
+		border = CLEAR;
 		cell {
 			text = menu.prompt;
 			fg = DIM;
@@ -451,7 +445,7 @@ surface menu {
 		cell {
 			text  = row.label;
 			fg    = FG;
-			bg    = row.selected ? ACT : #00000000;
+			bg    = row.selected ? ACT : CLEAR;
 			pad_x = 8;
 		}
 	}

@@ -116,7 +116,7 @@ gemoji) are in [THIRD_PARTY.md](THIRD_PARTY.md).
 
 ---
 
-Numbers above measured with [configs/reverie.wisp](configs/reverie.wisp) on an i5-1135G7 at
+Numbers above measured with [configs/reverie/reverie.wisp](configs/reverie/reverie.wisp) on an i5-1135G7 at
 1080p: 1 CPU tick per 10 s with its 2-second cpu/mem/temp polls, a flat 0
 without them; 3.1 MB RSS, 950 KB PSS. Your numbers depend on what you declared.
 

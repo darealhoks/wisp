@@ -25,4 +25,4 @@ const SCRIM  = #60000000;   // background scrim, not a surface — stays translu
 const RINGBG = #ff0b0a12;   // keep rgb in sync with CRUST
 const NOTIFBG = #ff0b0a12;  // keep rgb in sync with CRUST
 
-const WALL   = "~/next/rice/walls/reverie.png";
+const WALL   = "~/.local/share/wallpapers/reverie.png";

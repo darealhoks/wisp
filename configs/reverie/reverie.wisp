@@ -17,9 +17,9 @@ source vol_s  = pipewire();
 source tw_s   = exec_line("tw-hours", every="60s");
 
 source hid    = ui_hidden();
-source notif_s = notifications(history=64, image=22);
+source notif_s = notifications(history=64, image=22, persist=false);
 
-include "lib/theme.wisp";
+include "theme.wisp";
 
 const TRAY_ICONS_ONLY = true; // icon-less tray items are hidden, not labelled
 
@@ -36,7 +36,7 @@ surface bar {
 
 	// align=left packs left→right in declaration order
 
-		widget edge_l {
+	widget edge_l {
 		align = left;
 		pad = 2;
 	}
@@ -72,7 +72,6 @@ surface bar {
 		widget disk {
 			icon = 0xf233;
 			text = "{disk_s.pct}%";
-			tooltip = "Root filesystem used";
 			fg = disk_s.pct >= 90 ? RED
 				: disk_s.pct >= 75 ? ORANGE : TEXT;
 			icon_fg = disk_s.pct >= 90 ? RED
@@ -103,7 +102,7 @@ surface bar {
 	}
 
 	// align=right packs right→left in declaration order
-		widget edge_r {
+	widget edge_r {
 		align = right;
 		pad = 2;
 	}
@@ -151,7 +150,6 @@ surface bar {
 		widget cpu    {
 			icon = 0xf4bc;
 			text = "{cpu_s.pct}%";
-			tooltip = "CPU load";
 			fg = cpu_s.pct >= 90 ? RED
 				: cpu_s.pct >= 75 ? ORANGE : TEXT;
 			icon_fg = cpu_s.pct >= 90 ? RED
@@ -163,7 +161,6 @@ surface bar {
 		widget temp   {
 			icon = 0xf06d;
 			text = "{temp_s.c}°C";
-			tooltip = "Package temperature";
 			fg = temp_s.c >= 85 ? RED
 				: temp_s.c >= 70 ? ORANGE : TEXT;
 			icon_fg = temp_s.c >= 85 ? RED
@@ -174,7 +171,6 @@ surface bar {
 		}
 		widget mem    {
 			icon = 0xefc5;
-			tooltip = "Memory in use";
 			text = mem_s.used_mb >= 1024
 				? "{mem_s.used_mb / 1024}.{mem_s.used_mb * 10 / 1024 % 10} GB"
 				: "{mem_s.used_mb} MB";
@@ -320,10 +316,7 @@ surface hud {
 	widget mirror_btn.btn {
 		icon = 0xf24d;
 		fg = mirror_on.exists ? PRIM : TEXT;
-		on_click() = {
-			exec("mirror toggle")
-		}
-		;
+		on_click() = exec("mirror toggle");
 	}
 	widget sep5.sep {
 		text = "/";
@@ -651,35 +644,6 @@ idle {
 	before_sleep = lock;
 }
 
-// tooltip
-
-// width is a clamp, the surface auto-widths to $text and elides past it
-surface tooltip {
-	spawned_by = tooltip;
-	layer = overlay;
-	exclusive_zone = -1;
-
-	font_size  = 14;
-	width      = 320;
-	height     = 26;
-	pad_x      = 8;
-	pad_y      = 4;
-	anchor_gap = 4;
-	delay_ms   = 500;
-
-	bg           = CRUST;
-	border       = BORD;
-	border_width = 1;
-	radius       = 6;
-
-	widget label {
-		align = left;
-		text  = $text;
-		fg    = SUBTXT;
-		elide;
-	}
-}
-
 // menus
 
 surface menu {
@@ -742,67 +706,6 @@ surface menu {
 	border = BORD;
 	border_width = 2;
 	radius = 8;
-}
-
-// no anchor: an axis with neither edge bitted is centred by layer-shell
-surface polkit {
-	spawned_by = polkit;
-	layer      = overlay;
-	keyboard   = exclusive;
-	exclusive_zone = -1;
-
-	axis   = vertical;
-	width  = 420;
-	height = 150;   // 28 pad + 22 + 6 + 34 + 6 + 38 rows, then the origin at the far edge
-	pad_x  = 16;
-	pad_y  = 14;
-	font_size = 14;
-
-	bg = CRUST;
-	fg = TEXT;
-	border = BORD;
-	border_width = 2;
-	radius = 8;
-
-	// this body advances by height+`pad` per row: the surface `gap` never
-	// reaches it, so the row spacing is each row's own trailing pad
-	widget pk_title {
-		height = 22;
-		pad    = 6;
-		text   = "Authentication required";
-		fg     = TEXT;
-	}
-	group pk_entry {
-		height = 34;
-		pad    = 6;
-		pad_x  = 10;
-		gap    = 0;
-		bg     = REST;
-		border = #00000000;
-		radius = 8;
-		cell { text = polkit.prompt; fg = SUBTXT; }
-		cell { text = polkit.dots;   fg = TEXT; }
-		cell { text = "_";           fg = TEXT; }
-	}
-	widget pk_msg {
-		// two fixed rows, not body_fit: the height above is constant, so a
-		// short message must not shrink the stack under the bottom row
-		height     = 38;
-		text       = polkit.message;
-		fg         = SUBTXT;
-		body_lines = 2;
-		wrap;
-		text_align = start;
-	}
-	// last row does double duty so the origin can sit flush at the bottom:
-	// a failed attempt swaps it for PAM's error instead of adding a row
-	widget pk_user {
-		align  = end;   // only row out of the start bucket, so it can't collide
-		height = 18;
-		text   = polkit.failed ? polkit.error : "{polkit.user} · {polkit.action}";
-		fg     = polkit.failed ? RED : EMPTY;
-		elide;
-	}
 }
 
 menu power {

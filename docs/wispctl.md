@@ -93,7 +93,8 @@ exit 2; asked for explicitly, it goes to stdout with exit 0.
    The shallowest match wins; dot-directories and symlinked directories are
    skipped and the walk stops at 8 levels. Two matches at the same depth is an
    error listing every one of them, not a silent pick.
-4. `$WISP_SRC` or the install datadir, `configs/<name>.wisp`
+4. `$WISP_SRC` or the install datadir, `configs/<name>.wisp` then
+   `configs/<name>/<name>.wisp` — the shipped configs are directories
 
 Any other `.wisp` — one that sits in a directory not named after it — is an
 include fragment and has no name `rebuild` will answer to.

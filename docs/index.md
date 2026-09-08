@@ -58,8 +58,9 @@ surface bar {
 }
 ```
 
-The tree ships two example configs, `configs/reverie.wisp` and
-`configs/anemoia.wisp`. Both are full desktops and both are worth reading.
+The tree ships three example configs, each a directory holding its own
+palette: `configs/reverie/` and `configs/anemoia/` are full desktops and both
+are worth reading; `configs/greet/` is the login screen ([[greeter]]).
 
 ## Requirements in one line
 

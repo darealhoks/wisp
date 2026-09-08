@@ -30,8 +30,8 @@ every translation unit includes the `features.h` that your `.wisp` generated.
 
 ```sh
 make install          # builds the selected config + installs all five binaries
-make check            # builds every configs/*.wisp, the validation gate
-make WISP=configs/anemoia.wisp install
+make check            # builds every shipped config, the validation gate
+make WISP=configs/anemoia/anemoia.wisp install
 ```
 
 Use `make install`, not `make`. `wispctl reload` re-execs through
@@ -43,7 +43,7 @@ unlinked inode.
 | `install` | `wisp`, `wispctl`, `wispc`, `wisp-lock`, `wisp-lock-helper` into `$PREFIX/bin` |
 | `install-tools` | `wispc` + `wispctl` only |
 | `install-share` | sources, configs and docs into `$PREFIX/share/wisp` |
-| `check` | build matrix over every `configs/*.wisp` |
+| `check` | build matrix over every shipped config |
 | `clean` | removes `build/` |
 | `uninstall` | removes the binaries and the share dir |
 
@@ -68,11 +68,13 @@ offered by name, only reachable through `include`. So a config too big for one
 file splits into `night/night.wisp` plus `night/bar.wisp`, `night/menu.wisp`,
 and only `night` is a config.
 
-`configs/lib/theme.wisp` is the default palette the shipped configs include —
-`lib/` has no `lib.wisp`, so it is a fragment by that rule, with no name
-special-cased anywhere. Theme switching is symlinking that file at another
-palette; the build compares the resolved include list by content, so a symlink
-repointed at an older file still counts as a change.
+That is how the shipped configs are laid out: `configs/reverie/reverie.wisp`
+beside `configs/reverie/theme.wisp`, its palette. The palette is a fragment by
+that rule — no name is special-cased anywhere — and `configs/greet/greet.wisp`
+reaches reverie's with `include "../reverie/theme.wisp";`. Theme switching is
+symlinking a `theme.wisp` at another palette; the build compares the resolved
+include list by content, so a symlink repointed at an older file still counts
+as a change.
 
 ## Build knobs
 
@@ -82,7 +84,7 @@ Set them on the make command line, or as `//!` directive comments inside the
 
 | knob | default | meaning |
 |---|---|---|
-| `WISP` | `configs/reverie.wisp` | which config to build |
+| `WISP` | `configs/reverie/reverie.wisp` | which config to build |
 | `FONT_BACKEND` | `truetype` | `truetype` (TTF/OTF rasterized in-process) or `bitmap` (PSF/BDF baked to const tables) |
 | `FONT` | `~/.local/share/fonts/MapleMono-NF-Bold.ttf` | the font to bake sizes from |
 | `FONT_FALLBACK` | empty | second font in the chain, truetype only; a CBDT emoji font renders in colour |
@@ -91,7 +93,7 @@ Set them on the make command line, or as `//!` directive comments inside the
 | `PREFIX` | `~/.local` | install prefix |
 | `LINE_MAP` | `1` | `0` drops `#line` mapping back to the `.wisp` |
 
-The selection is sticky: `make WISP=configs/anemoia.wisp && make install`
+The selection is sticky: `make WISP=configs/anemoia/anemoia.wisp && make install`
 installs anemoia, it does not silently revert to the default.
 
 ## Requirements
@@ -141,5 +143,5 @@ codegen; the full list of check-passes-emit-fails cases is in [[gotchas]].
 - `FRACTIONAL=1` with `FONT_BACKEND=bitmap` is a hard Makefile error; bitmap fonts can only pixel-double.
 - `SINGLE_BUFFER=1` **may break your compositor.** Wayland does not say when a compositor must release a committed `wl_shm` buffer. wlroots-based ones (and mango) release it at commit, so one slot is enough and RAM roughly halves. niri/smithay holds the buffer until the surface commits the *next* one, and with a single slot there is no next buffer to commit, so the release never arrives and the surface **stops painting after its first frame** — most visibly a lock screen that draws its background and then ignores every keystroke. Works on mango, stops painting on niri. Leave it at `0` unless you have tested your compositor; surfaces that tween keep two slots either way.
 - `FONT_BACKEND=baked` and `=freetype` were retired and now error out.
-- Only two configs ship: `reverie` and `anemoia`. `configs/lib/theme.wisp` is a palette fragment they include, not a config.
+- Three configs ship: `reverie`, `anemoia` and `greet`. The `theme.wisp` beside each is a palette fragment it includes, not a config.
 - `wispctl rebuild` needs the share dir (or `$WISP_SRC`) present, it shells out to `make -C` there.

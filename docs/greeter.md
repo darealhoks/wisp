@@ -9,10 +9,11 @@ installed system-wide.
 
 ## 1. Write the config
 
-`~/.config/wisp/greet.wisp` — take [[templates#greet]] verbatim and edit the
-colors and `user`. It is one surface, no other module, no bar. Split it across
-several files by moving it to `~/.config/wisp/greet/greet.wisp` and `include`-ing
-the pieces from beside it.
+`~/.config/wisp/greet/greet.wisp` — take [[templates#greet]] verbatim and edit
+the colors and `user`. It is one surface, no other module, no bar. A directory
+named after the config is one of the two shapes a config may take
+([[install#what-counts-as-a-config]]), so the palette lives beside it as
+`theme.wisp` and any further piece you split out does too.
 
 ```wisp
 surface login {
@@ -34,7 +35,7 @@ goes straight to the password. Property list: [[modules#greet]].
 ## 2. Build it
 
 ```sh
-make -C ~/.local/share/wisp WISP=~/.config/wisp/greet.wisp
+make -C ~/.local/share/wisp WISP=~/.config/wisp/greet/greet.wisp
 doas install -m755 ~/.local/share/wisp/build/greet/wisp /usr/local/bin/wisp-greeter
 ```
 

@@ -151,6 +151,9 @@ static int resolve_config(const char *name, const char *conf, const char *src,
 
     snprintf(p, sizeof p, "%s/configs/%s.wisp", src, name);
     if (take(p, out)) return 1;
+    /* same rule as the config dir: the shipped configs are folders */
+    snprintf(p, sizeof p, "%s/configs/%s/%s.wisp", src, name, name);
+    if (take(p, out)) return 1;
 
     fprintf(stderr, "wispctl: config '%s' not found "
             "(searched %s recursively and %s/configs)\n", name, conf, src);

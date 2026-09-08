@@ -1,7 +1,7 @@
 //! font = ~/.local/share/fonts/MapleMono-NF-Bold.ttf
 //! font_fallback = /usr/share/fonts/noto-emoji/NotoColorEmoji.ttf
 
-include "lib/theme.wisp";
+include "../reverie/theme.wisp";   // greet is reverie's login screen: same palette, same wallpaper
 
 source time = clock("%H:%M");
 source date = clock("%A %d %B");
